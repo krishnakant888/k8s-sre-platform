@@ -27,6 +27,7 @@ features:
 
 # bitnami/kubectl was removed from docker hub, use the upstream image for the cleanup jobs.
 # The two helm hook jobs call /bin/bash, which this distroless image does not have, so they stay off.
+# The image user is non-numeric, runAsNonRoot needs an explicit uid.
 webhooksCleanup:
   enabled: false
 policyReportsCleanup:
@@ -37,9 +38,22 @@ cleanupJobs:
       registry: registry.k8s.io
       repository: kubectl
       tag: v1.31.5
+    securityContext: &nonroot
+      runAsUser: 65532
+      runAsNonRoot: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
   clusterAdmissionReports:
     image: *kubectl
+    securityContext: *nonroot
   ephemeralReports:
     image: *kubectl
+    securityContext: *nonroot
   clusterEphemeralReports:
     image: *kubectl
+    securityContext: *nonroot
