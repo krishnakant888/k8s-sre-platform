@@ -1,0 +1,43 @@
+# single binary, local blocks on the pod PVC.
+# The metrics generator writes span metrics and the service graph into mimir.
+stream_over_http_enabled: true
+usage_report:
+  reporting_enabled: false
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9097
+  log_format: json
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+ingester:
+  max_block_duration: 5m
+compactor:
+  compaction:
+    block_retention: 168h
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+metrics_generator:
+  registry:
+    external_labels:
+      cluster: local
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://mimir:8080/api/v1/push
+  traces_storage:
+    path: /var/tempo/generator/traces
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics, local-blocks]
