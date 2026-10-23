@@ -30,7 +30,7 @@ ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
 SEED_NAMESPACES = ["observability", "demo", "sre-agent"]
-HOST_PORTS = [8080, 8444]  # see bootstrap/kind-config.yaml
+HOST_PORTS = [8080, 8443]  # see bootstrap/kind-config.yaml
 
 
 def run(*cmd, check=True, capture=False, stdin=None):
