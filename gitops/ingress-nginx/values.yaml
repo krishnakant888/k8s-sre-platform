@@ -17,6 +17,7 @@ controller:
     publish-status-address: 127.0.0.1
   allowSnippetAnnotations: false
   config:
+    worker-processes: "2"   # default is one per CPU core, 24 workers on a big laptop blew through the memory limit
     log-format-escape-json: "true"
     log-format-upstream: '{"time":"$time_iso8601","remote_addr":"$remote_addr","host":"$host","method":"$request_method","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"duration":$request_time,"upstream":"$upstream_addr","request_id":"$req_id"}'
   podAnnotations:
@@ -29,7 +30,7 @@ controller:
       enabled: false
   resources:
     requests: {cpu: 100m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    limits: {memory: 384Mi}
   # The admission webhook is installed by pre-install Helm hook jobs. Argo CD can miss their completion (the job is
   # deleted before it is observed) and the sync hangs forever. Off here; the cost is that bad Ingress objects are not
   # rejected at admission. In production use cert-manager for the webhook certificate (admissionWebhooks.certManager).
