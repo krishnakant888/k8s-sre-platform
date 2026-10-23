@@ -1,27 +1,26 @@
-# read-only access for the sre agent to what it investigates. It cannot change anything outside its own namespace.
+# read-only access for the sre agent to what it investigates, in every namespace (an incident can be anywhere).
+# It cannot change anything outside its own namespace, and cannot read secrets or configmaps.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: sre-agent-read
-  namespace: demo
 rules:
   - apiGroups: [""]
-    resources: [pods, events]
+    resources: [pods, events, nodes]
     verbs: [get, list]
   - apiGroups: [apps]
-    resources: [deployments, replicasets]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: sre-agent-read
-  namespace: demo
 subjects:
   - {kind: ServiceAccount, name: sre-agent, namespace: sre-agent}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: sre-agent-read
 ---
 apiVersion: rbac.authorization.k8s.io/v1
