@@ -21,6 +21,7 @@ spec:
         prometheus.io/path: /metrics
     spec:
       automountServiceAccountToken: false
+      enableServiceLinks: false   # service links inject TEMPORAL_UI_PORT=tcp://... which the ui reads as its port
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -96,6 +97,7 @@ spec:
       labels: {app.kubernetes.io/name: temporal-ui}
     spec:
       automountServiceAccountToken: false
+      enableServiceLinks: false   # service links inject TEMPORAL_UI_PORT=tcp://... which the ui reads as its port
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
