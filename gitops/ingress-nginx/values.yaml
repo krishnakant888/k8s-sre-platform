@@ -1,0 +1,38 @@
+# upstream Kubernetes ships no ingress controller, so ingress-nginx is installed here.
+# kind maps host :8080/:8443 to these NodePorts, see bootstrap/kind-config.yaml.
+controller:
+  replicaCount: 1
+  ingressClassResource:
+    name: nginx
+    default: true
+  service:
+    type: NodePort
+    nodePorts:
+      http: 30080
+      https: 30443
+  # kind has no load balancer. Publishing an address on the Ingress objects makes Argo CD report them Healthy.
+  publishService:
+    enabled: false
+  extraArgs:
+    publish-status-address: 127.0.0.1
+  allowSnippetAnnotations: false
+  config:
+    log-format-escape-json: "true"
+    log-format-upstream: '{"time":"$time_iso8601","remote_addr":"$remote_addr","host":"$host","method":"$request_method","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"duration":$request_time,"upstream":"$upstream_addr","request_id":"$req_id"}'
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+    prometheus.io/path: /metrics
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  admissionWebhooks:
+    enabled: true
+    patch:
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {memory: 64Mi}

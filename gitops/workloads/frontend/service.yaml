@@ -15,7 +15,7 @@ metadata:
   name: frontend
   namespace: demo
 spec:
-  ingressClassName: traefik
+  ingressClassName: nginx
   rules:
     - host: frontend.localhost
       http:

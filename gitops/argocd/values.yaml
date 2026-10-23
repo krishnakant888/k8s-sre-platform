@@ -3,7 +3,7 @@ global:
 
 configs:
   params:
-    server.insecure: true   # TLS ends at traefik
+    server.insecure: true   # TLS ends at the ingress controller
   cm:
     admin.enabled: true
     exec.enabled: false
@@ -21,7 +21,7 @@ notifications:
 server:
   ingress:
     enabled: true
-    ingressClassName: traefik
+    ingressClassName: nginx
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {memory: 256Mi}

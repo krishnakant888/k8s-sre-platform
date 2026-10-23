@@ -160,7 +160,7 @@ metadata:
   name: temporal-ui
   namespace: temporal
 spec:
-  ingressClassName: traefik
+  ingressClassName: nginx
   rules:
     - host: temporal.localhost
       http:

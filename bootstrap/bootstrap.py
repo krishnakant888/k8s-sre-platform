@@ -2,7 +2,7 @@
 """Create the local Kubernetes cluster (kind), install Calico and Argo CD, then hand over to GitOps.
 
 This is the only imperative step. Everything after it, including the ingress
-controller (Traefik), is synced from Git.
+controller (ingress-nginx), is synced from Git.
 
     python3 bootstrap/bootstrap.py            # create cluster, seed secrets, install Calico and Argo CD
     python3 bootstrap/bootstrap.py --destroy  # delete the cluster
@@ -148,7 +148,7 @@ def main():
 
     argocd_pw = read_secret(ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(initial secret already removed)"
     print("\nEverything else is now deployed by Argo CD from Git. The first sync takes about 10 minutes.")
-    print("URLs work once Traefik has synced.\n")
+    print("URLs work once ingress-nginx has synced.\n")
     print("Argo CD   http://argocd.localhost:8080    admin / " + argocd_pw)
     print("Grafana   http://grafana.localhost:8080   admin / " + read_secret("observability", "grafana-admin", "admin-password"))
     print("Temporal  http://temporal.localhost:8080")
