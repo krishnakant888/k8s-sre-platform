@@ -29,7 +29,7 @@ REQUESTS = Counter("http_requests_total", "HTTP requests", ["service", "method",
 LATENCY = Histogram(
     "http_request_duration_seconds",
     "HTTP request latency",
-    ["service", "route"],
+    ["service", "route", "status"],
     buckets=(0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 1, 2, 5),
 )
 ORDERS = Counter("orders_created_total", "Orders created", ["service"])
@@ -71,7 +71,7 @@ async def observe(request: Request, call_next):
         path = route.path if route else "unmatched"
         if path not in ("/metrics", "/healthz", "/readyz"):
             REQUESTS.labels(SERVICE, request.method, path, str(status)).inc()
-            LATENCY.labels(SERVICE, path).observe(elapsed)
+            LATENCY.labels(SERVICE, path, str(status)).observe(elapsed)
             level = logging.ERROR if status >= 500 else logging.INFO
             log.log(
                 level,
