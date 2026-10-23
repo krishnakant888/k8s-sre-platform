@@ -6,11 +6,19 @@ crds:
 controller:
   type: deployment
   replicas: 1
+  volumes:
+    extra:
+      - name: tmp
+        emptyDir: {}
   podLabels:
     platform.io/api-access: "true"
 
 alloy:
   stabilityLevel: generally-available
+  mounts:
+    extra:
+      - name: tmp
+        mountPath: /tmp
   extraPorts:
     - {name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP}
     - {name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP}
