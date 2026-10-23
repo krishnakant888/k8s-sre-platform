@@ -12,7 +12,7 @@ spec:
     - https://argoproj.github.io/argo-helm
     - https://bitnami.github.io/sealed-secrets
     - https://kyverno.github.io/kyverno
-    - https://traefik.github.io/charts
+    - https://kubernetes.github.io/ingress-nginx
     - https://cloudnative-pg.github.io/charts
   destinations:
     - server: https://kubernetes.default.svc

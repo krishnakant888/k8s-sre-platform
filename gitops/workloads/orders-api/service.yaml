@@ -15,7 +15,7 @@ metadata:
   name: orders-api
   namespace: demo
 spec:
-  ingressClassName: traefik
+  ingressClassName: nginx
   rules:
     - host: orders.localhost
       http:

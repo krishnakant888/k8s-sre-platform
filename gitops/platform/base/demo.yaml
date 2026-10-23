@@ -66,7 +66,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-from-traefik
+  name: allow-from-ingress-nginx
   namespace: demo
 spec:
   podSelector: {}
@@ -75,7 +75,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: traefik
+              kubernetes.io/metadata.name: ingress-nginx
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: traefik
+              app.kubernetes.io/name: ingress-nginx
