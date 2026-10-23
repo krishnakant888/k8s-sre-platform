@@ -48,7 +48,6 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://alloy.observability:4318"}
-            - {name: APP_VERSION, value: "sha-3786bd0"}
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_NAMESPACE

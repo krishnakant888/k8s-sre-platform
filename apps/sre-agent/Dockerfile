@@ -3,6 +3,10 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /srv
 
+# the release shown in every log line, set by CI to the short commit sha
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
