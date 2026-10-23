@@ -50,7 +50,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: worker
-          image: ghcr.io/krishnakant888/sre-agent:sha-b4b7facb8724e4d9653aa506b282a58593b2a4af
+          image: ghcr.io/krishnakant888/sre-agent:sha-240e5c970f5b27bec51a80e526ee091730b016ad
           command: [python, -m, agent.worker]
           env:
             - {name: TEMPORAL_ADDRESS, value: "temporal-frontend.temporal:7233"}
@@ -106,7 +106,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: alert-webhook}
       containers:
         - name: webhook
-          image: ghcr.io/krishnakant888/sre-agent:sha-b4b7facb8724e4d9653aa506b282a58593b2a4af
+          image: ghcr.io/krishnakant888/sre-agent:sha-240e5c970f5b27bec51a80e526ee091730b016ad
           command: [uvicorn, "agent.webhook:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
           ports:
             - {name: http, containerPort: 8080}
