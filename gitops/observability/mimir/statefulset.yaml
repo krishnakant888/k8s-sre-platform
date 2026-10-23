@@ -24,7 +24,7 @@ spec:
         # blocks dir for the filesystem backend
         - name: init-dirs
           image: busybox:1.37.0
-          command: [sh, -c, "mkdir -p /data/blocks"]
+          command: [sh, -c, "mkdir -p /data/blocks /data/alertmanager-storage"]
           resources:
             requests: {cpu: 10m, memory: 16Mi}
             limits: {memory: 32Mi}
