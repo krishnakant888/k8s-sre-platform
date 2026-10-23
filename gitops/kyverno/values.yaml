@@ -23,3 +23,21 @@ reportsController:
 features:
   policyExceptions:
     enabled: false
+
+# bitnami/kubectl was removed from docker hub, use the upstream image for the cleanup jobs
+webhooksCleanup:
+  image: &kubectl
+    registry: registry.k8s.io
+    repository: kubectl
+    tag: v1.31.5
+policyReportsCleanup:
+  image: *kubectl
+cleanupJobs:
+  admissionReports:
+    image: *kubectl
+  clusterAdmissionReports:
+    image: *kubectl
+  ephemeralReports:
+    image: *kubectl
+  clusterEphemeralReports:
+    image: *kubectl
