@@ -1,0 +1,31 @@
+# S3 stand-in for loki, tempo and mimir. Same bucket layout as production S3, only the endpoint changes.
+mode: standalone
+replicas: 1
+existingSecret: minio-credentials
+
+persistence:
+  enabled: true
+  size: 10Gi
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 768Mi}
+
+securityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+consoleService:
+  type: ClusterIP
+
+buckets:
+  - {name: loki-chunks, policy: none, purge: false}
+  - {name: loki-ruler, policy: none, purge: false}
+  - {name: tempo-traces, policy: none, purge: false}
+  - {name: mimir-blocks, policy: none, purge: false}
+
+metrics:
+  serviceMonitor:
+    enabled: false
