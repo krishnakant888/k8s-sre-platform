@@ -30,7 +30,7 @@ ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
 SEED_NAMESPACES = ["observability", "demo", "sre-agent"]
-HOST_PORTS = [8880, 8444]  # see bootstrap/kind-config.yaml
+HOST_PORTS = [8080, 8444]  # see bootstrap/kind-config.yaml
 
 
 def run(*cmd, check=True, capture=False, stdin=None):
@@ -149,10 +149,10 @@ def main():
     argocd_pw = read_secret(ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(initial secret already removed)"
     print("\nEverything else is now deployed by Argo CD from Git. The first sync takes about 10 minutes.")
     print("URLs work once Traefik has synced.\n")
-    print("Argo CD   http://argocd.localhost:8880    admin / " + argocd_pw)
-    print("Grafana   http://grafana.localhost:8880   admin / " + read_secret("observability", "grafana-admin", "admin-password"))
-    print("Temporal  http://temporal.localhost:8880")
-    print("Orders    http://orders.localhost:8880/orders")
+    print("Argo CD   http://argocd.localhost:8080    admin / " + argocd_pw)
+    print("Grafana   http://grafana.localhost:8080   admin / " + read_secret("observability", "grafana-admin", "admin-password"))
+    print("Temporal  http://temporal.localhost:8080")
+    print("Orders    http://orders.localhost:8080/orders")
     print("\nWatch it come up:  kubectl --context", CONTEXT, "-n argocd get applications")
 
 

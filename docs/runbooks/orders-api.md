@@ -1,7 +1,7 @@
 # orders-api runbook
 
 SLO: 99.5% of requests succeed (not 5xx) and finish within 300ms, over 28 days.
-Dashboard: http://grafana.localhost:8880/d/orders-api
+Dashboard: http://grafana.localhost:8080/d/orders-api
 
 ## fast-burn
 Page. The error budget is being used 14x faster than allowed (1h and 5m windows).
