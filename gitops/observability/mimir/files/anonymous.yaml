@@ -5,7 +5,7 @@ route:
   group_interval: 1m
   repeat_interval: 4h
 receivers:
-  # every alert starts an automated investigation (Temporal workflow), see apps/sre-agent
+  # every alert starts an automated investigation (Argo Workflow), see apps/sre-agent
   - name: sre-agent
     webhook_configs:
       - url: http://alert-webhook.sre-agent:8080/alertmanager

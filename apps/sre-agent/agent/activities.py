@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 
 import httpx
-from temporalio import activity
 
 from agent import config, llm, rca
 from agent.models import RcaReport
@@ -11,14 +10,12 @@ from agent.models import RcaReport
 log = logging.getLogger("sre-agent")
 
 
-@activity.defn
 def collect_evidence(alert: dict) -> dict:
     ctx = rca.gather(alert)
     log.info("evidence gathered", extra={"alert": alert.get("labels", {}).get("alertname"), "target_service": ctx["service"], "evidence_items": len(ctx["evidence"])})
     return ctx
 
 
-@activity.defn
 def analyze(alert: dict, ctx: dict) -> dict:
     """Rule based analysis first (always), then the model when a key is configured."""
     report = rca.analyze_rules(alert, ctx)
@@ -26,12 +23,11 @@ def analyze(alert: dict, ctx: dict) -> dict:
         try:
             report = llm.investigate(alert, ctx, report)
         except Exception as exc:
-            activity.logger.warning("llm analysis failed, keeping the rule based report: %s", exc)
+            log.warning("llm analysis failed, keeping the rule based report: %s", exc)
             report.contributing_factors.append(f"LLM analysis failed ({type(exc).__name__}); this report is rule based")
     return report.model_dump()
 
 
-@activity.defn
 def store_report(report: dict) -> str:
     """Keeps the report as a ConfigMap (readable with kubectl) and as one json log line (searchable in Loki)."""
     r = RcaReport.model_validate(report)
@@ -55,7 +51,6 @@ def store_report(report: dict) -> str:
     return r.id
 
 
-@activity.defn
 def notify(report: dict) -> bool:
     """Posts a short summary to a slack compatible webhook when one is configured."""
     if not config.NOTIFY_WEBHOOK_URL:

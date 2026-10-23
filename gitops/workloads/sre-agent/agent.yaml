@@ -1,3 +1,4 @@
+# The investigation steps run as Argo Workflow pods under this service account (see workflow-template.yaml).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -27,51 +28,35 @@ roleRef:
   kind: Role
   name: sre-agent-reports
 ---
-apiVersion: apps/v1
-kind: Deployment
+# the webhook can start investigations and nothing else
+apiVersion: v1
+kind: ServiceAccount
 metadata:
-  name: sre-agent-worker
+  name: alert-webhook
   namespace: sre-agent
-  labels: {app.kubernetes.io/name: sre-agent}
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app.kubernetes.io/name: sre-agent}
-  template:
-    metadata:
-      labels: {app.kubernetes.io/name: sre-agent}
-    spec:
-      serviceAccountName: sre-agent
-      enableServiceLinks: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        seccompProfile: {type: RuntimeDefault}
-      containers:
-        - name: worker
-          image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
-          command: [python, -m, agent.worker]
-          env:
-            - {name: TEMPORAL_ADDRESS, value: "temporal-frontend.temporal:7233"}
-            - {name: TASK_QUEUE, value: sre-investigations}
-            - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
-            - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
-              valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
-            - name: NOTIFY_WEBHOOK_URL
-              valueFrom: {secretKeyRef: {name: notify-webhook, key: url, optional: true}}
-          resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 384Mi}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          volumeMounts:
-            - {name: tmp, mountPath: /tmp}
-      volumes:
-        - name: tmp
-          emptyDir: {}
+automountServiceAccountToken: true   # needed: creates Workflow objects through the API
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alert-webhook-workflows
+  namespace: sre-agent
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflows]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alert-webhook-workflows
+  namespace: sre-agent
+subjects:
+  - {kind: ServiceAccount, name: alert-webhook, namespace: sre-agent}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alert-webhook-workflows
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -91,7 +76,7 @@ spec:
         prometheus.io/port: "8080"
         prometheus.io/path: /metrics
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: alert-webhook
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
@@ -111,8 +96,8 @@ spec:
           ports:
             - {name: http, containerPort: 8080}
           env:
-            - {name: TEMPORAL_ADDRESS, value: "temporal-frontend.temporal:7233"}
-            - {name: TASK_QUEUE, value: sre-investigations}
+            - {name: WORKFLOW_NAMESPACE, value: sre-agent}
+            - {name: WORKFLOW_TEMPLATE, value: incident-investigation}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 5

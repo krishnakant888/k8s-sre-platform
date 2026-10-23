@@ -151,7 +151,7 @@ def main():
     print("URLs work once ingress-nginx has synced.\n")
     print("Argo CD   http://argocd.localhost:8080    admin / " + argocd_pw)
     print("Grafana   http://grafana.localhost:8080   admin / " + read_secret("observability", "grafana-admin", "admin-password"))
-    print("Temporal  http://temporal.localhost:8080")
+    print("Workflows http://workflows.localhost:8080")
     print("Orders    http://orders.localhost:8080/orders")
     print("\nWatch it come up:  kubectl --context", CONTEXT, "-n argocd get applications")
 

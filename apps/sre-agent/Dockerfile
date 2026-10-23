@@ -11,5 +11,5 @@ COPY agent ./agent
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 USER 10001
 
-# worker by default, the webhook deployment overrides the command
-CMD ["python", "-m", "agent.worker"]
+# the workflow steps and the webhook deployment both set their own command
+CMD ["python", "-m", "agent.steps"]

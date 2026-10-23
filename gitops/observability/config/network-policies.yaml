@@ -49,7 +49,7 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                values: [demo, temporal, sre-agent]
+                values: [demo, sre-agent]
       ports:
         - {port: 4317, protocol: TCP}
         - {port: 4318, protocol: TCP}

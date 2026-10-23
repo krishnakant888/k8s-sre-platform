@@ -274,7 +274,7 @@ Category: `{r.root_cause.category}`
 {factors}
 
 ## Detection
-The alert `{r.alert}` fired from the Mimir ruler and was routed through Alertmanager to Temporal, which started this investigation automatically.
+The alert `{r.alert}` fired from the Mimir ruler and was routed through Alertmanager to the alert webhook, which started this investigation as an Argo Workflow automatically.
 
 ## Evidence
 {evidence}

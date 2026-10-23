@@ -7,14 +7,6 @@ spec:
   podSelector: {}
   policyTypes: [Egress]
   egress:
-    # temporal frontend
-    - to:
-        - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: temporal}
-          podSelector:
-            matchLabels: {app.kubernetes.io/name: temporal}
-      ports:
-        - {port: 7233, protocol: TCP}
     # the stores the agent queries
     - to:
         - namespaceSelector:

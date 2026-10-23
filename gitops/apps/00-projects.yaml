@@ -6,14 +6,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Cluster add-ons and operators (argocd, sealed-secrets, kyverno, cnpg)
+  description: Cluster add-ons and operators (argocd, argo-workflows, sealed-secrets, kyverno, ingress-nginx)
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://argoproj.github.io/argo-helm
     - https://bitnami.github.io/sealed-secrets
     - https://kyverno.github.io/kyverno
     - https://kubernetes.github.io/ingress-nginx
-    - https://cloudnative-pg.github.io/charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: "*"
@@ -51,13 +50,10 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Temporal, sample api, sre agent
+  description: Sample api, frontend, sre agent
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
-    - https://go.temporal.io/helm-charts
   destinations:
-    - server: https://kubernetes.default.svc
-      namespace: temporal
     - server: https://kubernetes.default.svc
       namespace: demo
     - server: https://kubernetes.default.svc

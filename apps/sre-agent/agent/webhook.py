@@ -1,29 +1,21 @@
-"""Receives Alertmanager webhooks and starts one investigation workflow per firing alert."""
+"""Receives Alertmanager webhooks and starts one investigation Argo Workflow per firing alert."""
 import logging
+from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from fastapi.responses import Response
-from temporalio.client import Client
-from temporalio.common import WorkflowIDConflictPolicy
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
-from agent import config
+from agent import config, incident
 from agent.logging_setup import setup_logging
-from agent.workflows import IncidentInvestigationWorkflow
 
 setup_logging("alert-webhook")
 log = logging.getLogger("alert-webhook")
 STARTED = Counter("investigations_started_total", "Investigation workflows started", ["alertname"])
 
 app = FastAPI(title="alert-webhook")
-_client: Client | None = None
-
-
-async def temporal() -> Client:
-    global _client
-    if _client is None:
-        _client = await Client.connect(config.TEMPORAL_ADDRESS, namespace=config.TEMPORAL_NAMESPACE)
-    return _client
+WORKFLOWS_URL = f"{config.K8S_URL}/apis/argoproj.io/v1alpha1/namespaces/{config.WORKFLOW_NAMESPACE}/workflows"
 
 
 @app.get("/healthz")
@@ -36,24 +28,30 @@ def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+async def create_workflow(alert: dict) -> tuple[str, bool]:
+    """Returns the workflow name and whether it was newly created. A 409 means this alert already has one."""
+    workflow = incident.build_workflow(alert)
+    token = Path(f"{config.SA_DIR}/token").read_text()  # re-read every time, projected tokens rotate
+    async with httpx.AsyncClient(verify=f"{config.SA_DIR}/ca.crt", timeout=15) as client:
+        resp = await client.post(WORKFLOWS_URL, json=workflow, headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code == 409:
+        return workflow["metadata"]["name"], False
+    resp.raise_for_status()  # a 5xx here makes Alertmanager retry the notification
+    return workflow["metadata"]["name"], True
+
+
 @app.post("/alertmanager", status_code=202)
 async def alertmanager(request: Request):
     payload = await request.json()
-    client = await temporal()
     started = []
     for alert in payload.get("alerts", []):
         if alert.get("status") != "firing":
             continue
         name = alert.get("labels", {}).get("alertname", "unknown")
-        workflow_id = f"incident-{name}-{alert.get('fingerprint', 'x')}-{alert.get('startsAt', '')[:19]}"
-        await client.start_workflow(
-            IncidentInvestigationWorkflow.run,
-            alert,
-            id=workflow_id,
-            task_queue=config.TASK_QUEUE,
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,  # a repeat notification for the same alert is a no-op
-        )
+        workflow_name, created = await create_workflow(alert)
+        if not created:
+            continue  # a repeat notification for the same alert is a no-op
         STARTED.labels(name).inc()
-        log.info("investigation started", extra={"alertname": name, "workflow_id": workflow_id})
-        started.append(workflow_id)
+        log.info("investigation started", extra={"alertname": name, "workflow": workflow_name})
+        started.append(workflow_name)
     return {"started": started}

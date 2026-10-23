@@ -1,0 +1,67 @@
+# Argo Workflows runs the incident investigation (see gitops/workloads/sre-agent/workflow-template.yaml).
+# The controller lives in argo-workflows and only manages workflows in sre-agent.
+crds:
+  install: true
+  keep: false
+
+controller:
+  workflowNamespaces: [sre-agent]
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: /metrics
+  # applied to every workflow: pods must pass Pod Security "restricted" and the Kyverno policies in sre-agent
+  workflowDefaults:
+    spec:
+      podMetadata:
+        labels:
+          app.kubernetes.io/name: sre-agent   # so alloy labels the logs service="sre-agent"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+
+# init and wait containers that Argo adds to every workflow pod
+executor:
+  image:
+    nonroot: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 64Mi}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+
+# the service account that runs workflows is sre-agent (it already reads the cluster and stores reports),
+# the chart adds the workflowtaskresults permission the executor needs to the same RoleBinding
+workflow:
+  serviceAccount:
+    create: false
+  rbac:
+    create: true
+    serviceAccounts:
+      - {name: sre-agent, namespace: sre-agent}
+
+server:
+  enabled: true
+  authModes: [server]   # local demo only: the UI acts with the server's own permissions, no login
+  podAnnotations:
+    prometheus.io/scrape: "false"
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: [workflows.localhost]
+    paths: [/]
+    pathType: Prefix
