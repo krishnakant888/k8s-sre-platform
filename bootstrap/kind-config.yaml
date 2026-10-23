@@ -5,11 +5,15 @@ networking:
   # kindnet does not enforce NetworkPolicy reliably; bootstrap.py installs Calico instead
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
+# node image pinned: Argo CD 2.12 cannot diff objects from much newer API servers (status fields it does not know)
 nodes:
   - role: control-plane
+    image: kindest/node:v1.31.0
     extraPortMappings:
       # host :8080 -> ingress-nginx http NodePort, host :8443 -> https NodePort
       - {containerPort: 30080, hostPort: 8080, protocol: TCP}
       - {containerPort: 30443, hostPort: 8443, protocol: TCP}
   - role: worker
+    image: kindest/node:v1.31.0
   - role: worker
+    image: kindest/node:v1.31.0
