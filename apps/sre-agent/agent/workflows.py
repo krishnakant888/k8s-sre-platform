@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 
 from temporalio import workflow
@@ -16,7 +17,7 @@ class IncidentInvestigationWorkflow:
     @workflow.run
     async def run(self, alert: dict) -> dict:
         # give metrics and logs a moment to catch up with the alert
-        await workflow.sleep(timedelta(seconds=20))
+        await asyncio.sleep(20)  # durable timer, deterministic inside a workflow
         ctx = await workflow.execute_activity(activities.collect_evidence, alert, start_to_close_timeout=timedelta(minutes=3), retry_policy=RETRY)
         report = await workflow.execute_activity(activities.analyze, args=[alert, ctx], start_to_close_timeout=timedelta(minutes=5), retry_policy=RETRY)
         report_id = await workflow.execute_activity(activities.store_report, report, start_to_close_timeout=timedelta(seconds=30), retry_policy=RETRY)
