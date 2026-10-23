@@ -58,6 +58,10 @@ def install_argocd():
     )
 
 
+def apply_root_app():
+    run("kubectl", "apply", "-f", str(ROOT / "gitops" / "root" / "root-app.yaml"))
+
+
 def initial_password():
     out = run(
         "kubectl", "-n", ARGOCD_NS, "get", "secret", "argocd-initial-admin-secret",
@@ -78,6 +82,7 @@ def main():
 
     create_cluster()
     install_argocd()
+    apply_root_app()
 
     print("\nArgo CD:  http://argocd.localhost:8080")
     print("user:     admin")
