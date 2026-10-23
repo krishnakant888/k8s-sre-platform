@@ -11,7 +11,7 @@
 set -euo pipefail
 
 CTX=${KUBE_CONTEXT:-kind-platform}
-URL=${ORDERS_URL:-http://orders.localhost:8080}
+URL=${ORDERS_URL:-http://orders.localhost:8880}
 
 token() { kubectl --context "$CTX" -n demo get secret orders-api-chaos -o jsonpath='{.data.CHAOS_TOKEN}' | base64 -d; }
 
@@ -32,4 +32,4 @@ case "${1:-}" in
   *) sed -n '2,9p' "$0"; exit 1 ;;
 esac
 
-echo "watch: http://grafana.localhost:8080/d/orders-api   reports: kubectl -n sre-agent get cm -l sre-agent/report=true"
+echo "watch: http://grafana.localhost:8880/d/orders-api   reports: kubectl -n sre-agent get cm -l sre-agent/report=true"

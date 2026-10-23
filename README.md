@@ -26,10 +26,10 @@ and applies one root Application. The first sync takes about 10 minutes. It prin
 
 | What | URL |
 |---|---|
-| Argo CD | http://argocd.localhost:8080 |
-| Grafana | http://grafana.localhost:8080 |
-| Temporal UI | http://temporal.localhost:8080 |
-| Sample API | http://orders.localhost:8080/orders |
+| Argo CD | http://argocd.localhost:8880 |
+| Grafana | http://grafana.localhost:8880 |
+| Temporal UI | http://temporal.localhost:8880 |
+| Sample API | http://orders.localhost:8880/orders |
 
 `*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy`.
 
@@ -133,7 +133,7 @@ Workflow IDs are derived from the alert fingerprint and start time, so a repeate
 
 ## Design decisions and trade-offs
 
-- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik is deployed by Argo CD (host ports 8080/8444 map to its NodePorts).
+- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik is deployed by Argo CD (host ports 8880/8444 map to its NodePorts).
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
 - **Mimir ruler and Alertmanager use local, Git-managed config.** Rules and routing are files in Git. Trade-off: no per-tenant API, and a change restarts Mimir (handled by hashed ConfigMaps).

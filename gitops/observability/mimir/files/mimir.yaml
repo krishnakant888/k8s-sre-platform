@@ -42,7 +42,7 @@ ruler:
   evaluation_interval: 30s
 alertmanager:
   data_dir: /data/alertmanager
-  external_url: http://alerts.localhost:8080/alertmanager
+  external_url: http://alerts.localhost:8880/alertmanager
   sharding_ring:
     replication_factor: 1
     kvstore: {store: inmemory}
