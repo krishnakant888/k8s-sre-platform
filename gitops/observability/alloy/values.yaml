@@ -101,7 +101,7 @@ alloy:
         forward_to = [prometheus.remote_write.mimir.receiver]
       }
 
-      // container cpu/memory via the kubelet, proxied through the API server
+      // container cpu/memory straight from the kubelet (needs nodes/metrics only, not nodes/proxy)
       discovery.kubernetes "nodes" {
         role = "node"
       }
@@ -109,14 +109,8 @@ alloy:
       discovery.relabel "cadvisor" {
         targets = discovery.kubernetes.nodes.targets
         rule {
-          target_label = "__address__"
-          replacement  = "kubernetes.default.svc:443"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_node_name"]
-          regex         = "(.+)"
-          replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
-          target_label  = "__metrics_path__"
+          target_label = "__metrics_path__"
+          replacement  = "/metrics/cadvisor"
         }
       }
 
@@ -125,7 +119,7 @@ alloy:
         scheme            = "https"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         tls_config {
-          ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+          insecure_skip_verify = true   // k3s kubelet serving cert is self-signed
         }
         job_name   = "cadvisor"
         forward_to = [prometheus.remote_write.mimir.receiver]
