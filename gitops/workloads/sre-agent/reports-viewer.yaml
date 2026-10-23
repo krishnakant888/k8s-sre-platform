@@ -1,5 +1,5 @@
 # read-only file listing of the reports volume, at http://reports.localhost:8080
-# (report.json and postmortem.md are served as plain text so the browser shows them instead of downloading)
+# (report.json and rca.md are served as plain text so the browser shows them instead of downloading)
 apiVersion: v1
 kind: ConfigMap
 metadata:

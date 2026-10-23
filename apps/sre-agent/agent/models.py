@@ -66,4 +66,4 @@ class RcaReport(BaseModel):
     contributing_factors: list[str]
     how_to_fix: HowToFix
     observability_gaps: list[str] = Field(description="signals that were missing or too weak for this investigation, each with the exact metric, log field, trace attribute or alert to add")
-    postmortem_markdown: str
+    rca_markdown: str

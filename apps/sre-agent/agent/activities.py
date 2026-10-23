@@ -29,12 +29,12 @@ def analyze(alert: dict, ctx: dict) -> dict:
 
 
 def store_report(report: dict) -> str:
-    """Writes report.json and postmortem.md under <REPORTS_DIR>/<report id>/ (a volume) and logs one json line (searchable in Loki)."""
+    """Writes report.json and rca.md under <REPORTS_DIR>/<report id>/ (a volume) and logs one json line (searchable in Loki)."""
     r = RcaReport.model_validate(report)
     log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "target_service": r.service, "priority": r.priority.level, "layer": r.fault_domain.layer, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "report": r.model_dump()})
     folder = Path(config.REPORTS_DIR) / r.id
     folder.mkdir(parents=True, exist_ok=True)
-    for name, text in (("report.json", json.dumps(report, indent=2)), ("postmortem.md", r.postmortem_markdown)):
+    for name, text in (("report.json", json.dumps(report, indent=2)), ("rca.md", r.rca_markdown)):
         tmp = folder / f".{name}.tmp"
         tmp.write_text(text)
         tmp.replace(folder / name)  # a retry overwrites, and a reader never sees a half written file

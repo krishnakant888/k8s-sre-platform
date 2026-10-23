@@ -599,9 +599,9 @@ def analyze_rules(alert: dict, ctx: dict, now: float | None = None) -> RcaReport
         contributing_factors=contrib,
         how_to_fix=fix,
         observability_gaps=gaps,
-        postmortem_markdown="",
+        rca_markdown="",
     )
-    report.postmortem_markdown = render_postmortem(report)
+    report.rca_markdown = render_rca(report)
     return report
 
 
@@ -609,11 +609,11 @@ def _bullets(items: list[str], checkbox: bool = False) -> str:
     return "\n".join(f"- {'[ ] ' if checkbox else ''}{i}" for i in items) or "- none"
 
 
-def render_postmortem(r: RcaReport) -> str:
+def render_rca(r: RcaReport) -> str:
     timeline = "\n".join(f"- {t.time}: {t.event}" for t in r.timeline)
     evidence = "\n".join(f"- **{e.source}**: {e.finding}\n  - `{e.query}`" for e in r.evidence)
     factors = "\n".join(f"- {c}" for c in r.contributing_factors) or "- none identified"
-    return f"""# Postmortem: {r.alert} on {r.service}
+    return f"""# RCA: {r.alert} on {r.service}
 
 **Report:** {r.id} | **Priority:** {r.priority.level} | **Alert severity:** {r.severity} | **Analysis mode:** {r.mode}
 
@@ -660,5 +660,5 @@ The alert `{r.alert}` fired in Grafana alerting and was sent by webhook to the S
 ## Evidence
 {evidence}
 
-_This postmortem is blameless and was generated automatically. Review it before acting on it._
+_This RCA is blameless and was generated automatically. Review it before acting on it._
 """

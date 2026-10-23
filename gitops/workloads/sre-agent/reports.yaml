@@ -1,4 +1,4 @@
-# RCA reports are files on this volume: <id>/report.json and <id>/postmortem.md, written by the workflow's store step.
+# RCA reports are files on this volume: <id>/report.json and <id>/rca.md, written by the workflow's store step.
 # The standard class here is kind's local-path provisioner, so the data sits on one node and is lost if the cluster
 # is deleted. On EKS or AKS this claim is a managed disk, or the store step uploads to object storage instead.
 # The first pod to use it pins it to a node, and the writer, the viewer and the cleanup job all follow it (ReadWriteOnce is per node).

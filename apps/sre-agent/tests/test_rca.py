@@ -115,12 +115,12 @@ def test_nothing_obvious_is_unknown_with_low_confidence(monkeypatch):
     assert r.root_cause.category == "unknown" and r.root_cause.confidence == "low"
 
 
-def test_report_is_valid_and_has_postmortem(monkeypatch):
+def test_report_is_valid_and_has_rca_markdown(monkeypatch):
     r = run(monkeypatch, bad=0.9, p99=1.2, slow_span={"name": "inventory.lookup", "duration_ms": 1000.0})
     again = RcaReport.model_validate(r.model_dump())
     assert again.mode == "rule_based"
     for heading in ("## What happened", "## Priority and where the problem is", "## Root cause", "## Impact", "## How to fix it now", "## Observability gaps", "## Timeline"):
-        assert heading in again.postmortem_markdown
+        assert heading in again.rca_markdown
     assert again.evidence and all(e.query for e in again.evidence)
 
 
@@ -132,9 +132,9 @@ def test_store_report_writes_files_to_the_reports_volume(monkeypatch, tmp_path):
     assert activities.store_report(r.model_dump()) == r.id
     folder = tmp_path / r.id
     assert json.loads((folder / "report.json").read_text())["id"] == r.id
-    assert (folder / "postmortem.md").read_text().startswith("# Postmortem")
+    assert (folder / "rca.md").read_text().startswith("# RCA")
     assert activities.store_report(r.model_dump()) == r.id  # a retry overwrites, it does not fail
-    assert sorted(p.name for p in folder.iterdir()) == ["postmortem.md", "report.json"]  # no temp files left behind
+    assert sorted(p.name for p in folder.iterdir()) == ["rca.md", "report.json"]  # no temp files left behind
 
 
 def test_service_derived_from_pod_label():
@@ -171,7 +171,7 @@ def test_latency_report_explains_what_happened_and_how_to_fix(monkeypatch):
     assert any("scripts/drill.sh reset" in step for step in r.how_to_fix.immediate)
     assert any("timeout" in step and "circuit breaker" in step for step in r.how_to_fix.permanent)
     assert any("histogram_quantile" in step for step in r.how_to_fix.verify)
-    assert "## How to fix it now" in r.postmortem_markdown and "## What happened" in r.postmortem_markdown
+    assert "## How to fix it now" in r.rca_markdown and "## What happened" in r.rca_markdown
 
 
 def test_oom_fix_names_the_file_and_the_new_limit(monkeypatch):

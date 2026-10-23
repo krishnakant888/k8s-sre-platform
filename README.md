@@ -2,13 +2,13 @@
 
 A local, production-style platform for a B2B SaaS + AI product, running on upstream Kubernetes (kind) and managed entirely by Argo CD:
 GitOps, the LGTM observability stack, Argo Workflows, a sample API with an SLO, and an **AI SRE agent that investigates alerts on its own**
-and writes a structured RCA and blameless postmortem.
+and writes a structured, blameless RCA.
 
 One command creates the cluster and installs Argo CD. Everything else is pulled from this repo.
 
 ```
 alert fires (Grafana alerting) -> webhook -> Argo Workflow -> SRE agent queries Mimir, Loki, Tempo,
-Kubernetes and Argo CD -> structured RCA + postmortem (files on a volume, JSON log in Loki, optional chat webhook)
+Kubernetes and Argo CD -> structured RCA (files on a volume, JSON log in Loki, optional chat webhook)
 ```
 
 ## Quick start
@@ -44,7 +44,7 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
 3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
-   the reports are files on a volume (`<id>/postmortem.md` and `report.json`): browse them at http://reports.localhost:8080, or `kubectl -n sre-agent exec deploy/rca-viewer -- ls /reports`.
+   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:8080, or `kubectl -n sre-agent exec deploy/rca-viewer -- ls /reports`.
 5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
 
 ## Architecture
