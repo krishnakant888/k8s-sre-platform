@@ -1,0 +1,50 @@
+# creates the buckets loki, tempo and mimir expect, safe to run again
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-buckets
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: aws
+          image: amazon/aws-cli:2.17.0
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -e
+              for b in loki-chunks loki-ruler tempo-traces mimir-blocks; do
+                aws --endpoint-url http://object-store:9000 s3api head-bucket --bucket $b 2>/dev/null \
+                  || aws --endpoint-url http://object-store:9000 s3 mb s3://$b
+              done
+              aws --endpoint-url http://object-store:9000 s3 ls
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: AWS_DEFAULT_REGION, value: us-east-1}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: object-store-credentials, key: accessKey}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: object-store-credentials, key: secretKey}}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 192Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
