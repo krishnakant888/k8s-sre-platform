@@ -333,3 +333,17 @@ def test_timeline_is_in_time_order_and_says_how_long_before_the_alert_a_deploy_l
     times = [t.time for t in r.timeline]
     assert times == sorted(times)
     assert any("min before the alert" in t.event for t in r.timeline)
+
+
+def test_a_big_log_result_keeps_its_summary_fields(monkeypatch):
+    """Regression: an oversized result used to be replaced by a text preview, so the report saw 'no errors' on a busy service."""
+    import json
+
+    long_line = json.dumps({"msg": "dependency call is slow", "pod": "p", "node": "n1", "version": "v1", "dependency": "inventory", "request_id": "r", "level": "warning", "extra": "x" * 400})
+    payload = {"data": {"result": [{"stream": {"pod": "p"}, "values": [[str(1700000000000000000 + i), long_line] for i in range(150)]}]}}
+    monkeypatch.setattr(tools, "_client", httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json=payload))))
+    out = tools.query_logql('{service="x"}', limit=150)
+    assert out["top_messages"] == [("dependency call is slow", 150)] or out["top_messages"] == [["dependency call is slow", 150]]
+    assert out["breakdown"]["node"] == {"n1": 150} and out["breakdown"]["dependency"] == {"inventory": 150}
+    assert out["truncated"] is True and "preview" not in out
+    assert len(json.dumps(out)) <= tools.config.MAX_TOOL_OUTPUT_CHARS

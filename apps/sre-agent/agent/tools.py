@@ -27,10 +27,27 @@ def _clamp_minutes(minutes: int) -> int:
     return max(1, min(int(minutes), config.MAX_RANGE_MINUTES))
 
 
+def _size(obj) -> int:
+    return len(json.dumps(obj, default=str))
+
+
 def _trim(obj):
-    text = json.dumps(obj, default=str)
-    if len(text) > config.MAX_TOOL_OUTPUT_CHARS:
-        return {"truncated": True, "preview": text[: config.MAX_TOOL_OUTPUT_CHARS]}
+    """Keeps a tool result under the output limit. The summary fields (counts, top messages, breakdowns) are what
+    the analysis needs, so it is the long lists of samples that get shortened, never the whole result thrown away."""
+    limit = config.MAX_TOOL_OUTPUT_CHARS
+    if _size(obj) <= limit:
+        return obj
+    original = json.dumps(obj, default=str)
+    obj = dict(obj)
+    lists = [k for k, v in obj.items() if isinstance(v, list) and len(v) > 1]
+    while _size(obj) > limit and lists:
+        biggest = max(lists, key=lambda k: _size(obj[k]))
+        obj[biggest] = obj[biggest][: max(1, len(obj[biggest]) // 2)]
+        if len(obj[biggest]) <= 1:
+            lists.remove(biggest)
+        obj["truncated"] = True
+    if _size(obj) > limit:  # even the summary does not fit: last resort
+        return {"truncated": True, "preview": original[:limit]}
     return obj
 
 
