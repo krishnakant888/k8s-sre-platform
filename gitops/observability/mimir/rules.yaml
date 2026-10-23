@@ -1,0 +1,29 @@
+# rule files evaluated by the mimir ruler (tenant "anonymous" since multitenancy is off)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mimir-rules
+  namespace: observability
+data:
+  platform.yaml: |
+    groups:
+      - name: platform-health
+        rules:
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total[10m]) > 2
+            for: 1m
+            labels: {severity: ticket}
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value | humanize }} times in 10m"
+          - alert: PodOOMKilled
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+            for: 0m
+            labels: {severity: ticket}
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled"
+          - alert: DeploymentReplicasUnavailable
+            expr: kube_deployment_status_replicas_unavailable > 0
+            for: 3m
+            labels: {severity: ticket}
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas"
