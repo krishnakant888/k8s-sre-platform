@@ -1,0 +1,63 @@
+# RCA reports are files on this volume: <id>/report.json and <id>/rca.md, written by the workflow's store step.
+# The standard class here is kind's local-path provisioner, so the data sits on one node and is lost if the cluster
+# is deleted. On EKS or AKS this claim is a managed disk, or the store step uploads to object storage instead.
+# The first pod to use it pins it to a node, and the writer, the viewer and the cleanup job all follow it (ReadWriteOnce is per node).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rca-reports
+  namespace: sre-agent
+  labels: {app.kubernetes.io/name: rca-reports}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+# deletes reports older than the retention, so the volume cannot fill up
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rca-reports-cleanup
+  namespace: sre-agent
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: rca-reports-cleanup}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: cleanup
+              image: busybox:1.37.0
+              env:
+                - {name: RETENTION_DAYS, value: "14"}
+              command:
+                - sh
+                - -c
+                - find /reports -mindepth 1 -maxdepth 1 -type d -mtime +"${RETENTION_DAYS}" -print -exec rm -rf {} +
+              resources:
+                requests: {cpu: 10m, memory: 16Mi}
+                limits: {memory: 64Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              volumeMounts:
+                - {name: reports, mountPath: /reports}
+          volumes:
+            - name: reports
+              persistentVolumeClaim: {claimName: rca-reports}

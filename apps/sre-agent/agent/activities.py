@@ -29,25 +29,15 @@ def analyze(alert: dict, ctx: dict) -> dict:
 
 
 def store_report(report: dict) -> str:
-    """Keeps the report as a ConfigMap (readable with kubectl) and as one json log line (searchable in Loki)."""
+    """Writes report.json and rca.md under <REPORTS_DIR>/<report id>/ (a volume) and logs one json line (searchable in Loki)."""
     r = RcaReport.model_validate(report)
     log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "target_service": r.service, "priority": r.priority.level, "layer": r.fault_domain.layer, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "report": r.model_dump()})
-    token = Path(f"{config.SA_DIR}/token").read_text()
-    body = {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {"name": r.id, "namespace": config.REPORT_NAMESPACE, "labels": {"app.kubernetes.io/part-of": "sre-agent", "sre-agent/report": "true"}},
-        "data": {"report.json": json.dumps(report, indent=2), "postmortem.md": r.postmortem_markdown},
-    }
-    resp = httpx.post(
-        f"{config.K8S_URL}/api/v1/namespaces/{config.REPORT_NAMESPACE}/configmaps",
-        json=body,
-        headers={"Authorization": f"Bearer {token}"},
-        verify=f"{config.SA_DIR}/ca.crt",
-        timeout=15,
-    )
-    if resp.status_code not in (201, 409):  # 409: already stored on a retry
-        resp.raise_for_status()
+    folder = Path(config.REPORTS_DIR) / r.id
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, text in (("report.json", json.dumps(report, indent=2)), ("rca.md", r.rca_markdown)):
+        tmp = folder / f".{name}.tmp"
+        tmp.write_text(text)
+        tmp.replace(folder / name)  # a retry overwrites, and a reader never sees a half written file
     return r.id
 
 

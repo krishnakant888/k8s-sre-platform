@@ -39,6 +39,8 @@ The values were sized from measured usage, not guessed.
 | frontend | 50m | 64Mi | 128Mi | 19Mi |
 | loadgen | 20m | 64Mi | 128Mi | 24Mi |
 | alert-webhook | 50m | 128Mi | 256Mi | 57Mi |
+| RCA viewer (nginx) | 25m | 32Mi | 128Mi | |
+| RCA reports cleanup job | 10m | 16Mi | 64Mi | |
 
 ## Revisit when
 
