@@ -8,6 +8,7 @@ import itertools
 import logging
 import os
 import random
+import threading
 import time
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -156,6 +157,22 @@ def chaos_errors(rate: float = 0.5, seconds: int = 300, x_chaos_token: str | Non
     chaos.update(error_rate=max(0.0, min(rate, 1.0)), until=time.time() + min(seconds, 1800))
     log.warning("chaos errors enabled", extra={"error_rate": chaos["error_rate"], "seconds": seconds})
     return dict(chaos)
+
+
+@app.post("/chaos/oom", status_code=202)
+def chaos_oom(x_chaos_token: str | None = Header(default=None)):
+    """Allocates memory in the background until the kernel kills the container (drill for OOMKilled)."""
+    require_chaos_token(x_chaos_token)
+    log.warning("chaos oom started")
+
+    def hog():
+        blocks = []
+        while True:
+            blocks.append(bytearray(8 * 1024 * 1024))
+            time.sleep(0.05)
+
+    threading.Thread(target=hog, daemon=True).start()
+    return {"oom": "started"}
 
 
 @app.post("/chaos/reset")

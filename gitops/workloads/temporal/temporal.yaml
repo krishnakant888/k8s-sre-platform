@@ -1,0 +1,173 @@
+# temporal server in one pod (auto-setup runs frontend, history, matching and worker services together) plus the web ui.
+# This keeps the footprint small. In production run the official chart with the four services scaled separately.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  namespace: temporal
+  labels: {app.kubernetes.io/name: temporal}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app.kubernetes.io/name: temporal}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: temporal}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false   # service links inject TEMPORAL_UI_PORT=tcp://... which the ui reads as its port
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: temporal
+          image: temporalio/auto-setup:1.26.2
+          ports:
+            - {name: grpc, containerPort: 7233}
+            - {name: metrics, containerPort: 9090}
+          env:
+            - {name: DB, value: postgres12}
+            - {name: DB_PORT, value: "5432"}
+            - {name: POSTGRES_SEEDS, value: temporal-db-rw}
+            - {name: DBNAME, value: temporal}
+            - {name: VISIBILITY_DBNAME, value: temporal_visibility}
+            - {name: SKIP_DB_CREATE, value: "true"}
+            - {name: DEFAULT_NAMESPACE, value: default}
+            - {name: DEFAULT_NAMESPACE_RETENTION, value: 168h}
+            - {name: SKIP_ADD_CUSTOM_SEARCH_ATTRIBUTES, value: "true"}
+            - {name: PROMETHEUS_ENDPOINT, value: "0.0.0.0:9090"}
+            - {name: LOG_LEVEL, value: info}
+            - {name: BIND_ON_IP, value: "0.0.0.0"}
+            - name: TEMPORAL_BROADCAST_ADDRESS
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: temporal-db-app, key: username}}
+            - name: POSTGRES_PWD
+              valueFrom: {secretKeyRef: {name: temporal-db-app, key: password}}
+          startupProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 200m, memory: 384Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # the entrypoint renders its config under /etc/temporal at start
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-frontend
+  namespace: temporal
+  labels: {app.kubernetes.io/name: temporal}
+spec:
+  selector: {app.kubernetes.io/name: temporal}
+  ports:
+    - {name: grpc, port: 7233, targetPort: grpc}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: temporal
+  labels: {app.kubernetes.io/name: temporal-ui}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: temporal-ui}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: temporal-ui}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false   # service links inject TEMPORAL_UI_PORT=tcp://... which the ui reads as its port
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # the ui writes ./config/docker.yaml at start, the image dir is root owned, so give it a writable copy
+        - name: copy-config
+          image: temporalio/ui:2.34.0
+          command: [sh, -c, "cp -r /home/ui-server/config/. /cfg/"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /cfg}
+      volumes:
+        - name: config
+          emptyDir: {}
+      containers:
+        - name: ui
+          image: temporalio/ui:2.34.0
+          volumeMounts:
+            - {name: config, mountPath: /home/ui-server/config}
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-frontend:7233"}
+            - {name: TEMPORAL_CORS_ORIGINS, value: "http://temporal.localhost:8080"}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 192Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: temporal
+spec:
+  selector: {app.kubernetes.io/name: temporal-ui}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: temporal-ui
+  namespace: temporal
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: temporal.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: temporal-ui
+                port: {name: http}

@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+automountServiceAccountToken: true   # needed: reads the cluster API and stores reports as configmaps
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sre-agent-reports
+  namespace: sre-agent
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sre-agent-reports
+  namespace: sre-agent
+subjects:
+  - {kind: ServiceAccount, name: sre-agent, namespace: sre-agent}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sre-agent-reports
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent-worker
+  namespace: sre-agent
+  labels: {app.kubernetes.io/name: sre-agent}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: sre-agent}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: sre-agent}
+    spec:
+      serviceAccountName: sre-agent
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: worker
+          image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+          command: [python, -m, agent.worker]
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-frontend.temporal:7233"}
+            - {name: TASK_QUEUE, value: sre-investigations}
+            - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
+            - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
+              valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
+            - name: NOTIFY_WEBHOOK_URL
+              valueFrom: {secretKeyRef: {name: notify-webhook, key: url, optional: true}}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-webhook
+  namespace: sre-agent
+  labels: {app.kubernetes.io/name: alert-webhook}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: alert-webhook}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: alert-webhook}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: alert-webhook}
+      containers:
+        - name: webhook
+          image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+          command: [uvicorn, "agent.webhook:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-frontend.temporal:7233"}
+            - {name: TASK_QUEUE, value: sre-investigations}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-webhook
+  namespace: sre-agent
+spec:
+  selector: {app.kubernetes.io/name: alert-webhook}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alert-webhook
+  namespace: sre-agent
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: alert-webhook}
