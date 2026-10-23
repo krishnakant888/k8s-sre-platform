@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: demo
+  labels: {app.kubernetes.io/name: loadgen}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: loadgen}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: loadgen}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: loadgen
+          image: ghcr.io/krishnakant888/orders-api:sha-3786bd0bd65f8a990192e7943ff42125c700d469
+          command: [python, -m, app.loadgen]
+          env:
+            - {name: TARGET, value: "http://orders-api"}
+            - {name: RATE, value: "5"}
+          resources:
+            requests: {cpu: 20m, memory: 48Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}

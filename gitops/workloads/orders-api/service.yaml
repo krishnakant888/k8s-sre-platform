@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api
+  namespace: demo
+  labels: {app.kubernetes.io/name: orders-api}
+spec:
+  selector: {app.kubernetes.io/name: orders-api}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orders-api
+  namespace: demo
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: orders.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: orders-api
+                port: {name: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orders-api
+  namespace: demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: orders-api}
