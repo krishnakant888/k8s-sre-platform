@@ -405,7 +405,8 @@ def fault_domain(category: str, sig: dict, ctx: dict) -> FaultDomain:
     if sig.get("has_error_logs") and category in ("dependency_errors", "deploy_regression", "pod_crash", "unknown"):
         app.append(f"the application logged errors: {_top_msgs(sig)}")
     if sig.get("recent_deploy"):
-        app.append(f"a deploy ({sig['recent_deploy']['revision']}) preceded the incident")
+        mins = (ctx["started"] - parse_ts(sig["recent_deploy"]["deployed_at"])) / 60
+        app.append(f"a deploy ({sig['recent_deploy']['revision']}) landed {mins:.0f} min before the alert")
     if sig.get("fault_injection"):
         app.append("a fault injection flag is set inside the application")
 
@@ -509,17 +510,23 @@ def decide_priority(alert: dict, sig: dict, category: str, domain: FaultDomain, 
     user_facing = svc in config.USER_FACING_SERVICES
     bad_peak, bad_now = sig.get("bad_ratio_peak", 0.0), sig.get("bad_ratio_last", 0.0)
     ongoing = bad_now > 0.005 or (sig.get("replicas_min") is not None and sig["replicas_min"] < 1 and sig.get("not_ready"))
-    outage = (sig.get("replicas_min") is not None and sig["replicas_min"] < 1) or sig.get("error_share_peak", 0) >= 0.5 or bad_peak >= 0.5
+    no_replicas = sig.get("replicas_min") is not None and sig["replicas_min"] < 1
+    # an outage is requests failing or nothing serving; slow responses are degraded, serious but not down
+    outage = no_replicas or sig.get("error_share_peak", 0) >= 0.5
+    slow_for_most = not outage and bad_peak >= 0.5
     burn = bad_peak / 0.005 if bad_peak else 0.0
 
     if user_facing:
         why.append(f"`{svc}` serves users")
         if outage:
             level = 1
-            why.append("it is effectively down: " + ("no replicas available" if (sig.get("replicas_min") or 1) < 1 else f"{max(bad_peak, sig.get('error_share_peak', 0)):.0%} of requests failed"))
+            why.append("it is effectively down: " + ("no replicas available" if no_replicas else f"{sig.get('error_share_peak', 0):.0%} of responses were errors"))
+        elif slow_for_most:
+            level = min(level, 2)
+            why.append(f"it is degraded, not down: {bad_peak:.0%} of requests are slower than the 300 ms SLO (p99 {sig.get('p99_peak', 0) * 1000:.0f} ms) but only {sig.get('error_share_peak', 0):.0%} of responses are errors")
         elif bad_peak >= 0.1 or sig.get("p99_peak", 0) > 1.0:
             level = min(level, 2)
-            why.append(f"{bad_peak:.0%} of requests were bad and p99 reached {sig.get('p99_peak', 0) * 1000:.0f} ms")
+            why.append(f"{bad_peak:.0%} of requests were bad (errors or slower than 300 ms) and p99 reached {sig.get('p99_peak', 0) * 1000:.0f} ms")
         if burn >= 14.4:
             level = min(level, 2)
             why.append(f"the error budget burns {burn:.0f}x faster than allowed")
@@ -555,10 +562,12 @@ def analyze_rules(alert: dict, ctx: dict, now: float | None = None) -> RcaReport
 
     timeline = [TimelineEntry(time=iso(started), event=f"alert {alertname} started firing")]
     if sig.get("recent_deploy"):
-        timeline.insert(0, TimelineEntry(time=sig["recent_deploy"]["deployed_at"], event=f"deploy {sig['recent_deploy']['revision']} synced by Argo CD"))
+        mins = (started - parse_ts(sig["recent_deploy"]["deployed_at"])) / 60
+        timeline.append(TimelineEntry(time=sig["recent_deploy"]["deployed_at"], event=f"deploy {sig['recent_deploy']['revision']} synced by Argo CD ({mins:.0f} min before the alert)"))
     for e in sig.get("kill_events", [])[:3]:
         timeline.append(TimelineEntry(time=e["ts"], event=f"{e['reason']}: {e['object']}"))
     timeline.append(TimelineEntry(time=iso(now), event="investigation completed"))
+    timeline.sort(key=lambda t: t.time)
 
     impact = Impact(
         slo="99.5% of requests succeed and finish within 300ms over 28 days",

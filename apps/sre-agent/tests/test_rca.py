@@ -304,3 +304,18 @@ def test_notification_text_names_priority_layer_and_response_time(monkeypatch):
     report = run(monkeypatch, bad=0.9, p99=1.2, slow_span={"name": "inventory.lookup", "duration_ms": 1000.0}).model_dump()
     assert activities.notify(report) is True
     assert report["priority"]["level"] in sent["text"] and "application level" in sent["text"] and "Respond" in sent["text"]
+
+
+def test_slow_but_not_failing_is_degraded_p2_not_an_outage(monkeypatch):
+    r = run(monkeypatch, severity="ticket", bad=1.0, err=0.0, p99=1.9, slow_span={"name": "inventory.lookup", "duration_ms": 1500.0}, chaos=1)
+    assert r.priority.level == "P2"
+    reasons = " ".join(r.priority.rationale)
+    assert "degraded, not down" in reasons and "slower than the 300 ms SLO" in reasons and "failed" not in reasons
+
+
+def test_timeline_is_in_time_order_and_says_how_long_before_the_alert_a_deploy_landed(monkeypatch):
+    dep = {"deployed_at": rca.iso(NOW - 600), "revision": "abc1234", "id": 3}
+    r = run(monkeypatch, bad=0.4, err=0.4, deploy=dep, oom=True, restarts=2)
+    times = [t.time for t in r.timeline]
+    assert times == sorted(times)
+    assert any("min before the alert" in t.event for t in r.timeline)
