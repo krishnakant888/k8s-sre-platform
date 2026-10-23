@@ -24,17 +24,19 @@ features:
   policyExceptions:
     enabled: false
 
-# bitnami/kubectl was removed from docker hub, use the upstream image for the cleanup jobs
+
+# bitnami/kubectl was removed from docker hub, use the upstream image for the cleanup jobs.
+# The two helm hook jobs call /bin/bash, which this distroless image does not have, so they stay off.
 webhooksCleanup:
-  image: &kubectl
-    registry: registry.k8s.io
-    repository: kubectl
-    tag: v1.31.5
+  enabled: false
 policyReportsCleanup:
-  image: *kubectl
+  enabled: false
 cleanupJobs:
   admissionReports:
-    image: *kubectl
+    image: &kubectl
+      registry: registry.k8s.io
+      repository: kubectl
+      tag: v1.31.5
   clusterAdmissionReports:
     image: *kubectl
   ephemeralReports:
