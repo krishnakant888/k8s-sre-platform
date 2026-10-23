@@ -42,14 +42,10 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: apps/orders-api
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
+      - name: scan dependencies
+        run: |
+          docker run --rm -v "$PWD/apps/orders-api:/src:ro" aquasec/trivy:0.58.1 \
+            fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 0 /src
       - name: point the deployment at the new image
         if: github.ref == 'refs/heads/main'
         run: |
