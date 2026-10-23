@@ -43,13 +43,17 @@ ruler:
 alertmanager:
   data_dir: /data/alertmanager
   external_url: http://alerts.localhost:8080/alertmanager
+  # routing lives in Git: tenants without their own config use this file
+  fallback_config_file: /etc/mimir-am/anonymous.yaml
+  persist_interval: 5m
   sharding_ring:
     replication_factor: 1
     kvstore: {store: inmemory}
+# the local backend cannot persist notification state, which kills notifications ~15 minutes after start
 alertmanager_storage:
-  backend: local
-  local:
-    path: /etc/mimir-am
+  backend: filesystem
+  filesystem:
+    dir: /data/alertmanager-storage
 limits:
   compactor_blocks_retention_period: 168h
   ruler_max_rules_per_rule_group: 50
