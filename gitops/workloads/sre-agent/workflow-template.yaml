@@ -69,7 +69,7 @@ spec:
             path: /tmp/in/alert.json
             raw: {data: "{{inputs.parameters.alert}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb8d19bee66f38999312259d3d3328b928afd9c2
+        image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, collect]
         resources:
           requests: {cpu: 50m, memory: 128Mi}
@@ -102,7 +102,7 @@ spec:
             path: /tmp/in/ctx.json
             raw: {data: "{{inputs.parameters.ctx}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb8d19bee66f38999312259d3d3328b928afd9c2
+        image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, analyze]
         env:
           - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
@@ -135,7 +135,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb8d19bee66f38999312259d3d3328b928afd9c2
+        image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, store]
         resources:
           requests: {cpu: 25m, memory: 96Mi}
@@ -164,7 +164,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb8d19bee66f38999312259d3d3328b928afd9c2
+        image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, notify]
         env:
           - name: NOTIFY_WEBHOOK_URL
