@@ -18,6 +18,9 @@ persistence:
   enabled: true
   size: 2Gi
 
+initChownData:
+  enabled: false   # fsGroup already makes the PVC writable, and the root chown fails with dropped caps
+
 resources:
   requests: {cpu: 100m, memory: 192Mi}
   limits: {memory: 512Mi}
