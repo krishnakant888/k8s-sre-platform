@@ -41,7 +41,7 @@ ruler:
   alertmanager_url: http://localhost:8080/alertmanager
   evaluation_interval: 30s
 alertmanager:
-  data_dir: /data/alertmanager
+  data_dir: /data/am-state
   external_url: http://alerts.localhost:8080/alertmanager
   # routing lives in Git: tenants without their own config use this file
   fallback_config_file: /etc/mimir-am/anonymous.yaml
@@ -53,7 +53,7 @@ alertmanager:
 alertmanager_storage:
   backend: filesystem
   filesystem:
-    dir: /data/alertmanager-storage
+    dir: /data/am-store
 limits:
   compactor_blocks_retention_period: 168h
   ruler_max_rules_per_rule_group: 50
