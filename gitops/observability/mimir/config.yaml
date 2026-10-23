@@ -50,23 +50,13 @@ data:
     alertmanager:
       data_dir: /data/alertmanager
       external_url: http://alerts.localhost:8080/alertmanager
-      fallback_config_file: /etc/mimir/alertmanager-fallback.yaml
       sharding_ring:
         replication_factor: 1
         kvstore: {store: inmemory}
     alertmanager_storage:
       backend: local
       local:
-        path: /data/alertmanager-configs
+        path: /etc/mimir-am
     limits:
       compactor_blocks_retention_period: 168h
       ruler_max_rules_per_rule_group: 50
-  alertmanager-fallback.yaml: |
-    route:
-      receiver: default
-      group_by: [alertname, service]
-      group_wait: 10s
-      group_interval: 1m
-      repeat_interval: 1h
-    receivers:
-      - name: default

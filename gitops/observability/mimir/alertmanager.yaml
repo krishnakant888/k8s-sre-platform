@@ -1,0 +1,17 @@
+# per-tenant alertmanager config for the local store (tenant "anonymous"); routing lives in Git
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mimir-alertmanager
+  namespace: observability
+data:
+  anonymous.yaml: |
+    alertmanager_config: |
+      route:
+        receiver: default
+        group_by: [alertname, service]
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 1h
+      receivers:
+        - name: default
