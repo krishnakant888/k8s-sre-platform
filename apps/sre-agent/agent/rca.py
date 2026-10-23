@@ -119,6 +119,9 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     top = logs.get("top_messages", [])
     sig["top_log_messages"] = top
     sig["log_trace_ids"] = [l["trace_id"] for l in logs.get("lines", []) if l.get("trace_id")]
+    sig["log_breakdown"] = logs.get("breakdown", {})
+    sig["log_fields"] = logs.get("fields_present", [])
+    sig["log_total"] = logs.get("total", 0)
     add("loki", q_logs, "top warning/error messages: " + ("; ".join(f"{m!r} x{c}" for m, c in top[:4]) if top else "none"))
 
     # --- traces
@@ -152,6 +155,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     sig["not_ready"] = [p["pod"] for p in pods.get("pods", []) if not p["ready"]]
     sig["pod_restarts_total"] = sum(p["restarts"] for p in pods.get("pods", []))
     sig["pod_names"] = sorted({p["pod"] for p in pods.get("pods", [])})
+    sig["pod_nodes"] = sorted({p["node"] for p in pods.get("pods", []) if p.get("node")})
     sig["exit_codes"] = sorted({(p.get("last_terminated") or {}).get("exit_code") for p in pods.get("pods", []) if (p.get("last_terminated") or {}).get("exit_code") is not None})
     sig["mem_limit"] = next((p["memory_limit"] for p in pods.get("pods", []) if p.get("memory_limit")), None)
     sig["app"] = next((p["app_instance"] for p in pods.get("pods", []) if p.get("app_instance")), svc)
@@ -405,6 +409,20 @@ def fault_domain(category: str, sig: dict, ctx: dict) -> FaultDomain:
     if sig.get("fault_injection"):
         app.append("a fault injection flag is set inside the application")
 
+    # metadata in the log lines: is the problem tied to one node, one replica or one release?
+    bd, total = sig.get("log_breakdown", {}), max(sig.get("log_total", 0), 1)
+    nodes, replicas, versions, deps = bd.get("node", {}), bd.get("pod", {}), bd.get("version", {}), bd.get("dependency", {})
+    if len(nodes) == 1 and len(sig.get("pod_nodes", [])) >= 2:
+        infra.append(f"every error/warning log line came from node `{next(iter(nodes))}` while `{svc}` runs on {len(sig['pod_nodes'])} nodes")
+    if len(replicas) == 1 and len(sig.get("pod_names", [])) >= 2:
+        infra.append(f"every error/warning log line came from one replica (`{next(iter(replicas))}`) of {len(sig['pod_names'])}, so it is tied to that instance or its node")
+    if len(versions) >= 2 and max(versions.values()) / sum(versions.values()) >= 0.8:
+        top_version = max(versions, key=versions.get)
+        app.append(f"{max(versions.values())} of {sum(versions.values())} logged errors come from release `{top_version}` and the other releases are quiet")
+    if deps:
+        name, count = max(deps.items(), key=lambda kv: kv[1])
+        app.append(f"{count} log lines name the dependency `{name}` as the failing or slow call")
+
     if category in ("dependency_latency", "dependency_errors", "deploy_regression"):
         layer = "application"
     elif category == "resource_exhaustion":
@@ -447,8 +465,20 @@ def observability_gaps(category: str, sig: dict, ctx: dict) -> list[str]:
         )
     if category == "dependency_errors" and not sig.get("has_error_logs"):
         gaps.append(f"The failing calls left no error logs. Log every failed dependency call in `{svc}` with the dependency name, status and `trace_id`.")
-    if sig.get("has_error_logs") and sig.get("logs_have_trace_id") is False:
-        gaps.append(f"Error log lines of `{svc}` carry no `trace_id`, so logs cannot be tied to traces. Add the OpenTelemetry trace and span ids to the JSON log record.")
+    if sig.get("has_error_logs"):
+        present = set(sig.get("log_fields", []))
+        wanted = {
+            "request_id": "a request id (propagate `X-Request-ID`, or generate one) on every line, so one request can be followed across services",
+            "trace_id": "the OpenTelemetry `trace_id` and `span_id`, so a log line opens its trace",
+            "version": "the release (`APP_VERSION` set from the image tag), to see if a problem is tied to one release",
+            "node": "the node (`NODE_NAME` from the downward API `spec.nodeName`), to see if a problem is tied to one node",
+            "pod": "the pod name (`POD_NAME` from the downward API)",
+            "route": "the route and `duration_ms` of each request",
+            "error_type": "the error type, message and stack trace on every failure",
+        }
+        missing = [k for k in wanted if k not in present]
+        if missing:
+            gaps.append(f"The log lines of `{svc}` lack " + ", ".join(f"`{k}`" for k in missing) + ". Add: " + "; ".join(wanted[k] for k in missing) + ".")
     if sig.get("error_share_peak", 0) > 0.05 and not sig.get("error_traces"):
         gaps.append(f"5xx responses have no error spans. Record exceptions on the span and set its status to error in `{svc}`.")
     if sig.get("p99_peak", 0) > 0.5 and not sig.get("has_traces"):
