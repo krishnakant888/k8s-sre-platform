@@ -28,7 +28,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: LGTM stack, alloy, alerting
+  description: Alloy and kube-state-metrics (production side). The LGTM stack and Grafana run in the monitoring cluster.
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://grafana.github.io/helm-charts

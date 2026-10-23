@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Create the local Kubernetes cluster (kind), install Calico and Argo CD, then hand over to GitOps.
+"""Create the two local Kubernetes clusters (kind), install Calico and Argo CD in each, then hand over to GitOps.
 
-This is the only imperative step. Everything after it, including the ingress
-controller (ingress-nginx), is synced from Git.
+    monitoring  Mimir, Loki, Tempo, Grafana, alerting. Created first and kept apart from production, so it stays
+                up when the production cluster is down or rebuilt.
+    platform    ingress, policy, workloads, the SRE agent, and the collectors that ship telemetry to monitoring.
 
-    python3 bootstrap/bootstrap.py            # create cluster, seed secrets, install Calico and Argo CD
-    python3 bootstrap/bootstrap.py --destroy  # delete the cluster
+This is the only imperative step. Everything after it, including the ingress controllers, is synced from Git
+by the Argo CD of each cluster.
 
-Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets the platform needs
-with random values (Grafana admin login, the fault injection token). Set ANTHROPIC_API_KEY in the
-environment to also create the key the SRE agent uses for LLM analysis; without it the agent runs
-its rule based analysis. In AWS/Azure this step is replaced by External Secrets.
+    python3 bootstrap/bootstrap.py                         # create both clusters
+    python3 bootstrap/bootstrap.py --only platform         # create (or repair) just one
+    python3 bootstrap/bootstrap.py --destroy --only platform   # delete one, monitoring keeps running
+    python3 bootstrap/bootstrap.py --destroy               # delete both
+
+Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets each cluster needs with random
+values (Grafana admin login in monitoring, the fault injection token in platform). Set ANTHROPIC_API_KEY in the
+environment to also create the key the SRE agent uses for LLM analysis; without it the agent runs its rule based
+analysis. In AWS/Azure this step is replaced by External Secrets.
 """
 import argparse
 import base64
@@ -23,14 +29,28 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CLUSTER = "platform"
-CONTEXT = f"kind-{CLUSTER}"
 ARGOCD_CHART_VERSION = "7.6.12"
 ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
-# namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
-SEED_NAMESPACES = ["observability", "demo", "sre-agent"]
-HOST_PORTS = [8080, 8443]  # see bootstrap/kind-config.yaml
+
+# Order matters: monitoring first, so it is already receiving when the platform cluster starts shipping.
+CLUSTERS = {
+    "monitoring": {
+        "kind_config": ROOT / "bootstrap" / "kind-config-monitoring.yaml",
+        "argocd_values": ROOT / "gitops" / "monitoring" / "argocd" / "values.yaml",
+        "root_app": ROOT / "gitops" / "root" / "root-app-monitoring.yaml",
+        "host_ports": [9080, 9443],  # see the kind config
+        # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
+        "seed_namespaces": ["observability"],
+    },
+    "platform": {
+        "kind_config": ROOT / "bootstrap" / "kind-config.yaml",
+        "argocd_values": ROOT / "gitops" / "argocd" / "values.yaml",
+        "root_app": ROOT / "gitops" / "root" / "root-app.yaml",
+        "host_ports": [8080, 8443],
+        "seed_namespaces": ["demo", "sre-agent"],
+    },
+}
 
 
 def run(*cmd, check=True, capture=False, stdin=None):
@@ -42,8 +62,12 @@ def run(*cmd, check=True, capture=False, stdin=None):
     )
 
 
-def kubectl(*args, **kw):
-    return run("kubectl", "--context", CONTEXT, *args, **kw)
+def context(cluster):
+    return f"kind-{cluster}"
+
+
+def kubectl(cluster, *args, **kw):
+    return run("kubectl", "--context", context(cluster), *args, **kw)
 
 
 def preflight():
@@ -54,106 +78,129 @@ def preflight():
         sys.exit("docker daemon is not reachable")
 
 
-def check_ports():
+def check_ports(cluster):
     """kind publishes these host ports; fail early with a clear message if something else holds them."""
     busy = []
-    for port in HOST_PORTS:
+    for port in CLUSTERS[cluster]["host_ports"]:
         with socket.socket() as s:
             if s.connect_ex(("127.0.0.1", port)) == 0:
                 busy.append(port)
     if busy:
-        sys.exit(f"host port(s) {busy} already in use (a port-forward or another cluster?), free them or change bootstrap/kind-config.yaml")
+        sys.exit(f"host port(s) {busy} already in use (a port-forward or another cluster?), free them or change {CLUSTERS[cluster]['kind_config'].name}")
 
 
-def cluster_exists():
+def cluster_exists(cluster):
     out = run("kind", "get", "clusters", capture=True).stdout
-    return CLUSTER in out.split()
+    return cluster in out.split()
 
 
-def create_cluster():
-    if cluster_exists():
-        print(f"cluster {CLUSTER} already exists, leaving it alone")
+def create_cluster(cluster):
+    if cluster_exists(cluster):
+        print(f"cluster {cluster} already exists, leaving it alone")
         return
-    run("kind", "create", "cluster", "--config", str(ROOT / "bootstrap" / "kind-config.yaml"))
-    # kind has no CNI here (see kind-config.yaml); Calico provides pod networking and NetworkPolicy
-    kubectl("apply", "-f", CALICO_MANIFEST)
-    kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s")
+    run("kind", "create", "cluster", "--config", str(CLUSTERS[cluster]["kind_config"]))
+    # kind has no CNI here (see the kind configs); Calico provides pod networking and NetworkPolicy
+    kubectl(cluster, "apply", "-f", CALICO_MANIFEST)
+    kubectl(cluster, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s")
 
 
-def install_argocd():
+def install_argocd(cluster):
     run("helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm", "--force-update")
     run(
-        "helm", "--kube-context", CONTEXT, "upgrade", "--install", "argocd", "argo/argo-cd",
+        "helm", "--kube-context", context(cluster), "upgrade", "--install", "argocd", "argo/argo-cd",
         "--namespace", ARGOCD_NS, "--create-namespace",
         "--version", ARGOCD_CHART_VERSION,
-        "-f", str(ROOT / "gitops" / "argocd" / "values.yaml"),
+        "-f", str(CLUSTERS[cluster]["argocd_values"]),
         "--wait", "--timeout", "10m",
     )
 
 
-def secret_exists(ns, name):
-    return kubectl("-n", ns, "get", "secret", name, check=False, capture=True).returncode == 0
+def secret_exists(cluster, ns, name):
+    return kubectl(cluster, "-n", ns, "get", "secret", name, check=False, capture=True).returncode == 0
 
 
-def read_secret(ns, name, key):
-    out = kubectl("-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False).stdout
+def read_secret(cluster, ns, name, key):
+    out = kubectl(cluster, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False).stdout
     return base64.b64decode(out).decode() if out else ""
 
 
-def create_secret(ns, name, **literals):
+def create_secret(cluster, ns, name, **literals):
     args = ["-n", ns, "create", "secret", "generic", name]
     args += [f"--from-literal={k}={v}" for k, v in literals.items()]
-    kubectl(*args)
+    kubectl(cluster, *args)
 
 
-def seed_secrets():
-    for ns in SEED_NAMESPACES:
-        manifest = kubectl("create", "namespace", ns, "--dry-run=client", "-o", "yaml", capture=True).stdout
-        kubectl("apply", "-f", "-", stdin=manifest)
+def seed_secrets(cluster):
+    for ns in CLUSTERS[cluster]["seed_namespaces"]:
+        manifest = kubectl(cluster, "create", "namespace", ns, "--dry-run=client", "-o", "yaml", capture=True).stdout
+        kubectl(cluster, "apply", "-f", "-", stdin=manifest)
 
-    if not secret_exists("observability", "grafana-admin"):
-        create_secret("observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
-    if not secret_exists("demo", "orders-api-chaos"):
-        create_secret("demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
+    if cluster == "monitoring":
+        if not secret_exists(cluster, "observability", "grafana-admin"):
+            create_secret(cluster, "observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
+        return
+
+    if not secret_exists(cluster, "demo", "orders-api-chaos"):
+        create_secret(cluster, "demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
 
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if key:
-        kubectl("-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
-        create_secret("sre-agent", "anthropic-api-key", ANTHROPIC_API_KEY=key)
+        kubectl(cluster, "-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
+        create_secret(cluster, "sre-agent", "anthropic-api-key", ANTHROPIC_API_KEY=key)
         print("anthropic-api-key created: the SRE agent will use LLM analysis")
     else:
         print("ANTHROPIC_API_KEY not set: the SRE agent will use rule based analysis")
 
 
-def apply_root_app():
-    kubectl("apply", "-f", str(ROOT / "gitops" / "root" / "root-app.yaml"))
+def apply_root_app(cluster):
+    kubectl(cluster, "apply", "-f", str(CLUSTERS[cluster]["root_app"]))
+
+
+def build(cluster):
+    if not cluster_exists(cluster):
+        check_ports(cluster)
+    create_cluster(cluster)
+    install_argocd(cluster)
+    seed_secrets(cluster)
+    apply_root_app(cluster)
+
+
+def argocd_password(cluster):
+    return read_secret(cluster, ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(initial secret already removed)"
+
+
+def summary(clusters):
+    print("\nEverything else is now deployed by Argo CD from Git. The first sync takes about 10 minutes.")
+    print("URLs work once ingress-nginx has synced.\n")
+    if "monitoring" in clusters:
+        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("monitoring", "observability", "grafana-admin", "admin-password"))
+        print("Argo CD (mon.)  http://argocd-monitoring.localhost:9080    admin / " + argocd_password("monitoring"))
+    if "platform" in clusters:
+        print("Argo CD (prod)  http://argocd.localhost:8080               admin / " + argocd_password("platform"))
+        print("Workflows       http://workflows.localhost:8080")
+        print("Orders          http://orders.localhost:8080/orders")
+    print()
+    for c in clusters:
+        print(f"Watch {c}:  kubectl --context {context(c)} -n argocd get applications")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--destroy", action="store_true")
+    ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of both")
     args = ap.parse_args()
+
+    clusters = [args.only] if args.only else list(CLUSTERS)
 
     preflight()
     if args.destroy:
-        run("kind", "delete", "cluster", "--name", CLUSTER)
+        for c in reversed(clusters):  # platform first, monitoring last
+            run("kind", "delete", "cluster", "--name", c)
         return
 
-    if not cluster_exists():
-        check_ports()
-    create_cluster()
-    install_argocd()
-    seed_secrets()
-    apply_root_app()
-
-    argocd_pw = read_secret(ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(initial secret already removed)"
-    print("\nEverything else is now deployed by Argo CD from Git. The first sync takes about 10 minutes.")
-    print("URLs work once ingress-nginx has synced.\n")
-    print("Argo CD   http://argocd.localhost:8080    admin / " + argocd_pw)
-    print("Grafana   http://grafana.localhost:8080   admin / " + read_secret("observability", "grafana-admin", "admin-password"))
-    print("Workflows http://workflows.localhost:8080")
-    print("Orders    http://orders.localhost:8080/orders")
-    print("\nWatch it come up:  kubectl --context", CONTEXT, "-n argocd get applications")
+    for c in clusters:
+        build(c)
+    summary(clusters)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ containerSecurityContext:
 
 grafana.ini:
   server:
-    root_url: http://grafana.localhost:8080
+    root_url: http://grafana.localhost:9080   # Grafana runs in the monitoring cluster (kind maps it to host :9080)
   log:
     mode: console
   log.console:

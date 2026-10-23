@@ -1,5 +1,6 @@
-# cross-namespace and API server access for the observability namespace.
+# cross-namespace and API server access for the observability namespace of the production cluster.
 # default-deny and same-namespace traffic come from platform-base.
+# Mimir, Loki, Tempo and Grafana are not here: they run in the monitoring cluster (gitops/monitoring).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -54,41 +55,23 @@ spec:
         - {port: 4317, protocol: TCP}
         - {port: 4318, protocol: TCP}
 ---
+# alloy ships metrics, logs and traces to the monitoring cluster through NodePorts on its kind nodes
+# (addresses on the shared Docker network, 172.16.0.0/12). In a cloud setup this is an internal load balancer.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-alert-webhook-egress
+  name: allow-ship-to-monitoring
   namespace: observability
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: grafana   # grafana alerting calls the agent webhook
+      app.kubernetes.io/name: alloy
   policyTypes: [Egress]
   egress:
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: sre-agent
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: alert-webhook
+        - ipBlock:
+            cidr: 172.16.0.0/12
       ports:
-        - {port: 8080, protocol: TCP}
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-query-from-workloads
-  namespace: observability
-spec:
-  podSelector:
-    matchExpressions:
-      - key: app.kubernetes.io/name
-        operator: In
-        values: [mimir, loki, tempo]
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: sre-agent
+        - {port: 30900, protocol: TCP}   # mimir
+        - {port: 30310, protocol: TCP}   # loki
+        - {port: 30417, protocol: TCP}   # tempo otlp

@@ -1,0 +1,60 @@
+# Extra rules for the observability namespace of the monitoring cluster.
+# default-deny, DNS, same-namespace and ingress-nginx traffic come from platform-base (gitops/platform/base/observability.yaml).
+#
+# The production cluster reaches this one through NodePorts on the kind nodes (see gitops/monitoring/exposure), so the
+# sources below are node addresses on the shared Docker network (172.16.0.0/12), not pods.
+# In a cloud setup replace these with internal load balancers plus TLS and tenant auth.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-egress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      platform.io/api-access: "true"
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+        - {port: 10250, protocol: TCP}   # kubelet, for cadvisor
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingest-from-production
+  namespace: observability
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [mimir, loki, tempo]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 172.16.0.0/12
+      ports:
+        - {port: 8080, protocol: TCP}   # mimir push and query
+        - {port: 3100, protocol: TCP}   # loki push and query
+        - {port: 3200, protocol: TCP}   # tempo query
+        - {port: 4317, protocol: TCP}   # tempo otlp
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alert-webhook-egress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana   # grafana alerting calls the SRE agent webhook in the production cluster
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 172.16.0.0/12
+      ports:
+        - {port: 30880, protocol: TCP}

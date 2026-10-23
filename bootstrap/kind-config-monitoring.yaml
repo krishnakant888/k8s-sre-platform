@@ -1,0 +1,16 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: monitoring
+networking:
+  # same reason as the production cluster: kindnet does not enforce NetworkPolicy, bootstrap.py installs Calico
+  disableDefaultCNI: true
+  podSubnet: 192.168.0.0/16   # pod networks of the two clusters never meet, traffic between them goes node to node
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.0
+    extraPortMappings:
+      # host :9080 -> ingress-nginx http NodePort, host :9443 -> https NodePort (production uses 8080/8443)
+      - {containerPort: 30080, hostPort: 9080, protocol: TCP}
+      - {containerPort: 30443, hostPort: 9443, protocol: TCP}
+  - role: worker
+    image: kindest/node:v1.31.0

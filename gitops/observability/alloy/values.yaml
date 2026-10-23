@@ -1,4 +1,6 @@
-# One collector for everything: scrapes metrics to mimir, tails pod logs to loki, takes otlp traces to tempo.
+# One collector for everything in the production cluster: scrapes metrics, tails pod logs, takes otlp traces.
+# The stores (Mimir, Loki, Tempo) run in the separate monitoring cluster, so everything is shipped there through the
+# NodePorts of gitops/monitoring/exposure. kind nodes share a Docker network, which resolves container names.
 # Runs as a single deployment, logs come through the kubernetes API so no hostPath is needed.
 crds:
   create: false   # PodLogs CRD is not used, and the observability project may not create CRDs
@@ -45,9 +47,9 @@ alloy:
       // ---------- metrics ----------
       prometheus.remote_write "mimir" {
         endpoint {
-          url = "http://mimir:8080/api/v1/push"
+          url = "http://monitoring-control-plane:30900/api/v1/push"
         }
-        external_labels = {cluster = "local"}
+        external_labels = {cluster = "platform"}
       }
 
       // pods that opt in with prometheus.io/scrape: "true" (+ port, path)
@@ -97,7 +99,6 @@ alloy:
         scrape_interval = "30s"
         targets = [
           {"__address__" = "kube-state-metrics:8080", "job" = "kube-state-metrics"},
-          {"__address__" = "mimir:8080", "job" = "mimir"},
           {"__address__" = "alloy:12345", "job" = "alloy"},
         ]
         forward_to = [prometheus.remote_write.mimir.receiver]
@@ -131,7 +132,7 @@ alloy:
       // ---------- logs ----------
       loki.write "loki" {
         endpoint {
-          url = "http://loki:3100/loki/api/v1/push"
+          url = "http://monitoring-control-plane:30310/loki/api/v1/push"
         }
       }
 
@@ -184,7 +185,7 @@ alloy:
 
       otelcol.exporter.otlp "tempo" {
         client {
-          endpoint = "tempo:4317"
+          endpoint = "monitoring-control-plane:30417"
           tls {
             insecure = true
           }

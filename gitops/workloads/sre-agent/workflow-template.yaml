@@ -71,6 +71,10 @@ spec:
       container:
         image: ghcr.io/krishnakant888/sre-agent:sha-59978ec5439f6e3827e47d3b57d0a4cfe4a8ef53
         command: [python, -m, agent.steps, collect]
+        env:   # the stores run in the monitoring cluster (NodePorts, see gitops/monitoring/exposure)
+          - {name: MIMIR_URL, value: "http://monitoring-control-plane:30900/prometheus"}
+          - {name: LOKI_URL, value: "http://monitoring-control-plane:30310"}
+          - {name: TEMPO_URL, value: "http://monitoring-control-plane:30320"}
         resources:
           requests: {cpu: 100m, memory: 128Mi}
           limits: {memory: 512Mi}

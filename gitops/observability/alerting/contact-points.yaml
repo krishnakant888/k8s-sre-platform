@@ -19,7 +19,7 @@ data:
             type: webhook
             disableResolveMessage: true
             settings:
-              url: http://alert-webhook.sre-agent:8080/alertmanager
+              url: http://platform-control-plane:30880/alertmanager   # NodePort of alert-webhook-external in the production cluster
               httpMethod: POST
               maxAlerts: 5
     policies:

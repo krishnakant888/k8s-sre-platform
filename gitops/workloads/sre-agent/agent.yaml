@@ -105,6 +105,18 @@ spec:
   ports:
     - {name: http, port: 8080, targetPort: http}
 ---
+# Grafana alerting runs in the monitoring cluster and posts here: monitoring -> platform-control-plane:30880
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-webhook-external
+  namespace: sre-agent
+spec:
+  type: NodePort
+  selector: {app.kubernetes.io/name: alert-webhook}
+  ports:
+    - {name: http, port: 8080, targetPort: http, nodePort: 30880}
+---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

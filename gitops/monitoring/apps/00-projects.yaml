@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: Monitoring cluster add-ons (argocd, ingress-nginx, base namespaces)
+  sourceRepos:
+    - https://github.com/krishnakant888/k8s-sre-platform.git
+    - https://argoproj.github.io/argo-helm
+    - https://kubernetes.github.io/ingress-nginx
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: LGTM stack, alloy, alerting (monitoring cluster)
+  sourceRepos:
+    - https://github.com/krishnakant888/k8s-sre-platform.git
+    - https://grafana.github.io/helm-charts
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: observability
+  clusterResourceWhitelist:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding

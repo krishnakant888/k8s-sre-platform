@@ -32,4 +32,4 @@ case "${1:-}" in
   *) sed -n '2,9p' "$0"; exit 1 ;;
 esac
 
-echo "watch: http://grafana.localhost:8080/d/orders-api   reports: http://reports.localhost:8080"
+echo "watch: http://grafana.localhost:9080/d/orders-api   reports: http://reports.localhost:8080"
