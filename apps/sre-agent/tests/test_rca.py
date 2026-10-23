@@ -285,3 +285,22 @@ def test_log_query_tallies_pod_node_and_release_and_keeps_request_ids(monkeypatc
     assert out["breakdown"]["dependency"] == {"inventory": 3} and out["breakdown"]["error_type"] == {"DependencyUnavailable": 3}
     assert {"request_id", "node", "version", "error_type"} <= set(out["fields_present"])
     assert out["lines"][0]["request_id"] == "r3"
+
+
+@pytest.mark.parametrize("module", ["activities", "steps", "incident", "webhook", "llm", "rca", "tools", "models", "logging_setup", "config"])
+def test_every_module_imports(module):
+    """A syntax or import error in a module the other tests never load only shows up when a real alert arrives."""
+    import importlib
+
+    importlib.import_module(f"agent.{module}")
+
+
+def test_notification_text_names_priority_layer_and_response_time(monkeypatch):
+    from agent import activities
+
+    sent = {}
+    monkeypatch.setattr(activities.config, "NOTIFY_WEBHOOK_URL", "http://hook")
+    monkeypatch.setattr(activities.httpx, "post", lambda url, json, timeout: type("R", (), {"raise_for_status": lambda self: None})() if sent.update(text=json["text"]) is None else None)
+    report = run(monkeypatch, bad=0.9, p99=1.2, slow_span={"name": "inventory.lookup", "duration_ms": 1000.0}).model_dump()
+    assert activities.notify(report) is True
+    assert report["priority"]["level"] in sent["text"] and "application level" in sent["text"] and "Respond" in sent["text"]
