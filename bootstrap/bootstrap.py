@@ -17,6 +17,7 @@ import base64
 import os
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
 SEED_NAMESPACES = ["observability", "demo", "sre-agent"]
+HOST_PORTS = [8080, 8444]  # see bootstrap/kind-config.yaml
 
 
 def run(*cmd, check=True, capture=False, stdin=None):
@@ -50,6 +52,17 @@ def preflight():
         sys.exit(f"missing on PATH: {', '.join(missing)}")
     if run("docker", "info", check=False, capture=True).returncode != 0:
         sys.exit("docker daemon is not reachable")
+
+
+def check_ports():
+    """kind publishes these host ports; fail early with a clear message if something else holds them."""
+    busy = []
+    for port in HOST_PORTS:
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                busy.append(port)
+    if busy:
+        sys.exit(f"host port(s) {busy} already in use (a port-forward or another cluster?), free them or change bootstrap/kind-config.yaml")
 
 
 def cluster_exists():
@@ -126,6 +139,8 @@ def main():
         run("kind", "delete", "cluster", "--name", CLUSTER)
         return
 
+    if not cluster_exists():
+        check_ports()
     create_cluster()
     install_argocd()
     seed_secrets()
