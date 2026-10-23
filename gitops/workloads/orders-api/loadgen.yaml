@@ -26,7 +26,7 @@ spec:
             - {name: TARGET, value: "http://orders-api"}
             - {name: RATE, value: "5"}
           resources:
-            requests: {cpu: 20m, memory: 48Mi}
+            requests: {cpu: 20m, memory: 64Mi}
             limits: {memory: 128Mi}
           securityContext:
             allowPrivilegeEscalation: false

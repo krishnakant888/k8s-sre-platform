@@ -43,7 +43,7 @@ spec:
             periodSeconds: 20
             failureThreshold: 6
           resources:
-            requests: {cpu: 100m, memory: 256Mi}
+            requests: {cpu: 200m, memory: 512Mi}
             limits: {memory: 1Gi}
           securityContext:
             allowPrivilegeEscalation: false

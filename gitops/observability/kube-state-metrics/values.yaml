@@ -4,8 +4,8 @@ podLabels:
   platform.io/api-access: "true"
 
 resources:
-  requests: {cpu: 20m, memory: 64Mi}
-  limits: {memory: 160Mi}
+  requests: {cpu: 25m, memory: 64Mi}
+  limits: {memory: 256Mi}
 
 securityContext:
   enabled: true

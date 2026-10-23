@@ -1,8 +1,8 @@
 fullnameOverride: sealed-secrets-controller
 
 resources:
-  requests: {cpu: 25m, memory: 48Mi}
-  limits: {memory: 128Mi}
+  requests: {cpu: 25m, memory: 64Mi}
+  limits: {memory: 256Mi}
 
 securityContext:
   runAsNonRoot: true

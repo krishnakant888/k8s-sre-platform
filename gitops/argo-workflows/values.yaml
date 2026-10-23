@@ -7,8 +7,8 @@ crds:
 controller:
   workflowNamespaces: [sre-agent]
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
   podAnnotations:
     prometheus.io/scrape: "true"
     prometheus.io/port: "9090"
@@ -31,8 +31,8 @@ executor:
   image:
     nonroot: true
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
   securityContext:
     runAsNonRoot: true
     runAsUser: 10001
@@ -57,7 +57,7 @@ server:
   podAnnotations:
     prometheus.io/scrape: "false"
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
+    requests: {cpu: 50m, memory: 128Mi}
     limits: {memory: 256Mi}
   ingress:
     enabled: true

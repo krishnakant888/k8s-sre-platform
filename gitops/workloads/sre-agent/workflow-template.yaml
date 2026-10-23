@@ -72,8 +72,8 @@ spec:
         image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, collect]
         resources:
-          requests: {cpu: 50m, memory: 128Mi}
-          limits: {memory: 384Mi}
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -109,8 +109,8 @@ spec:
           - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
         resources:
-          requests: {cpu: 50m, memory: 128Mi}
-          limits: {memory: 384Mi}
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 768Mi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -138,7 +138,7 @@ spec:
         image: ghcr.io/krishnakant888/sre-agent:sha-ca1513fb60ecbc12dd72c44ca460d2948509d161
         command: [python, -m, agent.steps, store]
         resources:
-          requests: {cpu: 25m, memory: 96Mi}
+          requests: {cpu: 50m, memory: 64Mi}
           limits: {memory: 256Mi}
         securityContext:
           allowPrivilegeEscalation: false
@@ -170,7 +170,7 @@ spec:
           - name: NOTIFY_WEBHOOK_URL
             valueFrom: {secretKeyRef: {name: notify-webhook, key: url, optional: true}}
         resources:
-          requests: {cpu: 25m, memory: 96Mi}
+          requests: {cpu: 50m, memory: 64Mi}
           limits: {memory: 256Mi}
         securityContext:
           allowPrivilegeEscalation: false
