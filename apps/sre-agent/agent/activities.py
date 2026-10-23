@@ -14,7 +14,7 @@ log = logging.getLogger("sre-agent")
 @activity.defn
 def collect_evidence(alert: dict) -> dict:
     ctx = rca.gather(alert)
-    log.info("evidence gathered", extra={"alert": alert.get("labels", {}).get("alertname"), "service": ctx["service"], "evidence_items": len(ctx["evidence"])})
+    log.info("evidence gathered", extra={"alert": alert.get("labels", {}).get("alertname"), "target_service": ctx["service"], "evidence_items": len(ctx["evidence"])})
     return ctx
 
 
@@ -35,7 +35,7 @@ def analyze(alert: dict, ctx: dict) -> dict:
 def store_report(report: dict) -> str:
     """Keeps the report as a ConfigMap (readable with kubectl) and as one json log line (searchable in Loki)."""
     r = RcaReport.model_validate(report)
-    log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "service": r.service, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "report": r.model_dump()})
+    log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "target_service": r.service, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "report": r.model_dump()})
     token = Path(f"{config.SA_DIR}/token").read_text()
     body = {
         "apiVersion": "v1",
