@@ -53,6 +53,9 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: NODE_NAME   # on every log line, so a node level problem shows up as errors from one node
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: ENVIRONMENT, value: local}
             - name: CHAOS_TOKEN
               valueFrom: {secretKeyRef: {name: orders-api-chaos, key: CHAOS_TOKEN}}
           startupProbe:

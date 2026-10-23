@@ -4,6 +4,7 @@ Every function here is safe to hand to a model: it only reads, clamps its time r
 and returns small json friendly dicts.
 """
 import calendar
+import collections
 import json
 import re
 import time
@@ -78,25 +79,43 @@ def query_logql(query: str, minutes: int = 30, limit: int = 100, end: float | No
     )
     r.raise_for_status()
     lines, counts = [], {}
+    # who logged it: tallies of the metadata in the log lines show if a problem is tied to one pod, node or release
+    breakdown = {k: collections.Counter() for k in ("pod", "node", "version", "error_type", "dependency")}
+    fields_present = set()
     for stream in r.json()["data"]["result"]:
         for ts, line in stream["values"]:
             try:
                 entry = json.loads(line)
             except ValueError:
                 entry = {"msg": line[:300]}
+            fields_present.update(entry)
             msg = entry.get("msg", "")
             counts[msg] = counts.get(msg, 0) + 1
+            for key, tally in breakdown.items():
+                value = entry.get(key) or (stream["stream"].get(key) if key == "pod" else None)
+                if value:
+                    tally[str(value)] += 1
             lines.append(
                 {
                     "ts": int(ts) // 1_000_000_000,
                     "pod": stream["stream"].get("pod"),
                     "line": redact(json.dumps(entry)[:400]),
                     "trace_id": entry.get("trace_id"),
+                    "request_id": entry.get("request_id"),
                 }
             )
     lines.sort(key=lambda x: -x["ts"])
     top = sorted(counts.items(), key=lambda kv: -kv[1])[:8]
-    return _trim({"query": query, "total": len(lines), "top_messages": top, "lines": lines[:15]})
+    return _trim(
+        {
+            "query": query,
+            "total": len(lines),
+            "top_messages": top,
+            "breakdown": {k: dict(c.most_common(5)) for k, c in breakdown.items() if c},
+            "fields_present": sorted(fields_present),
+            "lines": lines[:15],
+        }
+    )
 
 
 def search_traces(traceql: str, minutes: int = 30, limit: int = 5, end: float | None = None) -> dict:
@@ -174,6 +193,7 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
                     "last_terminated": {"reason": last.get("reason"), "exit_code": last.get("exitCode"), "at": last.get("finishedAt")} if last else None,
                     "started_at": p["status"].get("startTime"),
                     "memory_limit": limits.get(cs.get("name")),
+                    "node": p["spec"].get("nodeName"),
                     "app_instance": p["metadata"].get("labels", {}).get("app.kubernetes.io/instance"),
                 }
             )

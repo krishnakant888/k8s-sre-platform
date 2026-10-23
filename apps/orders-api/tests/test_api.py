@@ -70,3 +70,79 @@ def test_logs_are_json_with_fields_and_trace_ids():
         entry = json.loads(JsonFormatter("orders-api").format(record))
         assert entry["trace_id"] == format(span.get_span_context().trace_id, "032x")
     assert entry["service"] == "orders-api" and entry["order_id"] == 7 and entry["level"] == "info"
+
+
+def capture_logs():
+    """Collects every record of the service logger as the parsed json line that would be written to stdout."""
+    from app.logging_setup import JsonFormatter
+
+    lines = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            lines.append(json.loads(JsonFormatter("orders-api").format(record)))
+
+    handler = Collect()
+    main.log.addHandler(handler)
+    return lines, handler
+
+
+def test_request_log_has_the_metadata_to_pinpoint_an_issue(monkeypatch):
+    monkeypatch.setenv("APP_VERSION", "sha-abc1234")
+    monkeypatch.setenv("POD_NAME", "orders-api-xyz")
+    monkeypatch.setenv("NODE_NAME", "platform-worker2")
+    monkeypatch.setenv("POD_NAMESPACE", "demo")
+    lines, handler = capture_logs()
+    try:
+        r = client.get("/orders", headers={"user-agent": "curl/8", "x-forwarded-for": "10.1.2.3, 10.9.9.9", "x-request-id": "req-42"})
+    finally:
+        main.log.removeHandler(handler)
+    assert r.headers["x-request-id"] == "req-42"
+    entry = next(l for l in lines if l["msg"] == "request handled")
+    for field in ("ts", "level", "service", "version", "namespace", "pod", "node", "request_id", "method", "route", "path", "status", "duration_ms", "dependency_ms", "client_ip", "user_agent", "fault_injected"):
+        assert field in entry, field
+    assert entry["request_id"] == "req-42" and entry["client_ip"] == "10.1.2.3" and entry["version"] == "sha-abc1234" and entry["node"] == "platform-worker2"
+
+
+def test_failed_dependency_call_names_the_dependency_and_shares_the_request_id():
+    lines, handler = capture_logs()
+    try:
+        client.post("/chaos/errors?rate=1&seconds=60", headers={"x-chaos-token": "secret"})
+        r = client.get("/orders")
+    finally:
+        main.log.removeHandler(handler)
+        client.post("/chaos/reset", headers={"x-chaos-token": "secret"})
+    failed = next(l for l in lines if l["msg"] == "inventory lookup failed")
+    assert (failed["dependency"], failed["operation"], failed["outcome"], failed["error_type"]) == ("inventory", "lookup", "error", "DependencyUnavailable")
+    assert failed["request_id"] == r.headers["x-request-id"]
+    request_line = next(l for l in lines if l["msg"] == "request handled" and l.get("status") == 500)
+    assert request_line["request_id"] == failed["request_id"] and request_line["fault_injected"] is True
+
+
+def test_slow_dependency_shows_up_as_dependency_ms():
+    lines, handler = capture_logs()
+    try:
+        client.post("/chaos/latency?ms=400&seconds=60", headers={"x-chaos-token": "secret"})
+        client.get("/orders")
+    finally:
+        main.log.removeHandler(handler)
+        client.post("/chaos/reset", headers={"x-chaos-token": "secret"})
+    request_line = next(l for l in lines if l["msg"] == "request handled" and l["route"] == "/orders")
+    assert request_line["dependency_ms"] >= 400 and request_line["duration_ms"] >= request_line["dependency_ms"]
+    assert any(l["msg"] == "dependency call is slow" and l["dependency"] == "inventory" for l in lines)
+
+
+def test_unhandled_exception_is_logged_with_type_stack_and_request_id(monkeypatch):
+    async def boom(_item):
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(main, "lookup_stock", boom)
+    lines, handler = capture_logs()
+    try:
+        r = TestClient(main.app, raise_server_exceptions=False).get("/orders")
+    finally:
+        main.log.removeHandler(handler)
+    assert r.status_code == 500 and r.json()["request_id"]
+    err = next(l for l in lines if l["msg"] == "unhandled exception")
+    assert err["error_type"] == "RuntimeError" and "kaput" in err["error_message"] and "Traceback" in err["stack"]
+    assert err["request_id"] == r.json()["request_id"]

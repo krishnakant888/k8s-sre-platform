@@ -18,7 +18,7 @@ def series(value, key="max"):
     return {"series": [{"labels": {}, "min": value, "max": value, "avg": value, "last": value}]}
 
 
-def fake_tools(monkeypatch, *, bad=0.0, p99=0.05, err=0.0, replicas=2, restarts=0, logs=None, slow_span=None, oom=False, deploy=None, chaos=0, pods_error=None, node_down=False, throttle=0.0, mem_growth=1.0, exit_code=137, replicas_min_override=None, severity="page"):
+def fake_tools(monkeypatch, *, bad=0.0, p99=0.05, err=0.0, replicas=2, restarts=0, logs=None, slow_span=None, oom=False, deploy=None, chaos=0, pods_error=None, node_down=False, throttle=0.0, mem_growth=1.0, exit_code=137, replicas_min_override=None, severity="page", log_breakdown=None, log_fields=None, pod_nodes=("n1", "n2")):
     """Replace the observability calls with canned answers for one scenario."""
 
     def call(name, args):
@@ -47,7 +47,9 @@ def fake_tools(monkeypatch, *, bad=0.0, p99=0.05, err=0.0, replicas=2, restarts=
             return series(bad)
         if name == "query_logql":
             lines = logs or []
-            return {"top_messages": [(m, 10) for m in lines], "lines": [{"ts": 1, "pod": "p", "line": "{}", "trace_id": "t1"}] if lines else [], "total": len(lines)}
+            default_fields = ["request_id", "trace_id", "version", "node", "pod", "route", "error_type", "msg"]
+            return {"top_messages": [(m, 10) for m in lines], "lines": [{"ts": 1, "pod": "p", "line": "{}", "trace_id": "t1"}] if lines else [], "total": len(lines) * 10,
+                    "breakdown": log_breakdown or {}, "fields_present": default_fields if log_fields is None else log_fields}
         if name == "search_traces":
             return {"traces": [{"trace_id": "t1", "root": "GET /orders", "duration_ms": 900}]} if slow_span or logs else {"traces": []}
         if name == "get_trace":
@@ -57,7 +59,10 @@ def fake_tools(monkeypatch, *, bad=0.0, p99=0.05, err=0.0, replicas=2, restarts=
             if pods_error:
                 return {"error": pods_error}
             last = {"reason": "OOMKilled" if oom else "Error", "exit_code": exit_code, "at": "x"} if (oom or exit_code != 137) else None
-            return {"pods": [{"pod": "orders-api-1", "ready": True, "restarts": 1 if oom else 0, "last_terminated": last, "memory_limit": "768Mi", "app_instance": "orders-api"}]}
+            return {"pods": [
+                {"pod": "orders-api-1", "ready": True, "restarts": 1 if oom else 0, "last_terminated": last, "memory_limit": "768Mi", "app_instance": "orders-api", "node": pod_nodes[0]},
+                {"pod": "orders-api-2", "ready": True, "restarts": 0, "last_terminated": None, "memory_limit": "768Mi", "app_instance": "orders-api", "node": pod_nodes[1]},
+            ]}
         if name == "get_k8s_events":
             return {"events": [{"ts": rca.iso(NOW - 200), "type": "Warning", "reason": "Killing", "object": "orders-api-1", "message": "m"}] if oom else []}
         if name == "get_recent_deploys":
@@ -241,3 +246,42 @@ def test_platform_component_without_user_impact_is_capped_at_p3(monkeypatch):
     r = rca.analyze_rules(alert, ctx, now=NOW)
     assert r.priority.level in ("P3", "P4")
     assert any("platform component" in x for x in r.priority.rationale)
+
+
+def test_errors_from_one_node_and_one_replica_point_at_infrastructure(monkeypatch):
+    r = run(monkeypatch, restarts=3, replicas=1, logs=["connection reset"], log_breakdown={"node": {"n1": 9}, "pod": {"orders-api-1": 9}})
+    assert r.root_cause.category == "pod_crash"
+    assert r.fault_domain.layer == "infrastructure"
+    reasons = " ".join(r.fault_domain.reasoning)
+    assert "node `n1`" in reasons and "one replica" in reasons
+
+
+def test_errors_from_one_release_point_at_the_application(monkeypatch):
+    r = run(monkeypatch, bad=0.4, err=0.4, logs=["inventory backend unavailable"], log_breakdown={"version": {"sha-new": 9, "sha-old": 1}, "dependency": {"inventory": 10}})
+    assert r.fault_domain.layer == "application"
+    reasons = " ".join(r.fault_domain.reasoning)
+    assert "release `sha-new`" in reasons and "dependency `inventory`" in reasons
+
+
+def test_missing_log_fields_become_an_observability_gap(monkeypatch):
+    r = run(monkeypatch, bad=0.4, err=0.4, logs=["boom"], log_fields=["msg", "level", "ts"])
+    gap = next(g for g in r.observability_gaps if "lack" in g)
+    for field in ("request_id", "trace_id", "version", "node", "error_type"):
+        assert f"`{field}`" in gap
+    assert "downward API" in gap
+
+
+def test_log_query_tallies_pod_node_and_release_and_keeps_request_ids(monkeypatch):
+    import json
+
+    def entry(node, version, rid):
+        return json.dumps({"msg": "inventory lookup failed", "pod": "p-" + node, "node": node, "version": version, "dependency": "inventory", "error_type": "DependencyUnavailable", "request_id": rid, "level": "error"})
+
+    payload = {"data": {"result": [{"stream": {"pod": "p-n1"}, "values": [["1700000000000000000", entry("n1", "v2", "r1")], ["1700000001000000000", entry("n1", "v2", "r2")]]},
+                                   {"stream": {"pod": "p-n2"}, "values": [["1700000002000000000", entry("n2", "v1", "r3")]]}]}}
+    monkeypatch.setattr(tools, "_client", httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json=payload))))
+    out = tools.query_logql('{service="x"}')
+    assert out["breakdown"]["node"] == {"n1": 2, "n2": 1} and out["breakdown"]["version"] == {"v2": 2, "v1": 1}
+    assert out["breakdown"]["dependency"] == {"inventory": 3} and out["breakdown"]["error_type"] == {"DependencyUnavailable": 3}
+    assert {"request_id", "node", "version", "error_type"} <= set(out["fields_present"])
+    assert out["lines"][0]["request_id"] == "r3"
