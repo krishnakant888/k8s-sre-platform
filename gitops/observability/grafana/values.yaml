@@ -1,0 +1,126 @@
+replicas: 1
+
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+
+podLabels:
+  platform.io/api-access: "true"   # dashboard sidecar watches configmaps
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hosts: [grafana.localhost]
+  path: /
+
+persistence:
+  enabled: true
+  size: 2Gi
+
+resources:
+  requests: {cpu: 100m, memory: 192Mi}
+  limits: {memory: 512Mi}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  runAsGroup: 472
+  fsGroup: 472
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false   # grafana writes plugins and its db under /var/lib/grafana (the PVC) and /tmp
+  capabilities:
+    drop: [ALL]
+
+grafana.ini:
+  server:
+    root_url: http://grafana.localhost:8080
+  log:
+    mode: console
+  log.console:
+    format: json
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+  auth.anonymous:
+    enabled: false
+  users:
+    allow_sign_up: false
+  unified_alerting:
+    enabled: true
+  feature_toggles:
+    enable: traceqlEditor tempoSearch
+
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: observability
+    folderAnnotation: grafana_folder
+    provider:
+      foldersFromFilesStructure: true
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        uid: mimir
+        type: prometheus
+        access: proxy
+        url: http://mimir:8080/prometheus
+        isDefault: true
+        jsonData:
+          httpMethod: POST
+          manageAlerts: true
+          prometheusType: Mimir
+          timeInterval: 30s
+          exemplarTraceIdDestinations:
+            - name: trace_id
+              datasourceUid: tempo
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - name: trace_id
+              matcherRegex: '"trace_id":"(\w+)"'
+              url: "$${__value.raw}"
+              datasourceUid: tempo
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            filterByTraceID: false
+            customQuery: true
+            query: '{namespace="demo"} |= "$${__trace.traceId}"'
+          tracesToMetrics:
+            datasourceUid: mimir
+          serviceMap:
+            datasourceUid: mimir
+          nodeGraph:
+            enabled: true
+          search:
+            hide: false
+      - name: Alertmanager
+        uid: alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://mimir:8080
+        jsonData:
+          implementation: mimir
+          handleGrafanaManagedAlerts: false
