@@ -1,0 +1,115 @@
+# read-only file listing of the reports volume, at http://reports.localhost:8080
+# (report.json and postmortem.md are served as plain text so the browser shows them instead of downloading)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rca-viewer-nginx
+  namespace: sre-agent
+data:
+  nginx.conf: |
+    worker_processes 1;
+    error_log /dev/stderr warn;
+    pid /tmp/nginx.pid;
+    events { worker_connections 256; }
+    http {
+      include /etc/nginx/mime.types;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      access_log /dev/stdout;
+
+      server {
+        listen 8080;
+        root /reports;
+        location = /healthz { access_log off; return 200 "ok\n"; }
+        location / {
+          autoindex on;
+          types { text/plain md json; }
+          default_type text/plain;
+          add_header X-Content-Type-Options nosniff;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rca-viewer
+  namespace: sre-agent
+  labels: {app.kubernetes.io/name: rca-viewer}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: rca-viewer}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: rca-viewer}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf}
+            - {name: reports, mountPath: /reports, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: nginx-conf
+          configMap: {name: rca-viewer-nginx}
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports, readOnly: true}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rca-viewer
+  namespace: sre-agent
+  labels: {app.kubernetes.io/name: rca-viewer}
+spec:
+  selector: {app.kubernetes.io/name: rca-viewer}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rca-viewer
+  namespace: sre-agent
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: reports.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rca-viewer
+                port: {name: http}

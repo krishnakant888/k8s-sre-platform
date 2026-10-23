@@ -1,3 +1,4 @@
+import json
 import time
 
 import httpx
@@ -103,6 +104,19 @@ def test_report_is_valid_and_has_postmortem(monkeypatch):
     for heading in ("## Summary", "## Impact", "## Timeline", "## Root cause", "## Action items"):
         assert heading in again.postmortem_markdown
     assert again.evidence and all(e.query for e in again.evidence)
+
+
+def test_store_report_writes_files_to_the_reports_volume(monkeypatch, tmp_path):
+    from agent import activities, config
+
+    monkeypatch.setattr(config, "REPORTS_DIR", str(tmp_path))
+    r = run(monkeypatch, bad=0.9, p99=1.2)
+    assert activities.store_report(r.model_dump()) == r.id
+    folder = tmp_path / r.id
+    assert json.loads((folder / "report.json").read_text())["id"] == r.id
+    assert "## Summary" in (folder / "postmortem.md").read_text()
+    assert activities.store_report(r.model_dump()) == r.id  # a retry overwrites, it does not fail
+    assert sorted(p.name for p in folder.iterdir()) == ["postmortem.md", "report.json"]  # no temp files left behind
 
 
 def test_service_derived_from_pod_label():

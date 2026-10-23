@@ -4,29 +4,7 @@ kind: ServiceAccount
 metadata:
   name: sre-agent
   namespace: sre-agent
-automountServiceAccountToken: true   # needed: reads the cluster API and stores reports as configmaps
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: sre-agent-reports
-  namespace: sre-agent
-rules:
-  - apiGroups: [""]
-    resources: [configmaps]
-    verbs: [create, get, list]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: sre-agent-reports
-  namespace: sre-agent
-subjects:
-  - {kind: ServiceAccount, name: sre-agent, namespace: sre-agent}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: sre-agent-reports
+automountServiceAccountToken: true   # needed: reads the cluster API, and the Argo executor reports step results
 ---
 # the webhook can start investigations and nothing else
 apiVersion: v1

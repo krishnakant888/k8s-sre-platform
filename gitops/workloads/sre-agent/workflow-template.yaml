@@ -146,6 +146,10 @@ spec:
           capabilities: {drop: [ALL]}
         volumeMounts:
           - {name: tmp, mountPath: /tmp}
+          - {name: reports, mountPath: /reports}
+      volumes:
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports}
       outputs:
         parameters:
           - name: report-id
