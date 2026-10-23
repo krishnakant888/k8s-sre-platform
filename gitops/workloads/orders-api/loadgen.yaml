@@ -20,7 +20,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: loadgen
-          image: ghcr.io/krishnakant888/orders-api:sha-7e619ffe16d2a558ae7ffd69af13c6565da32ffd
+          image: ghcr.io/krishnakant888/orders-api:sha-cde063cf4fe28b1da4257d1d11158307876e9828
           command: [python, -m, app.loadgen]
           env:
             - {name: TARGET, value: "http://orders-api"}
