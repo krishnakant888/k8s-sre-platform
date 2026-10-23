@@ -1,4 +1,4 @@
-"""Receives Alertmanager webhooks and starts one investigation Argo Workflow per firing alert."""
+"""Receives alert webhooks (Grafana alerting, the payload is Alertmanager compatible) and starts one investigation Argo Workflow per firing alert."""
 import logging
 from pathlib import Path
 
@@ -36,7 +36,7 @@ async def create_workflow(alert: dict) -> tuple[str, bool]:
         resp = await client.post(WORKFLOWS_URL, json=workflow, headers={"Authorization": f"Bearer {token}"})
     if resp.status_code == 409:
         return workflow["metadata"]["name"], False
-    resp.raise_for_status()  # a 5xx here makes Alertmanager retry the notification
+    resp.raise_for_status()  # a 5xx here makes Grafana retry the notification
     return workflow["metadata"]["name"], True
 
 

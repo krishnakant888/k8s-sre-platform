@@ -7,7 +7,7 @@ and writes a structured RCA and blameless postmortem.
 One command creates the cluster and installs Argo CD. Everything else is pulled from this repo.
 
 ```
-alert fires (Mimir ruler) -> Alertmanager -> webhook -> Argo Workflow -> SRE agent queries Mimir, Loki, Tempo,
+alert fires (Grafana alerting) -> webhook -> Argo Workflow -> SRE agent queries Mimir, Loki, Tempo,
 Kubernetes and Argo CD -> structured RCA + postmortem (ConfigMap, JSON log in Loki, optional chat webhook)
 ```
 
@@ -40,7 +40,7 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 ```
 
 1. The API's downstream call becomes slow. The SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
-2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Mimir and Alertmanager calls the agent webhook.
+2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
 3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
    `kubectl -n sre-agent get cm -l sre-agent/report=true` and `kubectl -n sre-agent get cm <report> -o jsonpath='{.data.postmortem\.md}'`.
@@ -68,7 +68,7 @@ flowchart LR
 | Namespace | Contents |
 |---|---|
 | `argocd` | Argo CD, manages itself |
-| `observability` | Alloy (collector), Mimir (metrics, ruler, alertmanager), Loki, Tempo, Grafana, kube-state-metrics |
+| `observability` | Alloy (collector), Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), kube-state-metrics |
 | `argo-workflows` | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
 | `demo` | `orders-api` and a load generator |
 | `sre-agent` | alert webhook, workflow template and its step pods, stored reports |
@@ -100,7 +100,7 @@ docs/               secrets, runbooks, RCA samples
 
 `orders-api`: 99.5% of requests succeed (not 5xx) **and** finish within 300 ms, over 28 days (error budget about 3h 22m).
 The SLI is computed from one histogram with a `status` label, so a slow 500 is counted once.
-Alerts use multiwindow, multi-burn-rate rules ([rules file](gitops/observability/mimir/files/orders-api-slo.yaml)):
+Alerts are Grafana alert rules using multiwindow, multi-burn-rate ([rules file](gitops/observability/alerting/rules-orders-api.yaml)):
 14.4x over 1h and 5m pages, 6x over 6h and 30m opens a ticket. Runbook: [docs/runbooks/orders-api.md](docs/runbooks/orders-api.md).
 
 ## Argo Workflows and the operational workflow
@@ -136,7 +136,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 - **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and ingress-nginx is deployed by Argo CD (host ports 8080/8443 map to its NodePorts).
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
-- **Mimir ruler and Alertmanager use local, Git-managed config.** Rules and routing are files in Git. Trade-off: no per-tenant API, and a change restarts Mimir (handled by hashed ConfigMaps).
+- **Alerting lives in Grafana.** Alert rules, the contact point and the notification policy are ConfigMaps in Git that the Grafana sidecar loads. Mimir only runs the SLO recording rules. One UI for dashboards, alert state and silences, and no separate Alertmanager to operate or keep alive.
 - **Argo Workflows instead of a durable-execution engine.** An investigation is a short linear pipeline, so retries, timeouts and a visible history are enough, and Argo Workflows is Kubernetes-native, managed by GitOps and needs no database. Trade-offs: no durable timers or signals in code (the 20 s settle is a suspend step), and data moves between steps as workflow parameters, capped at about 150 KB (the agent trims evidence to fit). A long-lived or branching process would justify Temporal or Restate.
 - **Secrets seeded at bootstrap.** Sealed Secrets are bound to a cluster key, so secrets committed for my cluster could not be decrypted on yours. Seeding at bootstrap keeps the repo runnable from scratch without putting a private key in Git.
 - **No HPA locally.** metrics-server is disabled to save resources. With it enabled the API gets an HPA on CPU.
