@@ -9,7 +9,7 @@
 set -euo pipefail
 
 CTX=${KUBE_CONTEXT:-kind-platform}
-URL=${FRONTEND_URL:-http://frontend.localhost:8080}
+URL=${FRONTEND_URL:-http://frontend.localhost:8880}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 N=${2:-60}
 

@@ -1,5 +1,5 @@
 # upstream Kubernetes ships no ingress controller (k3s bundled traefik), so it is installed here.
-# kind maps host :8080/:8444 to these NodePorts, see bootstrap/kind-config.yaml.
+# kind maps host :8880/:8444 to these NodePorts, see bootstrap/kind-config.yaml.
 service:
   type: NodePort
 ports:

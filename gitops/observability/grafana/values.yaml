@@ -38,7 +38,7 @@ containerSecurityContext:
 
 grafana.ini:
   server:
-    root_url: http://grafana.localhost:8080
+    root_url: http://grafana.localhost:8880
   log:
     mode: console
   log.console:
