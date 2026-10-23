@@ -20,5 +20,10 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # the WorkflowTemplate needs the CRD from the argo-workflows app, which takes a few minutes on a fresh cluster:
+    # keep retrying with a growing delay instead of giving up after 5 attempts
+    retry:
+      limit: 15
+      backoff: {duration: 30s, factor: 2, maxDuration: 5m}
     syncOptions:
       - SkipDryRunOnMissingResource=true   # WorkflowTemplate: its CRD comes from the argo-workflows app (wave 0)
