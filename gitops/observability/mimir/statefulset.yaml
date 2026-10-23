@@ -25,16 +25,10 @@ spec:
           image: grafana/mimir:2.16.0
           args:
             - -config.file=/etc/mimir/mimir.yaml
-            - -config.expand-env=true
             - -target=all,alertmanager,ruler
           ports:
             - {name: http, containerPort: 8080}
             - {name: grpc, containerPort: 9095}
-          env:
-            - name: OBJ_ACCESS_KEY
-              valueFrom: {secretKeyRef: {name: object-store-credentials, key: accessKey}}
-            - name: OBJ_SECRET_KEY
-              valueFrom: {secretKeyRef: {name: object-store-credentials, key: secretKey}}
           readinessProbe:
             httpGet: {path: /ready, port: http}
             initialDelaySeconds: 20
@@ -70,4 +64,4 @@ spec:
         accessModes: [ReadWriteOnce]
         resources:
           requests:
-            storage: 5Gi
+            storage: 10Gi

@@ -5,27 +5,21 @@ metadata:
   namespace: observability
 data:
   mimir.yaml: |
-    # monolithic mode: one process runs ingester, querier, ruler, alertmanager and the rest
+    # monolithic mode: one process runs ingester, querier, ruler, alertmanager and the rest.
+    # Blocks are kept on the pod's PVC (filesystem backend), single replica.
     multitenancy_enabled: false
     usage_stats:
       enabled: false
+    activity_tracker:
+      filepath: /data/activity.log
     server:
       http_listen_port: 8080
       grpc_listen_port: 9095
       log_format: json
-    common:
-      storage:
-        backend: s3
-        s3:
-          endpoint: object-store:9000
-          insecure: true
-          region: us-east-1
-          access_key_id: ${OBJ_ACCESS_KEY}
-          secret_access_key: ${OBJ_SECRET_KEY}
     blocks_storage:
-      backend: s3
-      s3:
-        bucket_name: mimir-blocks
+      backend: filesystem
+      filesystem:
+        dir: /data/blocks
       tsdb:
         dir: /data/tsdb
       bucket_store:
@@ -33,18 +27,18 @@ data:
     compactor:
       data_dir: /data/compactor
       sharding_ring:
-        kvstore: {store: memberlist}
+        kvstore: {store: inmemory}
     distributor:
       ring:
-        kvstore: {store: memberlist}
+        kvstore: {store: inmemory}
     ingester:
       ring:
         replication_factor: 1
-        kvstore: {store: memberlist}
+        kvstore: {store: inmemory}
     store_gateway:
       sharding_ring:
         replication_factor: 1
-        kvstore: {store: memberlist}
+        kvstore: {store: inmemory}
     ruler_storage:
       backend: local
       local:
@@ -57,6 +51,9 @@ data:
       data_dir: /data/alertmanager
       external_url: http://alerts.localhost:8080/alertmanager
       fallback_config_file: /etc/mimir/alertmanager-fallback.yaml
+      sharding_ring:
+        replication_factor: 1
+        kvstore: {store: inmemory}
     alertmanager_storage:
       backend: local
       local:
