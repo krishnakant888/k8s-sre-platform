@@ -1,5 +1,8 @@
 # Argo CD of the monitoring cluster. It is separate from the production one on purpose:
 # monitoring keeps deploying and healing itself while the production cluster is down or being rebuilt.
+#
+# Sizing: this instance manages about 14 applications, so it is smaller than the platform one (see
+# gitops/argocd/values.yaml for the reasoning: memory limit 2x the request, CPU limit 4x the request).
 global:
   domain: argocd-monitoring.localhost   # not argocd.localhost: browsers share cookies between ports of one host
 
@@ -20,28 +23,33 @@ dex:
 notifications:
   enabled: false
 
+repoServer:
+  resources:
+    requests: {cpu: 500m, memory: 768Mi}
+    limits: {cpu: "2", memory: 1536Mi}
+
 server:
   ingress:
     enabled: true
     ingressClassName: nginx
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
 
 controller:
   resources:
-    requests: {cpu: 250m, memory: 512Mi}
-    limits: {memory: 1Gi}
-
-repoServer:
-  resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 500m, memory: 1536Mi}
+    limits: {cpu: "2", memory: 3Gi}
 
 redis:
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {memory: 128Mi}
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
 
 applicationSet:
   enabled: false
+
+redisSecretInit:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}

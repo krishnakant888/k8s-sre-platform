@@ -1,3 +1,11 @@
+# Argo CD of the platform cluster (about 20 applications).
+#
+# Sizing: requests are what the scheduler reserves for each component, memory limits are 2x the request so a busy
+# sync cannot grow without bound but is not OOMKilled by a spike (the application controller keeps every managed
+# object in memory, so it grows with the number of resources). CPU limits are generous, 4x the request, on purpose:
+# a tight CPU limit throttles the controller and makes every sync slower without protecting anything.
+# For a real cluster also run server and repoServer with replicas: 2 and pdb.enabled: true, and shard the
+# controller (controller.replicas) once it manages a few hundred applications.
 global:
   domain: argocd.localhost
 
@@ -18,30 +26,40 @@ dex:
 notifications:
   enabled: false
 
+# renders manifests (helm template, kustomize build) for every sync: short CPU and memory spikes
+repoServer:
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "4", memory: 2Gi}
+
+# the UI and API
 server:
   ingress:
     enabled: true
     ingressClassName: nginx
   resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
 
+# reconciles every application against the cluster, holds the live state of all managed objects in memory
 controller:
   resources:
-    requests: {cpu: 500m, memory: 1Gi}
-    limits: {memory: 2Gi}
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
 
-repoServer:
-  resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 1Gi}
-
+# cache of rendered manifests and application state
 redis:
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
 
 applicationSet:
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+# one-shot job that creates the redis password secret
+redisSecretInit:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
