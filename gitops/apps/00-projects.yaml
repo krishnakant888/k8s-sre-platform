@@ -1,0 +1,64 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: Cluster add-ons and operators (argocd, sealed-secrets, kyverno, cnpg)
+  sourceRepos:
+    - https://github.com/krishnakant888/k3s-sre-platform.git
+    - https://argoproj.github.io/argo-helm
+    - https://bitnami-labs.github.io/sealed-secrets
+    - https://kyverno.github.io/kyverno
+    - https://cloudnative-pg.github.io/charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: LGTM stack, alloy, alertmanager
+  sourceRepos:
+    - https://github.com/krishnakant888/k3s-sre-platform.git
+    - https://grafana.github.io/helm-charts
+    - https://charts.min.io
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: observability
+  clusterResourceWhitelist:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: workloads
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: Temporal, sample api, sre agent
+  sourceRepos:
+    - https://github.com/krishnakant888/k3s-sre-platform.git
+    - https://go.temporal.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: temporal
+    - server: https://kubernetes.default.svc
+      namespace: demo
+    - server: https://kubernetes.default.svc
+      namespace: sre-agent
+  clusterResourceWhitelist: []
