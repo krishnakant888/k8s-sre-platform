@@ -42,7 +42,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: orders-api}
       containers:
         - name: orders-api
-          image: ghcr.io/krishnakant888/orders-api:sha-b4b7facb8724e4d9653aa506b282a58593b2a4af
+          image: ghcr.io/krishnakant888/orders-api:sha-7e619ffe16d2a558ae7ffd69af13c6565da32ffd
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}
