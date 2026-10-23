@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mimir-config
+  namespace: observability
+data:
+  mimir.yaml: |
+    # monolithic mode: one process runs ingester, querier, ruler, alertmanager and the rest
+    multitenancy_enabled: false
+    usage_stats:
+      enabled: false
+    server:
+      http_listen_port: 8080
+      grpc_listen_port: 9095
+      log_format: json
+    common:
+      storage:
+        backend: s3
+        s3:
+          endpoint: object-store:9000
+          insecure: true
+          region: us-east-1
+          access_key_id: ${OBJ_ACCESS_KEY}
+          secret_access_key: ${OBJ_SECRET_KEY}
+    blocks_storage:
+      backend: s3
+      s3:
+        bucket_name: mimir-blocks
+      tsdb:
+        dir: /data/tsdb
+      bucket_store:
+        sync_dir: /data/tsdb-sync
+    compactor:
+      data_dir: /data/compactor
+      sharding_ring:
+        kvstore: {store: memberlist}
+    distributor:
+      ring:
+        kvstore: {store: memberlist}
+    ingester:
+      ring:
+        replication_factor: 1
+        kvstore: {store: memberlist}
+    store_gateway:
+      sharding_ring:
+        replication_factor: 1
+        kvstore: {store: memberlist}
+    ruler_storage:
+      backend: local
+      local:
+        directory: /rules
+    ruler:
+      rule_path: /data/ruler
+      alertmanager_url: http://localhost:8080/alertmanager
+      evaluation_interval: 30s
+    alertmanager:
+      data_dir: /data/alertmanager
+      external_url: http://alerts.localhost:8080/alertmanager
+      fallback_config_file: /etc/mimir/alertmanager-fallback.yaml
+    alertmanager_storage:
+      backend: local
+      local:
+        path: /data/alertmanager-configs
+    limits:
+      compactor_blocks_retention_period: 168h
+      ruler_max_rules_per_rule_group: 50
+  alertmanager-fallback.yaml: |
+    route:
+      receiver: default
+      group_by: [alertname, service]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+    receivers:
+      - name: default
