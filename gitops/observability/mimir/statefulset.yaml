@@ -20,6 +20,20 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # the local alertmanager store walks this directory on start and fails if it is missing
+        - name: init-dirs
+          image: busybox:1.37.0
+          command: [sh, -c, "mkdir -p /data/alertmanager-configs /data/blocks"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
       containers:
         - name: mimir
           image: grafana/mimir:2.16.0
