@@ -1,0 +1,21 @@
+# tag does not exist: ErrImagePull / ImagePullBackOff, DeploymentReplicasUnavailable alert, no logs at all
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-image
+  namespace: scenarios
+  labels: {app.kubernetes.io/name: bad-image, scenario: "true"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: bad-image}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: bad-image, scenario: "true"}
+    spec:
+      containers:
+        - name: app
+          image: nginxinc/nginx-unprivileged:does-not-exist
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}

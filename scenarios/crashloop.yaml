@@ -1,0 +1,27 @@
+# exits 1 with a fatal log line: PodCrashLooping alert, CrashLoopBackOff
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashloop
+  namespace: scenarios
+  labels: {app.kubernetes.io/name: crashloop, scenario: "true"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: crashloop}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: crashloop, scenario: "true"}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -c
+            - |
+              echo '{"level":"error","service":"crashloop","msg":"fatal: cannot connect to database"}'
+              exit 1
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}

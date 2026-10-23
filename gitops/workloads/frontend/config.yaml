@@ -1,0 +1,56 @@
+# stateless nginx frontend. Logs are one JSON object per request on stdout, so alloy ships them
+# to loki as-is and the logs dashboard can parse level, status and duration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx
+  namespace: demo
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /dev/stderr warn;
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      include /etc/nginx/mime.types;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+
+      map $status $level { ~^5 "error"; ~^4 "warn"; default "info"; }
+      log_format json escape=json
+        '{"ts":"$time_iso8601","level":"$level","service":"frontend","msg":"request handled",'
+        '"request_id":"$request_id","method":"$request_method","route":"$uri","status":$status,'
+        '"duration_s":$request_time,"bytes":$body_bytes_sent,"user_agent":"$http_user_agent"}';
+      access_log /dev/stdout json;
+
+      server {
+        listen 8080;
+        root /usr/share/nginx/html;
+        add_header X-Request-Id $request_id always;
+
+        location = /healthz { access_log off; return 200 "ok\n"; }
+
+        # fault injection for the failure scenarios (scripts/scenarios.sh), local demo only
+        location = /_scenarios/error500 { return 500 "injected failure\n"; }
+        location = /_scenarios/error503 { return 503 "injected unavailable\n"; }
+        location = /_scenarios/notfound { return 404 "injected not found\n"; }
+
+        location / { try_files $uri /index.html; }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: demo
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head><meta charset="utf-8"><title>Frontend</title></head>
+    <body><h1>Frontend is up</h1><p>Stateless nginx served by Argo CD.</p></body>
+    </html>
