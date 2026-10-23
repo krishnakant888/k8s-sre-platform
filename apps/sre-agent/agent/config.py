@@ -1,0 +1,24 @@
+import os
+
+MIMIR_URL = os.getenv("MIMIR_URL", "http://mimir.observability:8080/prometheus")
+LOKI_URL = os.getenv("LOKI_URL", "http://loki.observability:3100")
+TEMPO_URL = os.getenv("TEMPO_URL", "http://tempo.observability:3200")
+K8S_URL = os.getenv("K8S_URL", "https://kubernetes.default.svc")
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "temporal-frontend.temporal:7233")
+TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
+TASK_QUEUE = os.getenv("TASK_QUEUE", "sre-investigations")
+
+# without a key the agent runs its rule based analysis and says so in the report
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "12"))
+
+REPORT_NAMESPACE = os.getenv("REPORT_NAMESPACE", "sre-agent")
+NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
+
+# queries must stay cheap and bounded
+MAX_RANGE_MINUTES = 120
+MAX_LOG_LINES = 200
+MAX_TOOL_OUTPUT_CHARS = 6000
