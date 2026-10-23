@@ -95,7 +95,7 @@ datasources:
           maxLines: 1000
           derivedFields:
             - name: trace_id
-              matcherRegex: '"trace_id":"(\w+)"'
+              matcherRegex: '"trace_id":\s*"(\w+)"'
               url: "$${__value.raw}"
               datasourceUid: tempo
       - name: Tempo
