@@ -274,7 +274,7 @@ Category: `{r.root_cause.category}`
 {factors}
 
 ## Detection
-The alert `{r.alert}` fired from the Mimir ruler and was routed through Alertmanager to the alert webhook, which started this investigation as an Argo Workflow automatically.
+The alert `{r.alert}` fired in Grafana alerting and was sent by webhook to the SRE agent, which started this investigation as an Argo Workflow automatically.
 
 ## Evidence
 {evidence}

@@ -1,0 +1,69 @@
+# Platform health alerts. The series keep their namespace and pod labels, so each pod gets its own alert instance
+# and the SRE agent can tell which workload to investigate.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alerting-rules-platform
+  namespace: observability
+  labels:
+    grafana_alert: "1"
+data:
+  rules-platform.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: platform-health
+        folder: Alerts
+        interval: 1m
+        rules:
+          - uid: platform-pod-crash-looping
+            title: PodCrashLooping
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "increase(kube_pod_container_status_restarts_total[10m])", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 2"}
+            noDataState: OK
+            execErrState: Error
+            for: 1m
+            labels: {severity: ticket}
+            annotations:
+              summary: A container restarted more than twice in 10 minutes
+          - uid: platform-pod-oom-killed
+            title: PodOOMKilled
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: 'increase(kube_pod_container_status_restarts_total[5m]) and on (namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1', instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 0s
+            labels: {severity: ticket}
+            annotations:
+              summary: A container was OOMKilled and restarted
+          - uid: platform-deployment-unavailable
+            title: DeploymentReplicasUnavailable
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "kube_deployment_status_replicas_unavailable", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 3m
+            labels: {severity: ticket}
+            annotations:
+              summary: A deployment has had unavailable replicas for 3 minutes

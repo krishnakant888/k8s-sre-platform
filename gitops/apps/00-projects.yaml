@@ -28,7 +28,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: LGTM stack, alloy, alertmanager
+  description: LGTM stack, alloy, alerting
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://grafana.github.io/helm-charts

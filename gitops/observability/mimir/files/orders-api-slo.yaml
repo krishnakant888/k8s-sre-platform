@@ -1,7 +1,7 @@
 # SLO for orders-api: 99.5% of requests succeed (not 5xx) and finish within 300ms, over 28 days.
 # Error budget = 0.5% of requests, about 3h 22m of total outage per 28 days.
-# Alerts follow the multiwindow multi-burn-rate pattern: a long window proves it is real,
-# a short window proves it is still happening.
+# These are recording rules. The multiwindow multi-burn-rate alerts that use them are Grafana alert rules,
+# see gitops/observability/alerting/rules-orders-api.yaml.
 groups:
   - name: orders-api-sli
     interval: 30s
@@ -26,39 +26,3 @@ groups:
         expr: 1 - (sum(increase(http_request_duration_seconds_bucket{service="orders-api", le="0.3", status!~"5.."}[28d])) / sum(increase(http_request_duration_seconds_count{service="orders-api"}[28d])))
       - record: slo:orders_api:error_budget_remaining
         expr: 1 - (sli:orders_api:error_ratio:rate28d / 0.005)
-  - name: orders-api-alerts
-    rules:
-      - alert: OrdersApiErrorBudgetFastBurn
-        expr: |
-          sli:orders_api:error_ratio:rate1h > (14.4 * 0.005)
-          and
-          sli:orders_api:error_ratio:rate5m > (14.4 * 0.005)
-        for: 2m
-        labels: {severity: page, service: orders-api, slo: orders-api-availability-latency}
-        annotations:
-          summary: "orders-api is burning its error budget 14x too fast ({{ $value | humanizePercentage }} of requests bad over 5m)"
-          runbook: docs/runbooks/orders-api.md#fast-burn
-      - alert: OrdersApiErrorBudgetSlowBurn
-        expr: |
-          sli:orders_api:error_ratio:rate6h > (6 * 0.005)
-          and
-          sli:orders_api:error_ratio:rate30m > (6 * 0.005)
-        for: 15m
-        labels: {severity: ticket, service: orders-api, slo: orders-api-availability-latency}
-        annotations:
-          summary: "orders-api has used 6x its budget rate for 6h ({{ $value | humanizePercentage }} bad over 30m)"
-          runbook: docs/runbooks/orders-api.md#slow-burn
-      - alert: OrdersApiNoAvailableReplicas
-        expr: sum(kube_deployment_status_replicas_available{namespace="demo", deployment="orders-api"}) == 0
-        for: 1m
-        labels: {severity: page, service: orders-api}
-        annotations:
-          summary: "orders-api has no available replicas"
-          runbook: docs/runbooks/orders-api.md#down
-      - alert: OrdersApiHighLatencyP99
-        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="orders-api"}[5m]))) > 1
-        for: 5m
-        labels: {severity: ticket, service: orders-api}
-        annotations:
-          summary: "orders-api p99 latency is {{ $value | humanizeDuration }}"
-          runbook: docs/runbooks/orders-api.md#latency

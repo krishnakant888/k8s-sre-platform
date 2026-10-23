@@ -24,7 +24,7 @@ spec:
         # blocks dir for the filesystem backend
         - name: init-dirs
           image: busybox:1.37.0
-          command: [sh, -c, "mkdir -p /data/blocks /data/am-store"]
+          command: [sh, -c, "mkdir -p /data/blocks"]
           resources:
             requests: {cpu: 10m, memory: 16Mi}
             limits: {memory: 32Mi}
@@ -39,7 +39,7 @@ spec:
           image: grafana/mimir:2.16.0
           args:
             - -config.file=/etc/mimir/mimir.yaml
-            - -target=all,alertmanager,ruler
+            - -target=all,ruler
           ports:
             - {name: http, containerPort: 8080}
             - {name: grpc, containerPort: 9095}
@@ -63,15 +63,12 @@ spec:
             - {name: data, mountPath: /data}
             - {name: config, mountPath: /etc/mimir}
             - {name: rules, mountPath: /rules/anonymous}
-            - {name: alertmanager, mountPath: /etc/mimir-am}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
           configMap: {name: mimir-config}
         - name: rules
           configMap: {name: mimir-rules}
-        - name: alertmanager
-          configMap: {name: mimir-alertmanager}
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:

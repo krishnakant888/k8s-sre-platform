@@ -1,0 +1,31 @@
+# Grafana alerting is provisioned from Git: the sidecar loads every ConfigMap labelled grafana_alert.
+# Every alert goes to the SRE agent webhook, which starts a Temporal investigation workflow.
+# Grafana's webhook payload has the same shape as an Alertmanager one (alerts[].status, labels, annotations, startsAt, fingerprint).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alerting-contact-points
+  namespace: observability
+  labels:
+    grafana_alert: "1"
+data:
+  contact-points.yaml: |
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: sre-agent
+        receivers:
+          - uid: sre-agent-webhook
+            type: webhook
+            disableResolveMessage: true
+            settings:
+              url: http://alert-webhook.sre-agent:8080/alertmanager
+              httpMethod: POST
+              maxAlerts: 5
+    policies:
+      - orgId: 1
+        receiver: sre-agent
+        group_by: [alertname, namespace, service, pod]
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 4h

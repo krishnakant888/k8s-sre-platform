@@ -6,7 +6,12 @@ admin:
   passwordKey: admin-password
 
 podLabels:
-  platform.io/api-access: "true"   # dashboard sidecar watches configmaps
+  platform.io/api-access: "true"   # dashboard and alert sidecars watch configmaps
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: /metrics
 
 ingress:
   enabled: true
@@ -64,6 +69,12 @@ sidecar:
     folderAnnotation: grafana_folder
     provider:
       foldersFromFilesStructure: true
+  # alert rules, contact points and notification policies are ConfigMaps in Git, loaded and reloaded by the sidecar
+  alerts:
+    enabled: true
+    label: grafana_alert
+    labelValue: "1"
+    searchNamespace: observability
   resources:
     requests: {cpu: 20m, memory: 64Mi}
     limits: {memory: 128Mi}
@@ -80,7 +91,7 @@ datasources:
         isDefault: true
         jsonData:
           httpMethod: POST
-          manageAlerts: true
+          manageAlerts: false   # alerting is done by Grafana, not by the mimir ruler
           prometheusType: Mimir
           timeInterval: 30s
           exemplarTraceIdDestinations:
@@ -119,11 +130,3 @@ datasources:
             enabled: true
           search:
             hide: false
-      - name: Alertmanager
-        uid: alertmanager
-        type: alertmanager
-        access: proxy
-        url: http://mimir:8080
-        jsonData:
-          implementation: mimir
-          handleGrafanaManagedAlerts: false

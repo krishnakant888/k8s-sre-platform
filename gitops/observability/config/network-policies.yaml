@@ -62,7 +62,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: mimir
+      app.kubernetes.io/name: grafana   # grafana alerting calls the agent webhook
   policyTypes: [Egress]
   egress:
     - to:
