@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-sre-agent
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Platform
+data:
+  sre-agent.json: |
+    {
+      "uid": "sre-agent",
+      "title": "SRE agent: investigations",
+      "tags": ["sre-agent", "temporal"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {"from": "now-6h", "to": "now"},
+      "panels": [
+        {"id": 1, "type": "stat", "title": "Investigations started", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+         "datasource": {"type": "prometheus", "uid": "mimir"},
+         "targets": [{"expr": "sum(investigations_started_total) or vector(0)", "refId": "A"}]},
+        {"id": 2, "type": "stat", "title": "Reports stored (6h)", "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+         "datasource": {"type": "loki", "uid": "loki"},
+         "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\" [6h]))", "queryType": "instant", "refId": "A"}]},
+        {"id": 3, "type": "stat", "title": "Webhook replicas ready", "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+         "datasource": {"type": "prometheus", "uid": "mimir"},
+         "targets": [{"expr": "sum(kube_deployment_status_replicas_available{namespace=\"sre-agent\", deployment=\"alert-webhook\"})", "refId": "A"}]},
+        {"id": 4, "type": "stat", "title": "Temporal up", "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+         "datasource": {"type": "prometheus", "uid": "mimir"},
+         "targets": [{"expr": "max(up{namespace=\"temporal\"}) or vector(0)", "refId": "A"}]},
+        {"id": 5, "type": "table", "title": "RCA reports (newest first)", "gridPos": {"h": 10, "w": 24, "x": 0, "y": 4},
+         "datasource": {"type": "loki", "uid": "loki"},
+         "transformations": [{"id": "extractFields", "options": {"source": "Line", "format": "json"}},
+                             {"id": "organize", "options": {"includeByName": {"Time": true, "report_id": true, "alert": true, "root_cause": true, "confidence": true, "mode": true}}}],
+         "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\"", "refId": "A"}]},
+        {"id": 6, "type": "logs", "title": "Agent and webhook logs", "gridPos": {"h": 12, "w": 24, "x": 0, "y": 14},
+         "datasource": {"type": "loki", "uid": "loki"},
+         "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"},
+         "targets": [{"expr": "{namespace=\"sre-agent\"} != \"rca report\"", "refId": "A"}]}
+      ]
+    }
