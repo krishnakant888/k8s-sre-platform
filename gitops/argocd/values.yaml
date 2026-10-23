@@ -8,6 +8,10 @@ configs:
     admin.enabled: true
     exec.enabled: false
 
+  rbac:
+    policy.default: role:readonly
+    scopes: "[groups]"
+
 dex:
   enabled: false
 
