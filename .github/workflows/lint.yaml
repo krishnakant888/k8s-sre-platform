@@ -1,0 +1,28 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: yamllint
+        run: pip install yamllint==1.35.1 && yamllint -c .yamllint.yaml .
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: kubeconform
+        run: |
+          files=$(find gitops -name '*.yaml' -not -path '*/templates/*' 2>/dev/null || true)
+          [ -z "$files" ] && { echo "no manifests yet"; exit 0; }
+          kubeconform -summary -ignore-missing-schemas -skip CustomResourceDefinition $files
