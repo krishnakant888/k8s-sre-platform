@@ -23,6 +23,6 @@ jobs:
           sudo mv kubeconform /usr/local/bin/
       - name: kubeconform
         run: |
-          files=$(find gitops -name '*.yaml' -not -name 'values*.yaml' -not -path '*/templates/*' 2>/dev/null || true)
+          files=$(find gitops -name '*.yaml' -not -name 'values*.yaml' -not -name kustomization.yaml -not -path '*/files/*' -not -path '*/templates/*' 2>/dev/null || true)
           [ -z "$files" ] && { echo "no manifests yet"; exit 0; }
           kubeconform -summary -ignore-missing-schemas -skip CustomResourceDefinition $files
