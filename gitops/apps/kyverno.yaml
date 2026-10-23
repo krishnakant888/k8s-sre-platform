@@ -15,7 +15,7 @@ spec:
         releaseName: kyverno
         valueFiles:
           - $values/gitops/kyverno/values.yaml
-    - repoURL: https://github.com/krishnakant888/k3s-sre-platform.git
+    - repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
       targetRevision: main
       ref: values
   destination:

@@ -10,7 +10,7 @@
 # Faults live inside each pod, so the call is repeated to reach both replicas through the ingress.
 set -euo pipefail
 
-CTX=${KUBE_CONTEXT:-k3d-platform}
+CTX=${KUBE_CONTEXT:-kind-platform}
 URL=${ORDERS_URL:-http://orders.localhost:8080}
 
 token() { kubectl --context "$CTX" -n demo get secret orders-api-chaos -o jsonpath='{.data.CHAOS_TOKEN}' | base64 -d; }

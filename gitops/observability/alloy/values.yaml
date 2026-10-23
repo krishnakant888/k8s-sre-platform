@@ -119,7 +119,7 @@ alloy:
         scheme            = "https"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         tls_config {
-          insecure_skip_verify = true   // k3s kubelet serving cert is self-signed
+          insecure_skip_verify = true   // kubeadm kubelet serving cert is self-signed
         }
         job_name   = "cadvisor"
         forward_to = [prometheus.remote_write.mimir.receiver]

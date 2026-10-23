@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/krishnakant888/k3s-sre-platform.git
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
     targetRevision: main
     path: gitops/apps
   destination:
