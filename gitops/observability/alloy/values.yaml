@@ -1,5 +1,8 @@
 # One collector for everything: scrapes metrics to mimir, tails pod logs to loki, takes otlp traces to tempo.
 # Runs as a single deployment, logs come through the kubernetes API so no hostPath is needed.
+crds:
+  create: false   # PodLogs CRD is not used, and the observability project may not create CRDs
+
 controller:
   type: deployment
   replicas: 1
