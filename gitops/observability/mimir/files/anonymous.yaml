@@ -1,8 +1,13 @@
 route:
-  receiver: default
-  group_by: [alertname, service]
+  receiver: sre-agent
+  group_by: [alertname, namespace, service, pod]
   group_wait: 10s
   group_interval: 1m
-  repeat_interval: 1h
+  repeat_interval: 4h
 receivers:
-  - name: default
+  # every alert starts an automated investigation (Temporal workflow), see apps/sre-agent
+  - name: sre-agent
+    webhook_configs:
+      - url: http://alert-webhook.sre-agent:8080/alertmanager
+        send_resolved: false
+        max_alerts: 5

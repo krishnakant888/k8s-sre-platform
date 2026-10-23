@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+  namespace: sre-agent
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # temporal frontend
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: temporal}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: temporal}
+      ports:
+        - {port: 7233, protocol: TCP}
+    # the stores the agent queries
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 3100, protocol: TCP}
+        - {port: 3200, protocol: TCP}
+    # kubernetes API
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+    # anthropic api and the notification webhook, public addresses only
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - {port: 443, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: webhook-ingress-from-alertmanager
+  namespace: sre-agent
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alert-webhook}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: mimir}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - {port: 8080, protocol: TCP}
