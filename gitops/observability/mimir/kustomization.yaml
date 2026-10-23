@@ -9,8 +9,4 @@ configMapGenerator:
   - name: mimir-config
     files: [files/mimir.yaml]
   - name: mimir-rules
-    files:
-      - files/platform.yaml
-      - files/orders-api-slo.yaml
-  - name: mimir-alertmanager
-    files: [files/anonymous.yaml]
+    files: [files/orders-api-slo.yaml]

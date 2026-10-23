@@ -1,5 +1,6 @@
-# monolithic mode: one process runs ingester, querier, ruler, alertmanager and the rest.
+# monolithic mode: one process runs ingester, querier, ruler and the rest.
 # Blocks are kept on the pod's PVC (filesystem backend), single replica.
+# Alerting is done by Grafana (see gitops/observability/alerting), the ruler here only evaluates recording rules.
 multitenancy_enabled: false
 usage_stats:
   enabled: false
@@ -38,22 +39,7 @@ ruler_storage:
     directory: /rules
 ruler:
   rule_path: /data/ruler
-  alertmanager_url: http://localhost:8080/alertmanager
   evaluation_interval: 30s
-alertmanager:
-  data_dir: /data/am-state
-  external_url: http://alerts.localhost:8080/alertmanager
-  # routing lives in Git: tenants without their own config use this file
-  fallback_config_file: /etc/mimir-am/anonymous.yaml
-  persist_interval: 5m
-  sharding_ring:
-    replication_factor: 1
-    kvstore: {store: inmemory}
-# the local backend cannot persist notification state, which kills notifications ~15 minutes after start
-alertmanager_storage:
-  backend: filesystem
-  filesystem:
-    dir: /data/am-store
 limits:
   compactor_blocks_retention_period: 168h
   ruler_max_rules_per_rule_group: 50

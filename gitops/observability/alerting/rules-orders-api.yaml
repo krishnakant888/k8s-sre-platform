@@ -1,0 +1,98 @@
+# SLO alerts for orders-api, multiwindow multi-burn-rate (see gitops/observability/mimir/files/orders-api-slo.yaml
+# for the recording rules). A long window proves the burn is real, a short window proves it is still happening.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alerting-rules-orders-api
+  namespace: observability
+  labels:
+    grafana_alert: "1"
+data:
+  rules-orders-api.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: orders-api-slo
+        folder: Alerts
+        interval: 1m
+        rules:
+          - uid: orders-api-fast-burn
+            title: OrdersApiErrorBudgetFastBurn
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "sli:orders_api:error_ratio:rate1h", instant: true}
+              - refId: B
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: B, expr: "sli:orders_api:error_ratio:rate5m", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 0.072 && $B > 0.072"}
+            noDataState: OK
+            execErrState: Error
+            for: 2m
+            labels: {severity: page, service: orders-api, slo: orders-api-availability-latency}
+            annotations:
+              summary: orders-api is burning its error budget 14x too fast (1h and 5m windows)
+              runbook: docs/runbooks/orders-api.md#fast-burn
+          - uid: orders-api-slow-burn
+            title: OrdersApiErrorBudgetSlowBurn
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "sli:orders_api:error_ratio:rate6h", instant: true}
+              - refId: B
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: B, expr: "sli:orders_api:error_ratio:rate30m", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 0.03 && $B > 0.03"}
+            noDataState: OK
+            execErrState: Error
+            for: 15m
+            labels: {severity: ticket, service: orders-api, slo: orders-api-availability-latency}
+            annotations:
+              summary: orders-api has used its error budget 6x too fast for 6 hours
+              runbook: docs/runbooks/orders-api.md#slow-burn
+          - uid: orders-api-no-replicas
+            title: OrdersApiNoAvailableReplicas
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: 'sum(kube_deployment_status_replicas_available{namespace="demo", deployment="orders-api"})', instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A < 1"}
+            noDataState: Alerting
+            execErrState: Error
+            for: 1m
+            labels: {severity: page, service: orders-api}
+            annotations:
+              summary: orders-api has no available replicas
+              runbook: docs/runbooks/orders-api.md#down
+          - uid: orders-api-high-latency
+            title: OrdersApiHighLatencyP99
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: 'histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="orders-api"}[5m])))', instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 1"}
+            noDataState: OK
+            execErrState: Error
+            for: 5m
+            labels: {severity: ticket, service: orders-api}
+            annotations:
+              summary: orders-api p99 latency is above 1 second
+              runbook: docs/runbooks/orders-api.md#latency
