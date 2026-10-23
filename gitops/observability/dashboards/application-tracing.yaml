@@ -1,0 +1,965 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-application-tracing
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Applications
+data:
+  application-tracing.json: |
+    {
+      "uid": "app-tracing",
+      "title": "Application: traces and spans",
+      "tags": [
+        "application",
+        "tracing",
+        "tempo"
+      ],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "templating": {
+        "list": [
+          {
+            "name": "service",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "mimir"
+            },
+            "query": "label_values(traces_spanmetrics_calls_total, service)",
+            "includeAll": false,
+            "multi": false,
+            "current": {
+              "text": "orders-api",
+              "value": "orders-api"
+            },
+            "refresh": 2,
+            "sort": 1
+          },
+          {
+            "name": "span_kind",
+            "type": "custom",
+            "label": "span kind",
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": false,
+            "query": "server : SPAN_KIND_SERVER,client : SPAN_KIND_CLIENT,internal : SPAN_KIND_INTERNAL,producer : SPAN_KIND_PRODUCER,consumer : SPAN_KIND_CONSUMER",
+            "current": {
+              "text": "server",
+              "value": "SPAN_KIND_SERVER"
+            }
+          },
+          {
+            "name": "span_name",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "mimir"
+            },
+            "query": "label_values(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\"}, span_name)",
+            "includeAll": true,
+            "multi": true,
+            "current": {
+              "text": "All",
+              "value": "$__all"
+            },
+            "refresh": 2,
+            "sort": 1,
+            "allValue": ".*",
+            "label": "operation"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "row",
+          "title": "Golden signals (derived from spans)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1
+        },
+        {
+          "type": "stat",
+          "title": "Request rate",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m]))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 2
+        },
+        {
+          "type": "stat",
+          "title": "Error ratio",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.01
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.05
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\", status_code=\"STATUS_CODE_ERROR\"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m]))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 3
+        },
+        {
+          "type": "stat",
+          "title": "Latency p95",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m])))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 4
+        },
+        {
+          "type": "stat",
+          "title": "Latency p99",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m])))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 5
+        },
+        {
+          "type": "timeseries",
+          "title": "Rate by operation",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 5
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (span_name) (rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{span_name}}"
+            }
+          ],
+          "id": 6
+        },
+        {
+          "type": "timeseries",
+          "title": "Errors by operation",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 5
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (span_name) (rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\", status_code=\"STATUS_CODE_ERROR\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{span_name}}"
+            }
+          ],
+          "id": 7
+        },
+        {
+          "type": "timeseries",
+          "title": "Latency percentiles",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 5
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m])))",
+              "refId": "A",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m])))",
+              "refId": "B",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m])))",
+              "refId": "C",
+              "legendFormat": "p99"
+            }
+          ],
+          "id": 8
+        },
+        {
+          "type": "heatmap",
+          "title": "Span latency distribution",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (le) (increase(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[$__rate_interval]))",
+              "refId": "A",
+              "legendFormat": "{{le}}",
+              "format": "heatmap"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "s"
+            },
+            "cellGap": 1,
+            "color": {
+              "scheme": "Spectral",
+              "mode": "scheme"
+            }
+          },
+          "id": 9
+        },
+        {
+          "type": "row",
+          "title": "Span observability",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 21
+          },
+          "id": 10
+        },
+        {
+          "type": "table",
+          "title": "Operations (spans)",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 22
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "p50"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "p95"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "orange",
+                          "value": 0.3
+                        },
+                        {
+                          "color": "red",
+                          "value": 1
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "rate (req/s)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "reqps"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "errors (req/s)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "reqps"
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum by (span_name) (rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[$__range]))",
+              "refId": "A",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            },
+            {
+              "expr": "sum by (span_name) (rate(traces_spanmetrics_calls_total{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\", status_code=\"STATUS_CODE_ERROR\"}[$__range]))",
+              "refId": "B",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum by (span_name, le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[$__range])))",
+              "refId": "C",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (span_name, le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[$__range])))",
+              "refId": "D",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              {
+                "displayName": "p95",
+                "desc": true
+              }
+            ]
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "Value #A": "rate (req/s)",
+                  "Value #B": "errors (req/s)",
+                  "Value #C": "p50",
+                  "Value #D": "p95",
+                  "span_name": "operation"
+                }
+              }
+            }
+          ],
+          "id": 11
+        },
+        {
+          "type": "bargauge",
+          "title": "Slowest operations (p95)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 30
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "topk(10, histogram_quantile(0.95, sum by (span_name, le) (rate(traces_spanmetrics_latency_bucket{service=\"$service\", span_kind=~\"$span_kind\", span_name=~\"$span_name\"}[5m]))))",
+              "refId": "A",
+              "legendFormat": "{{span_name}}",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "id": 12
+        },
+        {
+          "type": "nodeGraph",
+          "title": "Service map",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 30
+          },
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "queryType": "serviceMap",
+              "refId": "A",
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              }
+            }
+          ],
+          "description": "Built from the Tempo service graph (traces_service_graph_*).",
+          "id": 13
+        },
+        {
+          "type": "timeseries",
+          "title": "Calls between services",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 38
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (client, server) (rate(traces_service_graph_request_total[5m]))",
+              "refId": "A",
+              "legendFormat": "{{client}} -> {{server}}"
+            }
+          ],
+          "id": 14
+        },
+        {
+          "type": "timeseries",
+          "title": "Average latency between services",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 38
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (client, server) (rate(traces_service_graph_request_server_seconds_sum[5m])) / sum by (client, server) (rate(traces_service_graph_request_server_seconds_count[5m]))",
+              "refId": "A",
+              "legendFormat": "{{client}} -> {{server}}"
+            }
+          ],
+          "id": 15
+        },
+        {
+          "type": "row",
+          "title": "Traces (click a row to open the full trace and its span waterfall)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 45
+          },
+          "id": 16
+        },
+        {
+          "type": "table",
+          "title": "Recent traces",
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 46
+          },
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"$service\"}",
+              "limit": 20,
+              "tableType": "traces",
+              "refId": "A"
+            }
+          ],
+          "id": 17
+        },
+        {
+          "type": "table",
+          "title": "Slow traces (> 300ms, the SLO threshold)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 53
+          },
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"$service\" && duration > 300ms}",
+              "limit": 20,
+              "tableType": "traces",
+              "refId": "A"
+            }
+          ],
+          "id": 18
+        },
+        {
+          "type": "table",
+          "title": "Error traces",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 53
+          },
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"$service\" && status = error}",
+              "limit": 20,
+              "tableType": "traces",
+              "refId": "A"
+            }
+          ],
+          "id": 19
+        },
+        {
+          "type": "row",
+          "title": "Correlated signals",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 61
+          },
+          "id": 20
+        },
+        {
+          "type": "timeseries",
+          "title": "Request duration p95 by route (app histogram, exemplars link to traces)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{service=\"$service\"}[5m])))",
+              "refId": "A",
+              "legendFormat": "{{route}}",
+              "exemplar": true
+            }
+          ],
+          "id": 21
+        },
+        {
+          "type": "timeseries",
+          "title": "Fault injection active",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 12,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 1,
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 40,
+                "lineInterpolation": "stepAfter",
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "max by (kind) (chaos_active{service=\"$service\"})",
+              "refId": "A",
+              "legendFormat": "{{kind}}"
+            }
+          ],
+          "description": "1 while orders-api latency or error chaos is on, which explains a spike.",
+          "id": 22
+        },
+        {
+          "type": "timeseries",
+          "title": "Pod memory",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"$service\"})",
+              "refId": "A",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "id": 23
+        },
+        {
+          "type": "logs",
+          "title": "Logs with trace_id (use the TraceID link)",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 70
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "{service=\"$service\"} | json | trace_id!=\"\"",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "id": 24
+        }
+      ]
+    }

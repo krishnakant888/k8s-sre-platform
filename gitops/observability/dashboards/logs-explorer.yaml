@@ -6,34 +6,656 @@ metadata:
   labels:
     grafana_dashboard: "1"
   annotations:
-    grafana_folder: Platform
+    grafana_folder: Logs
 data:
   logs-explorer.json: |
     {
       "uid": "logs-explorer",
-      "title": "Logs explorer",
-      "tags": ["loki", "platform"],
+      "title": "Logs",
+      "tags": [
+        "logs",
+        "loki"
+      ],
       "schemaVersion": 39,
       "version": 1,
-      "refresh": "10s",
-      "time": {"from": "now-30m", "to": "now"},
-      "templating": {"list": [
-        {"name": "namespace", "type": "query", "datasource": {"type": "loki", "uid": "loki"},
-         "query": "label_values(namespace)", "includeAll": true, "multi": true,
-         "current": {"text": "All", "value": "$__all"}, "refresh": 2},
-        {"name": "service", "type": "query", "datasource": {"type": "loki", "uid": "loki"},
-         "query": "label_values({namespace=~\"$namespace\"}, service)", "includeAll": true, "multi": true,
-         "current": {"text": "All", "value": "$__all"}, "refresh": 2},
-        {"name": "search", "type": "textbox", "label": "contains", "query": ""}
-      ]},
+      "refresh": "30s",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "templating": {
+        "list": [
+          {
+            "name": "namespace",
+            "type": "query",
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "query": "label_values(namespace)",
+            "includeAll": true,
+            "multi": true,
+            "current": {
+              "text": "All",
+              "value": "$__all"
+            },
+            "refresh": 2,
+            "sort": 1,
+            "allValue": ".+"
+          },
+          {
+            "name": "service",
+            "type": "query",
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "query": "label_values({namespace=~\"$namespace\"}, service)",
+            "includeAll": true,
+            "multi": true,
+            "current": {
+              "text": "All",
+              "value": "$__all"
+            },
+            "refresh": 2,
+            "sort": 1,
+            "allValue": ".*"
+          },
+          {
+            "name": "level",
+            "type": "custom",
+            "label": "level",
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "query": "error,warn,warning,info,debug",
+            "current": {
+              "text": "All",
+              "value": "$__all"
+            }
+          },
+          {
+            "name": "search",
+            "type": "textbox",
+            "label": "contains",
+            "query": ""
+          }
+        ]
+      },
       "panels": [
-        {"id": 1, "type": "timeseries", "title": "Log volume by level", "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
-         "datasource": {"type": "loki", "uid": "loki"},
-         "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "stacking": {"mode": "normal"}}}},
-         "targets": [{"expr": "sum by (level) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} |= \"$search\" | json | __error__=\"\" [1m]))", "legendFormat": "{{level}}", "refId": "A"}]},
-        {"id": 2, "type": "logs", "title": "Logs", "gridPos": {"h": 22, "w": 24, "x": 0, "y": 7},
-         "datasource": {"type": "loki", "uid": "loki"},
-         "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "prettifyLogMessage": true, "sortOrder": "Descending"},
-         "targets": [{"expr": "{namespace=~\"$namespace\", service=~\"$service\"} |= \"$search\"", "refId": "A"}]}
+        {
+          "type": "row",
+          "title": "Overview",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1
+        },
+        {
+          "type": "stat",
+          "title": "Log lines / s",
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(rate({namespace=~\"$namespace\", service=~\"$service\"} |~ \"$search\" [$__interval]))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 2
+        },
+        {
+          "type": "stat",
+          "title": "Errors (5m)",
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 5,
+            "y": 1
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | detected_level=\"error\" [5m])) or vector(0)",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 3
+        },
+        {
+          "type": "stat",
+          "title": "Warnings (5m)",
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 10,
+            "y": 1
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | detected_level=~\"warn.*\" [5m])) or vector(0)",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 4
+        },
+        {
+          "type": "stat",
+          "title": "Services logging",
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 15,
+            "y": 1
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "count(sum by (service) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} [5m])))",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 5
+        },
+        {
+          "type": "stat",
+          "title": "Lines with a trace_id (5m)",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 1
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(count_over_time({namespace=~\"$namespace\", service=~\"$service\"} |= \"trace_id\" [5m])) or vector(0)",
+              "refId": "A"
+            }
+          ],
+          "description": "Lines that can be followed into Tempo.",
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "id": 6
+        },
+        {
+          "type": "timeseries",
+          "title": "Log volume by level",
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 5
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "error"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "warn"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "info"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum by (detected_level) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} |~ \"$search\" [$__interval]))",
+              "refId": "A",
+              "legendFormat": "{{detected_level}}"
+            }
+          ],
+          "id": 7
+        },
+        {
+          "type": "row",
+          "title": "Errors",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 12
+          },
+          "id": 8
+        },
+        {
+          "type": "timeseries",
+          "title": "Errors by service",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 13
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (service) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | detected_level=\"error\" [$__interval]))",
+              "refId": "A",
+              "legendFormat": "{{service}}"
+            }
+          ],
+          "id": 9
+        },
+        {
+          "type": "bargauge",
+          "title": "Errors by namespace (range)",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | detected_level=\"error\" [$__range]))",
+              "refId": "A",
+              "legendFormat": "{{namespace}}",
+              "instant": true,
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "id": 10
+        },
+        {
+          "type": "table",
+          "title": "Top error messages",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "topk(15, sum by (service, msg) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | json | level=\"error\" | __error__=\"\" [$__range])))",
+              "refId": "A",
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "showHeader": true
+          },
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "Value": "count"
+                }
+              }
+            }
+          ],
+          "id": 11
+        },
+        {
+          "type": "row",
+          "title": "Application request logs (parsed JSON)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 28
+          },
+          "id": 12
+        },
+        {
+          "type": "timeseries",
+          "title": "Requests by status",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 29
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum by (status) (count_over_time({namespace=~\"$namespace\", service=~\"$service\"} | json | __error__=\"\" | status!=\"\" [$__interval]))",
+              "refId": "A",
+              "legendFormat": "{{status}}"
+            }
+          ],
+          "id": 13
+        },
+        {
+          "type": "timeseries",
+          "title": "p95 request duration by route (from logs)",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 29
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 12,
+                "lineWidth": 1,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "quantile_over_time(0.95, {namespace=~\"$namespace\", service=~\"$service\"} | json | __error__=\"\" | unwrap duration_ms [$__interval]) by (route)",
+              "refId": "A",
+              "legendFormat": "{{route}}"
+            }
+          ],
+          "id": 14
+        },
+        {
+          "type": "row",
+          "title": "Log streams",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 36
+          },
+          "id": 15
+        },
+        {
+          "type": "logs",
+          "title": "Warnings and errors",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 37
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "{namespace=~\"$namespace\", service=~\"$service\"} |~ \"$search\" | detected_level=~\"error|warn.*|critical|fatal\"",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "id": 16
+        },
+        {
+          "type": "logs",
+          "title": "All logs",
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 47
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "{namespace=~\"$namespace\", service=~\"$service\"} |~ \"$search\" | detected_level=~\"$level\"",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "id": 17
+        }
       ]
     }
