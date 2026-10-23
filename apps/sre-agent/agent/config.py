@@ -6,9 +6,8 @@ TEMPO_URL = os.getenv("TEMPO_URL", "http://tempo.observability:3200")
 K8S_URL = os.getenv("K8S_URL", "https://kubernetes.default.svc")
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 
-TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "temporal-frontend.temporal:7233")
-TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
-TASK_QUEUE = os.getenv("TASK_QUEUE", "sre-investigations")
+WORKFLOW_NAMESPACE = os.getenv("WORKFLOW_NAMESPACE", "sre-agent")
+WORKFLOW_TEMPLATE = os.getenv("WORKFLOW_TEMPLATE", "incident-investigation")
 
 # without a key the agent runs its rule based analysis and says so in the report
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Failure drills for the demo. Each one trips an alert, which starts a Temporal investigation and an RCA report.
+# Failure drills for the demo. Each one trips an alert, which starts an Argo Workflow investigation and an RCA report.
 #
 #   scripts/drill.sh latency   slow the inventory call by 1.5s (MS=1500, SECONDS_ON=900)
 #   scripts/drill.sh errors    make 60% of inventory calls fail (RATE=0.6, SECONDS_ON=900)

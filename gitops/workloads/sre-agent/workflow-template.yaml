@@ -1,0 +1,180 @@
+# The incident investigation, run by Argo Workflows. The alert webhook creates one Workflow per firing alert
+# from this template (agent/incident.py). Each step is the agent image running `python -m agent.steps <step>`.
+#
+#   settle -> collect -> analyze -> store -> notify
+#
+# Retries and timeouts per step replace what the old Temporal activities had. A failed step is retried with
+# backoff, and the Workflow object keeps the history (kubectl -n sre-agent get wf, or the UI at workflows.localhost).
+# Data moves between steps as workflow parameters, written to /tmp/in as raw artifacts (no object store needed).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: incident-investigation
+  namespace: sre-agent
+spec:
+  entrypoint: investigate
+  serviceAccountName: sre-agent
+  activeDeadlineSeconds: 900
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 259200
+  arguments:
+    parameters:
+      - name: alert
+  volumes:
+    - name: tmp
+      emptyDir: {}
+  templates:
+    - name: investigate
+      steps:
+        - - name: settle
+            template: settle
+        - - name: collect
+            template: collect
+            arguments:
+              parameters:
+                - {name: alert, value: "{{workflow.parameters.alert}}"}
+        - - name: analyze
+            template: analyze
+            arguments:
+              parameters:
+                - {name: alert, value: "{{workflow.parameters.alert}}"}
+                - {name: ctx, value: "{{steps.collect.outputs.parameters.ctx}}"}
+        - - name: store
+            template: store
+            arguments:
+              parameters:
+                - {name: report, value: "{{steps.analyze.outputs.parameters.report}}"}
+        - - name: notify
+            template: notify
+            arguments:
+              parameters:
+                - {name: report, value: "{{steps.analyze.outputs.parameters.report}}"}
+
+    # give metrics and logs a moment to catch up with the alert
+    - name: settle
+      suspend:
+        duration: 20s
+
+    - name: collect
+      retryStrategy:
+        limit: "3"
+        backoff: {duration: 5s, factor: "2"}
+      activeDeadlineSeconds: 180
+      inputs:
+        parameters:
+          - name: alert
+        artifacts:
+          - name: alert
+            path: /tmp/in/alert.json
+            raw: {data: "{{inputs.parameters.alert}}"}
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+        command: [python, -m, agent.steps, collect]
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 384Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+          - {name: tmp, mountPath: /tmp}
+      outputs:
+        parameters:
+          - name: ctx
+            valueFrom: {path: /tmp/out/ctx.json}
+
+    - name: analyze
+      retryStrategy:
+        limit: "3"
+        backoff: {duration: 5s, factor: "2"}
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: alert
+          - name: ctx
+        artifacts:
+          - name: alert
+            path: /tmp/in/alert.json
+            raw: {data: "{{inputs.parameters.alert}}"}
+          - name: ctx
+            path: /tmp/in/ctx.json
+            raw: {data: "{{inputs.parameters.ctx}}"}
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+        command: [python, -m, agent.steps, analyze]
+        env:
+          - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
+          - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
+            valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 384Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+          - {name: tmp, mountPath: /tmp}
+      outputs:
+        parameters:
+          - name: report
+            valueFrom: {path: /tmp/out/report.json}
+
+    - name: store
+      retryStrategy:
+        limit: "3"
+        backoff: {duration: 5s, factor: "2"}
+      activeDeadlineSeconds: 60
+      inputs:
+        parameters:
+          - name: report
+        artifacts:
+          - name: report
+            path: /tmp/in/report.json
+            raw: {data: "{{inputs.parameters.report}}"}
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+        command: [python, -m, agent.steps, store]
+        resources:
+          requests: {cpu: 25m, memory: 96Mi}
+          limits: {memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+          - {name: tmp, mountPath: /tmp}
+      outputs:
+        parameters:
+          - name: report-id
+            valueFrom: {path: /tmp/out/report-id}
+
+    - name: notify
+      retryStrategy:
+        limit: "3"
+        backoff: {duration: 5s, factor: "2"}
+      activeDeadlineSeconds: 60
+      inputs:
+        parameters:
+          - name: report
+        artifacts:
+          - name: report
+            path: /tmp/in/report.json
+            raw: {data: "{{inputs.parameters.report}}"}
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-432ba15d179311c1b02bb910640f4f8f037aac43
+        command: [python, -m, agent.steps, notify]
+        env:
+          - name: NOTIFY_WEBHOOK_URL
+            valueFrom: {secretKeyRef: {name: notify-webhook, key: url, optional: true}}
+        resources:
+          requests: {cpu: 25m, memory: 96Mi}
+          limits: {memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+          - {name: tmp, mountPath: /tmp}

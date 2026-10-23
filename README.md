@@ -1,13 +1,13 @@
 # k8s-sre-platform
 
 A local, production-style platform for a B2B SaaS + AI product, running on upstream Kubernetes (kind) and managed entirely by Argo CD:
-GitOps, the LGTM observability stack, Temporal, a sample API with an SLO, and an **AI SRE agent that investigates alerts on its own**
+GitOps, the LGTM observability stack, Argo Workflows, a sample API with an SLO, and an **AI SRE agent that investigates alerts on its own**
 and writes a structured RCA and blameless postmortem.
 
 One command creates the cluster and installs Argo CD. Everything else is pulled from this repo.
 
 ```
-alert fires (Mimir ruler) -> Alertmanager -> webhook -> Temporal workflow -> SRE agent queries Mimir, Loki, Tempo,
+alert fires (Mimir ruler) -> Alertmanager -> webhook -> Argo Workflow -> SRE agent queries Mimir, Loki, Tempo,
 Kubernetes and Argo CD -> structured RCA + postmortem (ConfigMap, JSON log in Loki, optional chat webhook)
 ```
 
@@ -28,7 +28,7 @@ and applies one root Application. The first sync takes about 10 minutes. It prin
 |---|---|
 | Argo CD | http://argocd.localhost:8080 |
 | Grafana | http://grafana.localhost:8080 |
-| Temporal UI | http://temporal.localhost:8080 |
+| Argo Workflows UI | http://workflows.localhost:8080 |
 | Sample API | http://orders.localhost:8080/orders |
 
 `*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy`.
@@ -41,7 +41,7 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 
 1. The API's downstream call becomes slow. The SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
 2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Mimir and Alertmanager calls the agent webhook.
-3. A Temporal workflow `incident-OrdersApiErrorBudgetFastBurn-...` starts (see it in the Temporal UI).
+3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
    `kubectl -n sre-agent get cm -l sre-agent/report=true` and `kubectl -n sre-agent get cm <report> -o jsonpath='{.data.postmortem\.md}'`.
 5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
@@ -52,15 +52,15 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 flowchart LR
   Git[(this repo)] -->|pull| Argo[Argo CD]
   subgraph kind cluster
-    Argo --> Platform[sealed-secrets, kyverno, cnpg, rbac, namespaces + netpols]
+    Argo --> Platform[sealed-secrets, kyverno, ingress-nginx, rbac, namespaces + netpols]
     Argo --> Obs[observability: Alloy, Mimir, Loki, Tempo, Grafana, kube-state-metrics]
-    Argo --> Temporal[temporal + postgres]
+    Argo --> AW[argo-workflows]
     Argo --> Demo[demo: orders-api, loadgen]
-    Argo --> Agent[sre-agent: worker, alert-webhook]
+    Argo --> Agent[sre-agent: alert-webhook, workflow template]
     Demo -->|metrics, logs, OTLP traces| Obs
     Obs -->|alert webhook| Agent
-    Agent -->|start workflow| Temporal
-    Temporal -->|activities| Agent
+    Agent -->|create Workflow| AW
+    AW -->|steps run the agent image| Agent
     Agent -->|read only queries| Obs
   end
 ```
@@ -69,10 +69,10 @@ flowchart LR
 |---|---|
 | `argocd` | Argo CD, manages itself |
 | `observability` | Alloy (collector), Mimir (metrics, ruler, alertmanager), Loki, Tempo, Grafana, kube-state-metrics |
-| `temporal` | Temporal server + UI, PostgreSQL (CloudNativePG) |
+| `argo-workflows` | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
 | `demo` | `orders-api` and a load generator |
-| `sre-agent` | agent worker, alert webhook, stored reports |
-| `kyverno`, `cnpg-system`, `ingress-nginx`, `kube-system` | policy engine, Postgres operator, ingress controller, sealed-secrets controller |
+| `sre-agent` | alert webhook, workflow template and its step pods, stored reports |
+| `kyverno`, `ingress-nginx`, `kube-system` | policy engine, ingress controller, sealed-secrets controller |
 
 ## Repo layout
 
@@ -82,9 +82,9 @@ gitops/root/        the root Application (app of apps)
 gitops/apps/        one Application per component, AppProjects, sync waves
 gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
 gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards
-gitops/workloads/   orders-api, temporal, sre-agent manifests
+gitops/workloads/   orders-api, frontend, sre-agent manifests (including the workflow template)
 apps/orders-api/    sample service (FastAPI): code, tests, Dockerfile
-apps/sre-agent/     the agent: tools, RCA, Temporal workflow, webhook
+apps/sre-agent/     the agent: tools, RCA, workflow steps, webhook
 scripts/drill.sh    failure drills
 docs/               secrets, runbooks, RCA samples
 ```
@@ -103,11 +103,11 @@ The SLI is computed from one histogram with a `status` label, so a slow 500 is c
 Alerts use multiwindow, multi-burn-rate rules ([rules file](gitops/observability/mimir/files/orders-api-slo.yaml)):
 14.4x over 1h and 5m pages, 6x over 6h and 30m opens a ticket. Runbook: [docs/runbooks/orders-api.md](docs/runbooks/orders-api.md).
 
-## Temporal and the operational workflow
+## Argo Workflows and the operational workflow
 
-`IncidentInvestigationWorkflow` ([workflows.py](apps/sre-agent/agent/workflows.py)): wait for data to settle, collect evidence, analyze,
-store the report, notify. Each step is an activity with retries and timeouts, so a flaky query or a restart of the worker does not lose the investigation.
-Workflow IDs are derived from the alert fingerprint and start time, so a repeated notification does not start a second run.
+The `incident-investigation` WorkflowTemplate ([workflow-template.yaml](gitops/workloads/sre-agent/workflow-template.yaml)): wait for data to settle, collect evidence, analyze,
+store the report, notify. Each step is a pod running the agent image (`python -m agent.steps <step>`) with retries, backoff and a timeout, so a flaky query does not lose the investigation, and a restart of the webhook does not affect a run in flight.
+The webhook creates one Workflow per firing alert, named from the alert fingerprint and start time, so a repeated notification gets a 409 and does not start a second run.
 
 ## The AI SRE agent
 
@@ -137,7 +137,7 @@ Workflow IDs are derived from the alert fingerprint and start time, so a repeate
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
 - **Mimir ruler and Alertmanager use local, Git-managed config.** Rules and routing are files in Git. Trade-off: no per-tenant API, and a change restarts Mimir (handled by hashed ConfigMaps).
-- **Temporal in one pod.** `auto-setup` runs frontend, history, matching and worker together, with CloudNativePG Postgres. Production uses the official chart with separate services and a replicated database.
+- **Argo Workflows instead of a durable-execution engine.** An investigation is a short linear pipeline, so retries, timeouts and a visible history are enough, and Argo Workflows is Kubernetes-native, managed by GitOps and needs no database. Trade-offs: no durable timers or signals in code (the 20 s settle is a suspend step), and data moves between steps as workflow parameters, capped at about 150 KB (the agent trims evidence to fit). A long-lived or branching process would justify Temporal or Restate.
 - **Secrets seeded at bootstrap.** Sealed Secrets are bound to a cluster key, so secrets committed for my cluster could not be decrypted on yours. Seeding at bootstrap keeps the repo runnable from scratch without putting a private key in Git.
 - **No HPA locally.** metrics-server is disabled to save resources. With it enabled the API gets an HPA on CPU.
 - **Rule based analysis plus an LLM.** The agent is useful without an API key and testable without a model; the model adds verification and better prose.
@@ -151,9 +151,9 @@ The Argo CD apps, projects, policies, dashboards, rules and the agent are unchan
 ## Roadmap
 
 1. External Secrets Operator with a real backend, cert-manager and TLS.
-2. Object storage and distributed modes for Mimir, Loki, Tempo; HA Postgres with backups and restore drills.
+2. Object storage and distributed modes for Mimir, Loki, Tempo.
 3. Progressive delivery (Argo Rollouts) with SLO-based analysis, so a bad deploy is rolled back automatically.
-4. Agent: human approval signal in the workflow before any remediation, remediation playbooks (restart, rollback PR), evaluation suite of recorded incidents, cost and token budgets.
+4. Agent: human approval step (a suspend) in the workflow before any remediation, remediation playbooks (restart, rollback PR), evaluation suite of recorded incidents, cost and token budgets.
 5. Multi-cluster Argo CD with ApplicationSets, per-environment overlays.
 6. Alert-driven SLO reporting workflow (weekly) and a status page.
 7. Kyverno image signature verification (cosign) and SBOMs.

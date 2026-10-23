@@ -20,3 +20,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true   # WorkflowTemplate: its CRD comes from the argo-workflows app (wave 0)
