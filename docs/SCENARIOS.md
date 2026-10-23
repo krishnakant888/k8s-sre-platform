@@ -11,7 +11,7 @@ namespace, so the deliberately bad specs are admitted and show up in the policy 
 
 ## Frontend traffic
 
-The frontend (`gitops/workloads/frontend`, host `frontend.localhost:8880`) is a stateless nginx that logs one JSON
+The frontend (`gitops/workloads/frontend`, host `frontend.localhost:8080`) is a stateless nginx that logs one JSON
 object per request. These scenarios generate those logs.
 
 | Scenario | Sends | Where to look |

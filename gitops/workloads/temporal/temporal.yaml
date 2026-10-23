@@ -129,7 +129,7 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: TEMPORAL_ADDRESS, value: "temporal-frontend:7233"}
-            - {name: TEMPORAL_CORS_ORIGINS, value: "http://temporal.localhost:8880"}
+            - {name: TEMPORAL_CORS_ORIGINS, value: "http://temporal.localhost:8080"}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 10
