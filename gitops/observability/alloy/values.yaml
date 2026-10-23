@@ -88,11 +88,13 @@ alloy:
       }
 
       prometheus.scrape "annotated_pods" {
+        scrape_interval = "30s"
         targets    = discovery.relabel.annotated_pods.output
         forward_to = [prometheus.remote_write.mimir.receiver]
       }
 
       prometheus.scrape "platform" {
+        scrape_interval = "30s"
         targets = [
           {"__address__" = "kube-state-metrics:8080", "job" = "kube-state-metrics"},
           {"__address__" = "mimir:8080", "job" = "mimir"},
@@ -115,6 +117,7 @@ alloy:
       }
 
       prometheus.scrape "cadvisor" {
+        scrape_interval = "30s"
         targets           = discovery.relabel.cadvisor.output
         scheme            = "https"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"

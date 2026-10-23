@@ -17,6 +17,9 @@ MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "12"))
 REPORT_NAMESPACE = os.getenv("REPORT_NAMESPACE", "sre-agent")
 NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 
+# services whose failures users feel, used to decide priority
+USER_FACING_SERVICES = {s.strip() for s in os.getenv("USER_FACING_SERVICES", "orders-api,frontend").split(",") if s.strip()}
+
 # queries must stay cheap and bounded
 MAX_RANGE_MINUTES = 120
 MAX_LOG_LINES = 200

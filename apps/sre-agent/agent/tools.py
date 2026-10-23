@@ -3,6 +3,7 @@
 Every function here is safe to hand to a model: it only reads, clamps its time range and result size,
 and returns small json friendly dicts.
 """
+import calendar
 import json
 import re
 import time
@@ -141,13 +142,15 @@ def get_trace(trace_id: str) -> dict:
     return _trim({"trace_id": trace_id, "span_count": len(spans), "slowest": spans[:6], "errors": [s for s in spans if s["error"]][:5]})
 
 
+_k8s_transport = None  # tests inject an httpx.MockTransport here
+
+
 def _k8s_get(path: str) -> dict:
-    token = Path(f"{config.SA_DIR}/token").read_text()
-    r = _client.get(
-        config.K8S_URL + path,
-        headers={"Authorization": f"Bearer {token}"},
-        verify=f"{config.SA_DIR}/ca.crt",
-    )
+    # httpx only takes `verify` when the client is built, not per request, so the API server CA needs its own client
+    token = Path(f"{config.SA_DIR}/token").read_text()  # re-read every time, projected tokens rotate
+    kwargs = {"transport": _k8s_transport} if _k8s_transport else {"verify": f"{config.SA_DIR}/ca.crt"}
+    with httpx.Client(timeout=20, **kwargs) as client:
+        r = client.get(config.K8S_URL + path, headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
     return r.json()
 
@@ -158,6 +161,7 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
     for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods")["items"]:
         if not p["metadata"]["name"].startswith(name_prefix):
             continue
+        limits = {c["name"]: c.get("resources", {}).get("limits", {}).get("memory") for c in p["spec"].get("containers", [])}
         for cs in p["status"].get("containerStatuses", []):
             last = cs.get("lastState", {}).get("terminated", {})
             pods.append(
@@ -169,6 +173,8 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
                     "waiting": cs["state"].get("waiting", {}).get("reason"),
                     "last_terminated": {"reason": last.get("reason"), "exit_code": last.get("exitCode"), "at": last.get("finishedAt")} if last else None,
                     "started_at": p["status"].get("startTime"),
+                    "memory_limit": limits.get(cs.get("name")),
+                    "app_instance": p["metadata"].get("labels", {}).get("app.kubernetes.io/instance"),
                 }
             )
     return _trim({"namespace": namespace, "pods": pods})
@@ -179,7 +185,7 @@ def get_k8s_events(namespace: str, minutes: int = 30) -> dict:
     events = []
     for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events")["items"]:
         ts = e.get("lastTimestamp") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
-        epoch = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+        epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
             continue
         events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": e["involvedObject"]["name"], "message": e["message"][:200]})
@@ -191,9 +197,16 @@ def get_recent_deploys(application: str) -> dict:
     """Argo CD sync history for an application, newest first."""
     app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{application}")
     history = app.get("status", {}).get("history", [])[-6:]
+    spec = app.get("spec", {})
+    files = []
+    for src in spec.get("sources") or [spec.get("source", {})]:
+        if src.get("path"):
+            files.append(src["path"])
+        files += [f.replace("$values/", "") for f in src.get("helm", {}).get("valueFiles", [])]
     return _trim(
         {
             "application": application,
+            "source_files": files,
             "history": [
                 {"deployed_at": h.get("deployedAt"), "revision": (h.get("revision") or "")[:10], "id": h.get("id")}
                 for h in reversed(history)

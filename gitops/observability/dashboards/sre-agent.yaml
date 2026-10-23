@@ -33,7 +33,7 @@ data:
         {"id": 5, "type": "table", "title": "RCA reports (newest first)", "gridPos": {"h": 10, "w": 24, "x": 0, "y": 4},
          "datasource": {"type": "loki", "uid": "loki"},
          "transformations": [{"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-                             {"id": "organize", "options": {"includeByName": {"Time": true, "report_id": true, "alert": true, "root_cause": true, "confidence": true, "mode": true}}}],
+                             {"id": "organize", "options": {"includeByName": {"Time": true, "priority": true, "layer": true, "report_id": true, "alert": true, "root_cause": true, "confidence": true, "mode": true}}}],
          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\"", "refId": "A"}]},
         {"id": 6, "type": "logs", "title": "Agent and webhook logs", "gridPos": {"h": 12, "w": 24, "x": 0, "y": 14},
          "datasource": {"type": "loki", "uid": "loki"},
