@@ -120,7 +120,7 @@ spec:
             limits: {memory: 192Mi}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false   # the ui renders ./config/docker.yaml at start
             capabilities: {drop: [ALL]}
 ---
 apiVersion: v1
