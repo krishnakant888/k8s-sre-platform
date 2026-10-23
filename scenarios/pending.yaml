@@ -1,0 +1,23 @@
+# requests more than any node has: Pending with a FailedScheduling event,
+# DeploymentReplicasUnavailable alert, no logs at all
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pending
+  namespace: scenarios
+  labels: {app.kubernetes.io/name: pending, scenario: "true"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: pending}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: pending, scenario: "true"}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37.0
+          command: [sleep, "3600"]
+          resources:
+            requests: {cpu: "100", memory: 1Ti}
+            limits: {memory: 1Ti}
