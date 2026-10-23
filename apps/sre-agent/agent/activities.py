@@ -58,5 +58,6 @@ def notify(report: dict) -> bool:
     text = (
         f"*{report['priority']['level']}* {report['alert']} on `{report['service']}`: {report['fault_domain']['layer']} level, "
         f"{report['root_cause']['category']} ({report['root_cause']['confidence']})\n{report['summary']}\nRespond {report['priority']['respond_within']}."
+    )
     httpx.post(config.NOTIFY_WEBHOOK_URL, json={"text": text}, timeout=10).raise_for_status()
     return True
