@@ -30,7 +30,7 @@ controller:
       enabled: false
   resources:
     requests: {cpu: 100m, memory: 128Mi}
-    limits: {memory: 384Mi}
+    limits: {memory: 512Mi}
   # The admission webhook is installed by pre-install Helm hook jobs. Argo CD can miss their completion (the job is
   # deleted before it is observed) and the sync hangs forever. Off here; the cost is that bad Ingress objects are not
   # rejected at admission. In production use cert-manager for the webhook certificate (admissionWebhooks.certManager).

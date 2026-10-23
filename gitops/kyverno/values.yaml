@@ -3,23 +3,23 @@ admissionController:
   replicas: 1
   container:
     resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {memory: 384Mi}
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 768Mi}
 backgroundController:
   replicas: 1
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
 cleanupController:
   replicas: 1
   resources:
     requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 128Mi}
+    limits: {memory: 256Mi}
 reportsController:
   replicas: 1
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
 features:
   policyExceptions:
     enabled: false
