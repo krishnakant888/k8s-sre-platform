@@ -132,7 +132,7 @@ def test_store_report_writes_files_to_the_reports_volume(monkeypatch, tmp_path):
     assert activities.store_report(r.model_dump()) == r.id
     folder = tmp_path / r.id
     assert json.loads((folder / "report.json").read_text())["id"] == r.id
-    assert "## Summary" in (folder / "postmortem.md").read_text()
+    assert (folder / "postmortem.md").read_text().startswith("# Postmortem")
     assert activities.store_report(r.model_dump()) == r.id  # a retry overwrites, it does not fail
     assert sorted(p.name for p in folder.iterdir()) == ["postmortem.md", "report.json"]  # no temp files left behind
 
