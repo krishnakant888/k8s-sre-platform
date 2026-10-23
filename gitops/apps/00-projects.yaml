@@ -10,7 +10,7 @@ spec:
   sourceRepos:
     - https://github.com/krishnakant888/k3s-sre-platform.git
     - https://argoproj.github.io/argo-helm
-    - https://bitnami-labs.github.io/sealed-secrets
+    - https://bitnami.github.io/sealed-secrets
     - https://kyverno.github.io/kyverno
     - https://cloudnative-pg.github.io/charts
   destinations:
