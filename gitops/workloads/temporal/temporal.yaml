@@ -101,9 +101,28 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # the ui writes ./config/docker.yaml at start, the image dir is root owned, so give it a writable copy
+        - name: copy-config
+          image: temporalio/ui:2.34.0
+          command: [sh, -c, "cp -r /home/ui-server/config/. /cfg/"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /cfg}
+      volumes:
+        - name: config
+          emptyDir: {}
       containers:
         - name: ui
           image: temporalio/ui:2.34.0
+          volumeMounts:
+            - {name: config, mountPath: /home/ui-server/config}
           ports:
             - {name: http, containerPort: 8080}
           env:
@@ -120,7 +139,7 @@ spec:
             limits: {memory: 192Mi}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false   # the ui renders ./config/docker.yaml at start
+            readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
 ---
 apiVersion: v1
