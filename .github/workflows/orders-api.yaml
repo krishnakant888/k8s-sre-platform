@@ -1,0 +1,62 @@
+name: orders-api
+
+on:
+  pull_request:
+    paths: ["apps/orders-api/**", ".github/workflows/orders-api.yaml"]
+  push:
+    branches: [main]
+    paths: ["apps/orders-api/**", ".github/workflows/orders-api.yaml"]
+
+env:
+  IMAGE: ghcr.io/krishnakant888/orders-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r apps/orders-api/requirements-dev.txt
+      - run: python -m pytest -q
+        working-directory: apps/orders-api
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/orders-api
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: scan dependencies
+        run: |
+          docker run --rm -v "$PWD/apps/orders-api:/src:ro" aquasec/trivy:0.58.1 \
+            fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 0 /src
+      - name: point the deployment at the new image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          f=gitops/workloads/orders-api/deployment.yaml
+          [ -f "$f" ] || { echo "no deployment yet"; exit 0; }
+          sed -i "s#\(image: ${IMAGE}\):.*#\1:sha-${GITHUB_SHA}#" "$f"
+          sed -i "s#\(image: ${IMAGE}\):.*#\1:sha-${GITHUB_SHA}#" gitops/workloads/orders-api/loadgen.yaml 2>/dev/null || true
+          git config user.name "orders-api ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add gitops/workloads/orders-api
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: orders-api image sha-${GITHUB_SHA::7}"
+          git pull --rebase -q origin main
+          git push -q origin main
