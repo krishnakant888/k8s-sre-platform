@@ -132,7 +132,7 @@ Covered: crash loops by cause (missing setting, read-only filesystem, dependency
 
 ### Sizing
 
-Requests and limits are set for a 32 GB workstation (the three clusters use about 9 GB when idle, so 12 GB is the practical minimum) with WSL2 given 12 GB (`%UserProfile%\.wslconfig`: `memory=12GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
+Requests and limits are set for a 32 GB workstation (the three clusters use about 9 GB when idle, so 16 GB is the practical minimum: at 12 GB the WSL service stopped answering twice under 30 broken workloads) with WSL2 given 16 GB (`%UserProfile%\.wslconfig`: `memory=16GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
 Mimir 2 Gi / 6 Gi (600k active series), Loki 1 Gi / 3 Gi, Tempo 1 Gi / 3 Gi, Grafana 512 Mi / 1.5 Gi, collectors 512 Mi to 768 Mi / 1.5 Gi to 2 Gi, Argo CD controller 2 Gi / 4 Gi, Kyverno admission 512 Mi / 1.5 Gi, ingress-nginx 256 Mi / 1 Gi.
 The limits add up to more than the machine has on purpose (they are caps, not reservations); real use with the three clusters idle is about 8 GB. The per-tenant limits of Mimir and Loki are 4x their defaults.
 

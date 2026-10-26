@@ -1,4 +1,4 @@
-# single replicas, this is a laptop; memory sized for a 32 GB host (WSL given 12 GB), see README
+# single replicas, this is a laptop; memory sized for a 32 GB host (WSL given 16 GB), see README
 admissionController:
   replicas: 1
   container:
