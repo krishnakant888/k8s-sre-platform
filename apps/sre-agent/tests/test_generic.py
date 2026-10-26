@@ -201,3 +201,47 @@ def test_platform_component_without_user_impact_is_capped_at_p3(monkeypatch):
     r = investigate(alert("PodOOMKilled", "page", cluster="gitops", namespace="argocd", pod="argocd-application-controller-0"))
     assert r.priority.level in ("P3", "P4")
     assert any("platform component" in x for x in r.priority.rationale)
+
+
+def test_quota_exceeded(monkeypatch):
+    fake(monkeypatch, pods=[], events=[event("FailedCreate", 'Error creating: pods "fault-quota-x" is forbidden: exceeded quota: pods, requested: pods=1, used: pods=1, limited: pods=1', obj="fault-quota-7d9f8b5c6d")])
+    r = investigate(alert("DeploymentReplicasUnavailable", cluster="platform", namespace="fault-quota", deployment="fault-quota"))
+    assert r.root_cause.category == "quota_exceeded" and r.fault_domain.layer == "infrastructure"
+
+
+def test_eviction_for_ephemeral_storage_is_reported(monkeypatch):
+    fake(monkeypatch, pods=[], events=[event("Evicted", "Pod ephemeral local storage usage exceeds the total limit of containers 10Mi.", obj="fault-evict-6c5b4d7f9-abcde")])
+    r = investigate(alert("PodFailed", cluster="platform", namespace="sandbox", pod="fault-evict-6c5b4d7f9-abcde"))
+    assert r.root_cause.category == "resource_exhaustion"
+    assert "ephemeral" in r.fault_domain.component
+
+
+def test_scaled_to_zero_platform_addon_is_infrastructure(monkeypatch):
+    fake(monkeypatch, pods=[], prom={"kube_deployment_spec_replicas": 0.0})
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    assert r.root_cause.category == "scaled_to_zero" and r.fault_domain.layer == "infrastructure"
+
+
+def test_exit_code_zero_is_called_out(monkeypatch):
+    fake(monkeypatch, pods=[pod(waiting="CrashLoopBackOff", restarts=5, term=("Completed", 0))], logs=[("migration done", 5)])
+    r = investigate(alert("PodCrashLooping", cluster="platform", namespace="sandbox", pod="orders-api-7d9f8b5c6d-abcde"))
+    assert "exit code 0" in r.fault_domain.component and r.fault_domain.layer == "application"
+
+
+def test_unresolvable_name_with_healthy_coredns_is_the_applications(monkeypatch):
+    fake(monkeypatch, pods=[pod(waiting="CrashLoopBackOff", restarts=4, term=("Error", 1))], logs=[("wget: bad address 'payments.internal.invalid'", 4)], prom={"coredns_dns_responses_total": 0.0})
+    r = investigate(alert("PodCrashLooping", cluster="platform", namespace="sandbox", pod="orders-api-7d9f8b5c6d-abcde"))
+    assert r.root_cause.category == "dns_failure" and r.fault_domain.layer == "application"
+
+
+def test_ingress_errors_with_no_backend_pods(monkeypatch):
+    fake(monkeypatch, pods=[], prom={'status=~"5.."}[2m])) /': 0.95, "request_duration_seconds_bucket": 0.1, "sum by (status)": 0.3, "kube_deployment_spec_replicas": 0.0,
+                                     "kube_ingress_path": {"series": [{"labels": {"service_name": "shop"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
+    r = investigate(alert("IngressHighErrorRate", "page", cluster="platform", namespace="sandbox", ingress="shop", host="shop.localhost"))
+    assert "scaled to zero" in r.fault_domain.component
+
+
+def test_collector_without_a_pod(monkeypatch):
+    fake(monkeypatch, pods=[], prom={})
+    r = investigate(alert("ClusterTelemetryMissing", "page", cluster="gitops", service="alloy"))
+    assert r.root_cause.category == "telemetry_gap" and "no pod" in r.fault_domain.component

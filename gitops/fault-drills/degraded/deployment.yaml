@@ -1,0 +1,22 @@
+# Used by scripts/faults.py (argo-degraded). Nothing deploys this folder unless the drill creates an Application for it:
+# a deployment that syncs fine and never becomes healthy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drill-degraded
+  namespace: sandbox
+  labels: {app.kubernetes.io/name: drill-degraded, app.kubernetes.io/version: "0.0.1", team: fault-drill}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: drill-degraded}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: drill-degraded, app.kubernetes.io/version: "0.0.1", team: fault-drill}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: app
+          image: nginxinc/nginx-unprivileged:0.0.0-no-such-tag
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
