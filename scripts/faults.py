@@ -338,6 +338,7 @@ def _():
 
 
 def clear():
+    save_state({})
     kubectl(PLATFORM, "-n", NS, "delete", "deploy,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
@@ -367,13 +368,35 @@ def reports():
     return out
 
 
+STATE = os.path.expanduser("~/.faults-state.json")
+
+
+def load_state():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    json.dump(state, open(STATE, "w"))
+
+
 def check(names):
+    from datetime import datetime
+
+    state = load_state()
+    if state and names == list(SCENARIOS):
+        names = [n for n in names if n in state]   # only the faults that were injected
     all_reports = reports()
+    # a report counts only when it was written after the fault was injected (older ones are from earlier runs)
+    for r in all_reports:
+        r["_at"] = datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00")).timestamp()
     ok = wrong = missing = 0
     print(f"{'fault':<18} {'verdict':<9} {'alert':<28} {'category':<24} {'layer':<15} {'priority'}")
     for name in names:
         s = SCENARIOS[name]
-        mine = [r for r in all_reports if r["service"] == s["service"] or r["service"].startswith(s["service"])]
+        mine = [r for r in all_reports if (r["service"] == s["service"] or r["service"].startswith(s["service"])) and r["_at"] >= state.get(name, 0)]
         if not mine:
             print(f"{name:<18} {'NO ALERT':<9} (expected {'/'.join(s['alerts'])} within {s['minutes']} minutes, or the report has not been written yet)")
             missing += 1
@@ -397,11 +420,14 @@ def main(argv):
     elif cmd == "start":
         want = argv[2:]
         names = [n for n, s in SCENARIOS.items() if s["group"] == "all"] if want == ["all"] else [n for n, s in SCENARIOS.items() if s["group"] == "disruptive"] if want == ["disruptive"] else want
+        state = load_state()
         for n in names:
             if n not in SCENARIOS:
                 sys.exit(f"unknown fault {n}, see `list`")
             print("injecting", n)
             SCENARIOS[n]["fn"]()
+            state[n] = time.time()
+        save_state(state)
         print(f"\ninjected {len(names)}; the slowest needs about {max(SCENARIOS[n]['minutes'] for n in names)} minutes to alert. Then: scripts/faults.py check")
     elif cmd == "check":
         sys.exit(1 if check(argv[2:] or list(SCENARIOS)) else 0)

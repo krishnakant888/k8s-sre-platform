@@ -14,6 +14,30 @@ def _slug(text: str, limit: int) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:limit].strip("-")
 
 
+DEDUPE_MINUTES = 30
+
+
+def target_key(alert: dict) -> str:
+    """Names what the alert is about: cluster, namespace and workload. One fault usually raises several alerts (a container waiting, a pod
+    pending, a deployment unavailable); they all describe the same thing, so they share one investigation."""
+    from agent import generic
+
+    labels = alert.get("labels", {})
+    workload = generic._workload(labels) or labels.get("alertname", "unknown")
+    return _slug("-".join(x for x in (labels.get("cluster") or "platform", labels.get("namespace", ""), workload) if x), 63) or "unknown"
+
+
+def recent_duplicate(existing: list[dict], now: float, window_minutes: int = DEDUPE_MINUTES) -> str | None:
+    """Name of a workflow for the same target created within the window (running or finished), if any."""
+    from datetime import datetime
+
+    for wf in existing:
+        created = datetime.fromisoformat(wf["metadata"]["creationTimestamp"].replace("Z", "+00:00")).timestamp()
+        if now - created < window_minutes * 60:
+            return wf["metadata"]["name"]
+    return None
+
+
 def workflow_name(alert: dict) -> str:
     """Deterministic per alert, so a repeated notification for the same alert maps to the same name (a no-op)."""
     labels = alert.get("labels", {})
@@ -33,6 +57,7 @@ def build_workflow(alert: dict) -> dict:
             "labels": {
                 "app.kubernetes.io/part-of": "sre-agent",
                 "sre-agent/alertname": _slug(alert.get("labels", {}).get("alertname", "unknown"), 63) or "unknown",
+                "sre-agent/target": target_key(alert),
             },
         },
         "spec": {

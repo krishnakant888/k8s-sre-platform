@@ -118,7 +118,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                                                          + (f", waiting {p['waiting']}" if p.get('waiting') else "")
                                                          + (f", last exit {p['last_terminated']['reason']}({p['last_terminated']['exit_code']})" if p.get('last_terminated') else "")
                                                          for p in sig["pods"][:4]))
-        ev = tools.call_tool("get_k8s_events", {"namespace": namespace, "minutes": lookback_minutes, "cluster": cluster})
+        ev = tools.call_tool("get_k8s_events", {"namespace": namespace, "minutes": 120, "cluster": cluster, "name_prefix": prefix})
         raw["events"] = ev
         names = {p["pod"] for p in sig["pods"]} | {prefix}
         sig["events"] = [e for e in ev.get("events", []) if any(e["object"].startswith(n) or n.startswith(e["object"]) for n in names)] if "error" not in ev else []
@@ -128,8 +128,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             add("kubernetes", f"events {namespace} in {cluster}", "; ".join(f"{e['reason']} {e['object']}: {e['message'][:110]}" for e in sig["events"][:4]))
         sig["nodes"] = sorted({p["node"] for p in sig["pods"] if p.get("node")})
 
-    def logs_for(selector: str, label: str):
-        q = f'{{{selector}}} |~ "{ERROR_LINES}"'
+    def logs_for(selector: str, label: str, everything: bool = False):
+        q = f'{{{selector}}}' if everything else f'{{{selector}}} |~ "{ERROR_LINES}"'
         logs = tools.call_tool("query_logql", {"query": q, "minutes": lookback_minutes, "limit": 150})
         raw["logs"] = logs
         sig["log_total"] = logs.get("total", 0)
@@ -188,7 +188,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + (f"; memory grew {sig['mem_growth']:.1f}x over the window" if sig["mem_growth"] else "")
             + f"; CPU throttled up to {sig['throttle']:.0%}")
         if sig["restarts"] or any(not p["ready"] for p in sig["pods"]) or family != "memory":
-            logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*"', "error lines of the workload")
+            logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*"', "last log lines of the workload", everything=True)
         node_facts(sig.get("nodes", []))
         deploys([f"prod-{workload}", workload])
         sig["ongoing"] = any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
@@ -395,7 +395,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["Keep automated sync with self-heal on for platform components and restrict `scale` rights with RBAC; alert on spec.replicas == 0 for critical add-ons (CriticalAddonDown)"], [f"{k} -n {ns} get deploy {wl}  # READY n/n"], f"Everything that depends on {wl} is affected.")
 
     # ------------------------------------------------------------------ containers that cannot start or keep dying
-    if family in ("container", "job", "rollout", "target", "scheduling", "memory", "cpu") and (family in ("memory", "cpu") or labels.get("reason") or pod.get("waiting") or sig.get("restarts") or _ev(sig, "Failed", "BackOff", "FailedScheduling", "Unhealthy", "FailedMount")):
+    if family in ("container", "job", "rollout", "target", "scheduling", "memory", "cpu") and (family in ("memory", "cpu", "job") or pod.get("phase") == "Failed" or labels.get("reason") or pod.get("waiting") or sig.get("restarts") or _ev(sig, "Failed", "BackOff", "FailedScheduling", "Unhealthy", "FailedMount")):
         reason = labels.get("reason") or pod.get("waiting") or ""
         msgs = _msgs(sig)
         exit_code = (pod.get("last_terminated") or {}).get("exit_code")
@@ -427,6 +427,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                             ["FailedScheduling event mentions a volume or claim"], [f"{k} -n {ns} get pvc,pv", f"{k} get storageclass  # is there a default class with a provisioner"], ["Make sure the storage class can provision (cloud: use a zonal class and WaitForFirstConsumer)"], [f"{k} -n {ns} get pvc  # Bound"], f"{wl} cannot start without its volume.")
 
         pull = _ev(sig, "Failed", "ErrImagePull", "ImagePullBackOff") if reason in ("ImagePullBackOff", "ErrImagePull", "InvalidImageName") else []
+        pull.sort(key=lambda e: (any(w in e["message"].lower() for w in ("manifest", "not found", "pull access", "unauthorized", "denied", "no such host", "timeout", "lookup")), len(e["message"])), reverse=True)
         if reason in ("ImagePullBackOff", "ErrImagePull", "InvalidImageName"):
             m = (pull[0]["message"] if pull else "").lower()
             if "not found" in m or "manifest unknown" in m or "invalid" in reason.lower():
@@ -479,12 +480,18 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                         [f"throttled periods up to {sig.get('throttle', 0):.0%}", "no restarts needed: the symptom is latency"], [f"Raise or remove the CPU limit of `{wl}` in {manifest} (keep a request), or add replicas"],
                         ["Prefer CPU requests without limits for latency-sensitive services, and scale on CPU with an HPA"], [f"rate(container_cpu_cfs_throttled_periods_total{{cluster=\"{cluster}\",namespace=\"{ns}\",pod=~\"{wl}-.*\"}}[5m]) is near 0"], f"{wl} responds slower than it should.")
 
+        killed_by_probe = [e for e in _ev(sig, "Unhealthy") if "liveness probe failed" in e["message"].lower() or "startup probe failed" in e["message"].lower()]
+        if killed_by_probe and (reason == "CrashLoopBackOff" or sig.get("restarts")) and exit_code in (0, 137, 143, None):
+            return Diag("probe_failure", "application", f"liveness probe of {wl}", "high", "The kubelet keeps killing a running process because its liveness probe fails.",
+                        f"{where} is restarted again and again by the kubelet: {killed_by_probe[0]['message'][:160]}. The process itself starts and runs (exit code {exit_code}); the probe asks for something it does not answer, so Kubernetes concludes it is dead.",
+                        ["Unhealthy events say the liveness probe failed", f"exit code {exit_code} is what a terminated healthy process returns"], [f"{k} -n {ns} describe pod {pod.get('pod', wl)} | grep -A6 Liveness  # path, port, timeout", f"Fix the probe path/port in {manifest}, or the endpoint it calls"],
+                        ["Give slow starters a startupProbe, keep liveness cheap and independent of dependencies, and test the probe path in CI"], [f"{k} -n {ns} get pods  # restarts stop increasing"], f"{wl} restarts every few seconds and serves little.")
         if exit_code == 0 and (reason == "CrashLoopBackOff" or sig.get("restarts")):
             return Diag("pod_crash", "application", f"command of {wl} finishes with exit code 0", "high", "The container exits normally, so Kubernetes restarts it forever.",
                         f"{where} is in a restart loop although nothing fails: the process exits with code 0 right after starting. A Deployment expects a long-running process, so Kubernetes restarts it with a growing delay (CrashLoopBackOff). The command or entrypoint finishes (a script, a one-shot task) instead of serving.",
                         ["exit code 0, reason Completed", "no error lines and no node or resource problem"], [f"{k} -n {ns} logs {pod.get('pod', wl)} --previous | tail -20  # what it ran before it ended", f"Check `command`/`args` in {manifest}"],
                         ["Run one-shot work as a Job or CronJob, and keep the long-running process in the Deployment"], [f"{k} -n {ns} get pods  # Running, restarts stable"], f"{wl} never stays up.")
-        if reason == "CrashLoopBackOff" or sig.get("restarts") or term in ("Error", "Completed"):
+        if reason == "CrashLoopBackOff" or sig.get("restarts") or term in ("Error", "Completed") or pod.get("phase") == "Failed":
             cfg = re.search(r"permission denied|read-only file system|eacces|erofs", msgs)
             dns = re.search(r"name resolution|no such host|could not translate|temporary failure in name|bad address|server misbehaving|can't resolve|nxdomain", msgs)
             conn = re.search(r"connection refused|connect: |dial tcp|timed out|timeout|no route to host|unavailable", msgs)
