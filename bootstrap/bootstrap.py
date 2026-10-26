@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Create the two local Kubernetes clusters (kind), install Calico, and hand over to GitOps.
+"""Create the three local Kubernetes clusters (kind), install Calico, and hand over to GitOps.
 
     platform    the production side: ingress, policy, workloads, and the collectors that ship telemetry out.
-    monitoring  everything used to operate and debug production: the single Argo CD that deploys BOTH clusters,
-                Mimir, Loki, Tempo, Grafana and alerting. It is kept apart so it keeps working when production is
-                down or being rebuilt.
+    monitoring  everything used to observe and debug production: Mimir, Loki, Tempo, Grafana and alerting, plus the
+                SRE agent, Argo Workflows and the RCA report viewer.
+    gitops      Argo CD, alone. It deploys the other two clusters and itself from this repo.
 
-Argo CD runs only in the monitoring cluster (hub and spoke). The platform cluster has no Argo CD of its own:
-this script registers it in the monitoring Argo CD, which then deploys everything from Git into both clusters.
-This is the only imperative step.
+Each cluster is kept apart so the tools keep working when another one is down or being rebuilt. The platform and
+monitoring clusters have no Argo CD of their own: this script registers them in the one in the gitops cluster, which then
+deploys everything from Git. This is the only imperative step.
 
-    python3 bootstrap/bootstrap.py                         # create both clusters (platform first)
-    python3 bootstrap/bootstrap.py --only platform         # create (or repair) one, and re-register it if monitoring exists
-    python3 bootstrap/bootstrap.py --destroy --only platform   # delete one, monitoring keeps running
-    python3 bootstrap/bootstrap.py --destroy               # delete both
+    python3 bootstrap/bootstrap.py                         # create all three clusters (platform, monitoring, gitops)
+    python3 bootstrap/bootstrap.py --only platform         # create (or repair) one, and re-register it if gitops exists
+    python3 bootstrap/bootstrap.py --destroy --only platform   # delete one, the others keep running
+    python3 bootstrap/bootstrap.py --destroy               # delete all
 
 Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets each cluster needs with random
-values (Grafana admin login in monitoring, the fault injection token in platform). Set ANTHROPIC_API_KEY in the
-environment to also create the key the SRE agent uses for LLM analysis; without it the agent runs its rule based
-analysis. In AWS/Azure this step is replaced by External Secrets.
+values (Grafana admin login in monitoring, the fault injection token in platform), and the read-only tokens the SRE
+agent uses to read the other clusters. Set ANTHROPIC_API_KEY in the environment to also create the key the SRE agent
+uses for LLM analysis; without it the agent runs its rule based analysis. In AWS/Azure this step is replaced by
+External Secrets.
 """
 import argparse
 import base64
@@ -36,12 +37,11 @@ ROOT = Path(__file__).resolve().parent.parent
 ARGOCD_CHART_VERSION = "7.6.12"
 ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
-HUB = "monitoring"  # the cluster that runs Argo CD
-SPOKE = "platform"  # registered in the hub under this name, Applications target it with destination.name
-# how the hub reaches the spoke: container name on the shared kind Docker network
-SPOKE_API = "https://platform-control-plane:6443"
+HUB = "gitops"  # the cluster that runs Argo CD
+SPOKES = ["platform", "monitoring"]  # registered in the hub under these names, Applications target them with destination.name
+AGENT = "monitoring"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
 
-# Order matters: the platform API has to exist before the hub's Argo CD can register it.
+# Order matters: the spokes' API servers have to exist before the hub's Argo CD can register them.
 CLUSTERS = {
     "platform": {
         "kind_config": ROOT / "bootstrap" / "kind-config.yaml",
@@ -51,17 +51,24 @@ CLUSTERS = {
     },
     "monitoring": {
         "kind_config": ROOT / "bootstrap" / "kind-config-monitoring.yaml",
-        "argocd_values": ROOT / "gitops" / "monitoring" / "argocd" / "values.yaml",
         "host_ports": [9080, 9443],
         "seed_namespaces": ["observability", "sre-agent"],
     },
+    "gitops": {
+        "kind_config": ROOT / "bootstrap" / "kind-config-gitops.yaml",
+        "argocd_values": ROOT / "gitops" / "hub" / "argocd" / "values.yaml",
+        "host_ports": [7080, 7443],
+        "seed_namespaces": [],
+    },
 }
 ROOT_APPS = {
-    "monitoring": ROOT / "gitops" / "root" / "root-app-monitoring.yaml",  # the monitoring cluster's own apps
-    "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",      # the platform cluster's apps, deployed by the hub
+    "gitops": ROOT / "gitops" / "root" / "root-app-hub.yaml",              # Argo CD itself and its ingress
+    "monitoring": ROOT / "gitops" / "root" / "root-app-monitoring.yaml",   # the monitoring cluster's apps
+    "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",       # the platform cluster's apps
 }
 
-# what Argo CD needs in the spoke: the same rights `argocd cluster add` grants
+# what Argo CD needs in a spoke: the same rights `argocd cluster add` grants. The second part is what the SRE agent
+# may read there: pods, events and workloads, no secrets, no writes.
 SPOKE_ACCESS = """\
 apiVersion: v1
 kind: ServiceAccount
@@ -88,7 +95,6 @@ metadata:
   annotations: {kubernetes.io/service-account.name: argocd-manager}
 type: kubernetes.io/service-account-token
 ---
-# what the SRE agent (it runs in the hub cluster) may read in this cluster: pods, events and workloads, no secrets, no writes
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: sre-agent-reader, namespace: kube-system}
@@ -111,6 +117,33 @@ kind: Secret
 metadata:
   name: sre-agent-reader-token
   namespace: kube-system
+  annotations: {kubernetes.io/service-account.name: sre-agent-reader}
+type: kubernetes.io/service-account-token
+"""
+
+# what the SRE agent may read in the hub: the Argo CD Applications (deploy history), nothing else
+HUB_READER = """\
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: sre-agent-reader, namespace: argocd}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: sre-agent-read-applications, namespace: argocd}
+rules:
+  - {apiGroups: [argoproj.io], resources: [applications], verbs: [get, list]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: sre-agent-read-applications, namespace: argocd}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: sre-agent-read-applications}
+subjects: [{kind: ServiceAccount, name: sre-agent-reader, namespace: argocd}]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sre-agent-reader-token
+  namespace: argocd
   annotations: {kubernetes.io/service-account.name: sre-agent-reader}
 type: kubernetes.io/service-account-token
 """
@@ -187,16 +220,25 @@ def read_secret(cluster, ns, name, key):
     return base64.b64decode(out).decode() if out else ""
 
 
+def read_secret_raw(cluster, ns, name, key):
+    """Like read_secret but returns the base64 text untouched (the CA is passed to Argo CD base64 encoded)."""
+    return kubectl(cluster, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False).stdout
+
+
 def create_secret(cluster, ns, name, **literals):
     args = ["-n", ns, "create", "secret", "generic", name]
     args += [f"--from-literal={k}={v}" for k, v in literals.items()]
     kubectl(cluster, *args)
 
 
+def ensure_namespace(cluster, ns):
+    manifest = kubectl(cluster, "create", "namespace", ns, "--dry-run=client", "-o", "yaml", capture=True).stdout
+    kubectl(cluster, "apply", "-f", "-", stdin=manifest)
+
+
 def seed_secrets(cluster):
     for ns in CLUSTERS[cluster]["seed_namespaces"]:
-        manifest = kubectl(cluster, "create", "namespace", ns, "--dry-run=client", "-o", "yaml", capture=True).stdout
-        kubectl(cluster, "apply", "-f", "-", stdin=manifest)
+        ensure_namespace(cluster, ns)
 
     if cluster == "monitoring":
         if not secret_exists(cluster, "observability", "grafana-admin"):
@@ -208,61 +250,63 @@ def seed_secrets(cluster):
             print("anthropic-api-key created: the SRE agent will use LLM analysis")
         else:
             print("ANTHROPIC_API_KEY not set: the SRE agent will use rule based analysis")
-        return
+    elif cluster == "platform":
+        if not secret_exists(cluster, "demo", "orders-api-chaos"):
+            create_secret(cluster, "demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
 
-    if not secret_exists(cluster, "demo", "orders-api-chaos"):
-        create_secret(cluster, "demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
 
-
-def register_spoke():
-    """Gives the hub's Argo CD access to the platform cluster: a service account there, its token as a cluster Secret here."""
-    kubectl(SPOKE, "apply", "-f", "-", stdin=SPOKE_ACCESS)
-    token = ca = ""
-    for _ in range(30):  # the token controller fills the Secret a moment after it is created
-        token = read_secret(SPOKE, "kube-system", "argocd-manager-token", "token")
-        ca = read_secret_raw(SPOKE, "kube-system", "argocd-manager-token", "ca\\.crt")
+def wait_token(cluster, ns, name):
+    """The token controller fills a service-account token Secret a moment after it is created: returns (token, ca base64)."""
+    for _ in range(30):
+        token = read_secret(cluster, ns, name, "token")
+        ca = read_secret_raw(cluster, ns, name, "ca\\.crt")
         if token and ca:
-            break
+            return token, ca
         time.sleep(1)
-    if not (token and ca):
-        sys.exit("the argocd-manager token was not created in the platform cluster")
-    config = json.dumps({"bearerToken": token, "tlsClientConfig": {"insecure": False, "caData": ca, "serverName": "platform-control-plane"}})
+    sys.exit(f"the token {name} was not created in the {cluster} cluster")
+
+
+def register_spoke(spoke):
+    """Gives the hub's Argo CD access to a cluster: a service account there, its token as a cluster Secret in the hub."""
+    kubectl(spoke, "apply", "-f", "-", stdin=SPOKE_ACCESS)
+    token, ca = wait_token(spoke, "kube-system", "argocd-manager-token")
+    config = json.dumps({"bearerToken": token, "tlsClientConfig": {"insecure": False, "caData": ca, "serverName": f"{spoke}-control-plane"}})
     cluster_secret = json.dumps(
         {
             "apiVersion": "v1",
             "kind": "Secret",
-            "metadata": {"name": f"cluster-{SPOKE}", "namespace": ARGOCD_NS, "labels": {"argocd.argoproj.io/secret-type": "cluster"}},
+            "metadata": {"name": f"cluster-{spoke}", "namespace": ARGOCD_NS, "labels": {"argocd.argoproj.io/secret-type": "cluster"}},
             "type": "Opaque",
-            "stringData": {"name": SPOKE, "server": SPOKE_API, "config": config},
+            "stringData": {"name": spoke, "server": f"https://{spoke}-control-plane:6443", "config": config},
         }
     )
     kubectl(HUB, "apply", "-f", "-", stdin=cluster_secret)
-    print(f"cluster '{SPOKE}' registered in the Argo CD of '{HUB}'")
-
-    # the SRE agent runs in the hub and reads the platform cluster with a read-only token
-    reader_token = reader_ca = ""
-    for _ in range(30):
-        reader_token = read_secret(SPOKE, "kube-system", "sre-agent-reader-token", "token")
-        reader_ca = read_secret(SPOKE, "kube-system", "sre-agent-reader-token", "ca\\.crt")
-        if reader_token and reader_ca:
-            break
-        time.sleep(1)
-    if not (reader_token and reader_ca):
-        sys.exit("the sre-agent-reader token was not created in the platform cluster")
-    manifest = kubectl(HUB, "create", "namespace", "sre-agent", "--dry-run=client", "-o", "yaml", capture=True).stdout
-    kubectl(HUB, "apply", "-f", "-", stdin=manifest)
-    kubectl(HUB, "-n", "sre-agent", "delete", "secret", "platform-reader", "--ignore-not-found")
-    create_secret(HUB, "sre-agent", "platform-reader", **{"token": reader_token, "ca.crt": reader_ca})
-    print("platform-reader created in the sre-agent namespace of the monitoring cluster")
+    print(f"cluster '{spoke}' registered in the Argo CD of '{HUB}'")
 
 
-def read_secret_raw(cluster, ns, name, key):
-    """Like read_secret but returns the base64 text untouched (the CA is passed to Argo CD base64 encoded)."""
-    return kubectl(cluster, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False).stdout
+def give_agent_access(target, source_cluster, source_ns, source_secret, secret_name):
+    """Copies a read-only token (and its API CA) from a cluster into the sre-agent namespace of the cluster the agent runs in."""
+    token, _ = wait_token(source_cluster, source_ns, source_secret)
+    ca = read_secret(source_cluster, source_ns, source_secret, "ca\\.crt")
+    ensure_namespace(target, "sre-agent")
+    kubectl(target, "-n", "sre-agent", "delete", "secret", secret_name, "--ignore-not-found")
+    create_secret(target, "sre-agent", secret_name, **{"token": token, "ca.crt": ca})
+    print(f"{secret_name} created in the sre-agent namespace of the {target} cluster")
 
 
-def apply_root(app):
-    kubectl(HUB, "apply", "-f", str(ROOT_APPS[app]))
+def wire(clusters_present):
+    """Everything that needs more than one cluster: registration in the hub and the agent's read-only access."""
+    for spoke in SPOKES:
+        if spoke in clusters_present:
+            register_spoke(spoke)
+    if AGENT in clusters_present:
+        if "platform" in clusters_present:
+            give_agent_access(AGENT, "platform", "kube-system", "sre-agent-reader-token", "platform-reader")
+        kubectl(HUB, "apply", "-f", "-", stdin=HUB_READER)
+        give_agent_access(AGENT, HUB, ARGOCD_NS, "sre-agent-reader-token", "gitops-reader")
+    for name in [HUB, *SPOKES]:
+        if name in clusters_present:
+            kubectl(HUB, "apply", "-f", str(ROOT_APPS[name]))
 
 
 def build(cluster):
@@ -279,13 +323,15 @@ def argocd_password():
 
 
 def summary(clusters):
-    print("\nEverything else is now deployed by the Argo CD of the monitoring cluster, into both clusters. The first sync takes about 10 minutes.")
+    print("\nEverything else is now deployed by the Argo CD of the gitops cluster, into the other two. The first sync takes about 10 minutes.")
     print("URLs work once ingress-nginx has synced.\n")
     if HUB in clusters:
-        print("Argo CD         http://argocd-monitoring.localhost:9080    admin / " + argocd_password())
-        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret(HUB, "observability", "grafana-admin", "admin-password"))
+        print("Argo CD         http://argocd.localhost:7080               admin / " + argocd_password())
+    if "monitoring" in clusters:
+        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("monitoring", "observability", "grafana-admin", "admin-password"))
+        print("Workflows       http://workflows.localhost:9080")
+        print("RCA reports     http://reports.localhost:9080")
     if "platform" in clusters:
-        print("Workflows       http://workflows.localhost:8080")
         print("Orders          http://orders.localhost:8080/orders")
     print(f"\nWatch the deployments:  kubectl --context {context(HUB)} -n {ARGOCD_NS} get applications")
 
@@ -293,27 +339,23 @@ def summary(clusters):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--destroy", action="store_true")
-    ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of both")
+    ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
     args = ap.parse_args()
 
     clusters = [args.only] if args.only else list(CLUSTERS)
 
     preflight()
     if args.destroy:
-        for c in clusters:  # platform first, monitoring last
+        for c in clusters:  # the hub last: it is what deploys the others
             run("kind", "delete", "cluster", "--name", c)
         return
 
     for c in clusters:
         build(c)
 
-    # the hub deploys both clusters, so wire them together once both exist
+    # the hub deploys the other clusters, so wire them together once they exist
     if cluster_exists(HUB):
-        if cluster_exists(SPOKE):
-            register_spoke()
-        apply_root("monitoring")
-        if cluster_exists(SPOKE):
-            apply_root("platform")
+        wire({c for c in CLUSTERS if cluster_exists(c)})
     summary(clusters)
 
 
