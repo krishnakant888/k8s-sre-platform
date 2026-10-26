@@ -745,7 +745,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(loki_request_duration_seconds_bucket{route=~\"loki_api_v1_query.*\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(loki_request_duration_seconds_bucket{route=~\".*query.*\"}[5m])))",
               "legendFormat": "p99",
               "datasource": {
                 "type": "prometheus",
@@ -974,7 +974,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(tempo_request_duration_seconds_bucket{route=~\"api_.*\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(tempo_request_duration_seconds_bucket{route=~\".*(search|traces).*\"}[5m])))",
               "legendFormat": "p99",
               "datasource": {
                 "type": "prometheus",

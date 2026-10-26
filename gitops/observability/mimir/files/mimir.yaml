@@ -41,5 +41,6 @@ ruler:
   rule_path: /data/ruler
   evaluation_interval: 30s
 limits:
+  max_global_series_per_user: 400000   # three clusters, plus the old series that linger for two hours after pods restart
   compactor_blocks_retention_period: 168h
   ruler_max_rules_per_rule_group: 50
