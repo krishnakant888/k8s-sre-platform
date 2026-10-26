@@ -16,7 +16,8 @@ spec:
       helm:
         releaseName: alloy
         valueFiles:
-          - $values/gitops/observability-cluster/alloy/values.yaml
+          - $values/gitops/observability/alloy/values.yaml
+          - $values/gitops/observability/alloy/values-observability.yaml
     - repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
       targetRevision: main
       ref: values

@@ -1,0 +1,25 @@
+# the collector configuration, the same file in every cluster (see gitops/observability/alloy/config.alloy)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hub-alloy-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: hub
+  source:
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+    targetRevision: main
+    path: gitops/observability/alloy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
