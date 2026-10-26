@@ -15,6 +15,8 @@ spec:
   entrypoint: investigate
   serviceAccountName: sre-agent
   activeDeadlineSeconds: 900
+  podGC:
+    strategy: OnWorkflowCompletion   # the logs of the steps are in Loki; the pods piled up by the hundred
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 259200
