@@ -14,7 +14,7 @@ spec:
     targetRevision: main
     path: gitops/workloads/sre-agent
   destination:
-    name: observability   # registered in this Argo CD by bootstrap.py
+    name: in-cluster
     namespace: sre-agent
   syncPolicy:
     automated:

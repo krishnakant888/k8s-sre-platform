@@ -19,7 +19,7 @@ import sys
 import time
 
 PLATFORM = os.environ.get("KUBE_CONTEXT", "kind-platform")
-HUB = os.environ.get("HUB_CONTEXT", "kind-gitops")
+HUB = os.environ.get("HUB_CONTEXT", "kind-observability")   # the cluster that runs Argo CD
 OBS = os.environ.get("OBS_CONTEXT", "kind-observability")
 NS = "sandbox"
 BUSY = "busybox:1.37.0"
@@ -315,10 +315,10 @@ def _():
     kubectl(PLATFORM, "-n", "ingress-nginx", "scale", "deploy/ingress-nginx-controller", "--replicas=0")
 
 
-@scenario("collector-down", "collector of the gitops cluster scaled to zero", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
+@scenario("collector-down", "collector of the platform cluster scaled to zero", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
 def _():
-    pause_sync("hub-alloy")
-    kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=0")
+    pause_sync("prod-alloy")
+    kubectl(PLATFORM, "-n", "observability", "scale", "deploy/alloy", "--replicas=0")
 
 
 @scenario("loki-down", "the log store is scaled to zero", ["LogsDropped"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
@@ -345,13 +345,13 @@ def clear():
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
     resume_sync("prod-ingress-nginx")
-    resume_sync("hub-alloy")
+    resume_sync("prod-alloy")
     kubectl(HUB, "-n", "argocd", "patch", "application", "loki", "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}', check=False)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
     kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", "none=none", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "-n", "ingress-nginx", "scale", "deploy/ingress-nginx-controller", "--replicas=1", check=False)
-    kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=1", check=False)
+    kubectl(PLATFORM, "-n", "observability", "scale", "deploy/alloy", "--replicas=1", check=False)
     print("cleared")
 
 
@@ -425,7 +425,7 @@ def main(argv):
             if n not in SCENARIOS:
                 sys.exit(f"unknown fault {n}, see `list`")
             print("injecting", n)
-            for target in (f"platform-sandbox-{SCENARIOS[n]['service']}", f"gitops-{SCENARIOS[n]['service']}", f"platform-fault-quota-{SCENARIOS[n]['service']}"):
+            for target in (f"platform-sandbox-{SCENARIOS[n]['service']}", f"observability-{SCENARIOS[n]['service']}", f"platform-fault-quota-{SCENARIOS[n]['service']}"):
                 kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", f"sre-agent/target={target}", "--ignore-not-found", check=False)
             SCENARIOS[n]["fn"]()
             state[n] = time.time()

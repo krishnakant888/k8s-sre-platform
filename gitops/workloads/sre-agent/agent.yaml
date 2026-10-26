@@ -1,7 +1,7 @@
 # The investigation steps run as Argo Workflow pods under this service account (see workflow-template.yaml).
 # The agent runs in the observability cluster, next to Loki, Mimir and Tempo. It reads the platform cluster (pods, events) and
-# the Argo CD Applications of the gitops cluster with read-only tokens in the Secrets platform-reader and gitops-reader,
-# which bootstrap.py creates from service accounts in those clusters.
+# the Argo CD Applications of its own cluster; the platform cluster is read with the read-only token in the Secret platform-reader,
+# which bootstrap.py creates from a service account there.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -117,3 +117,26 @@ spec:
   minAvailable: 1
   selector:
     matchLabels: {app.kubernetes.io/name: alert-webhook}
+---
+# deploy history: read-only on the Argo CD Applications (Argo CD runs in this cluster)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sre-agent-read-applications
+  namespace: argocd
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sre-agent-read-applications
+  namespace: argocd
+subjects:
+  - {kind: ServiceAccount, name: sre-agent, namespace: sre-agent}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sre-agent-read-applications

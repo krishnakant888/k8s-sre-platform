@@ -528,24 +528,6 @@ data:
             annotations:
               summary: "No telemetry from the platform cluster"
               description: "The collector of the platform cluster stopped sending metrics: the cluster, its network path or the collector is down. Everything else in this view is stale until it is back."
-          - uid: generic-telemetry-missing-gitops
-            title: ClusterTelemetryMissing
-            condition: C
-            data:
-              - refId: A
-                relativeTimeRange: {from: 600, to: 0}
-                datasourceUid: mimir
-                model: {refId: A, expr: "vector(1) unless on () count(up{job=\"alloy\",cluster=\"gitops\"})", instant: true}
-              - refId: C
-                datasourceUid: __expr__
-                model: {refId: C, type: math, expression: "$A >= 0"}
-            noDataState: OK
-            execErrState: Error
-            for: 5m
-            labels: {severity: page, cluster: gitops, service: alloy}
-            annotations:
-              summary: "No telemetry from the gitops cluster"
-              description: "The collector of the gitops cluster stopped sending metrics: Argo CD, which deploys everything, may be down."
           - uid: generic-workflow-failed
             title: InvestigationWorkflowFailed
             condition: C
@@ -553,7 +535,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster) (increase(argo_workflows_count{status=~\"Failed|Error\"}[10m])) > 0", instant: true}
+                model: {refId: A, expr: "max by (cluster) (increase(argo_workflows_total_count{phase=~\"Failed|Error\"}[10m])) > 0", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}

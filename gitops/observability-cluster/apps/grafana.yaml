@@ -21,7 +21,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    name: observability   # registered in this Argo CD by bootstrap.py
+    name: in-cluster
     namespace: observability
   syncPolicy:
     automated:

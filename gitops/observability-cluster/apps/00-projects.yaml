@@ -12,7 +12,7 @@ spec:
     - https://argoproj.github.io/argo-helm
     - https://kubernetes.github.io/ingress-nginx
   destinations:
-    - name: observability
+    - name: in-cluster
       namespace: "*"
   clusterResourceWhitelist:
     - group: "*"
@@ -32,7 +32,7 @@ spec:
     - https://grafana.github.io/helm-charts
     - https://prometheus-community.github.io/helm-charts
   destinations:
-    - name: observability
+    - name: in-cluster
       namespace: observability
   clusterResourceWhitelist:
     - group: rbac.authorization.k8s.io
@@ -52,8 +52,10 @@ spec:
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
   destinations:
-    - name: observability
+    - name: in-cluster
       namespace: sre-agent
+    - name: in-cluster
+      namespace: argocd   # the read-only Role on Applications, so the agent can read deploy history
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

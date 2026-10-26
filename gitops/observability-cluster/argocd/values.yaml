@@ -1,6 +1,6 @@
-# The one Argo CD, in its own cluster (gitops). It deploys the platform and the observability clusters, which bootstrap.py
-# registers in it, and itself. It lives apart from both on purpose: it keeps working while production or the
-# observability stack is down or being rebuilt, and neither of them has to host the thing that deploys it.
+# The one Argo CD, in the observability cluster. It deploys that cluster (itself included) and the platform cluster, which
+# bootstrap.py registers in it. It runs outside production on purpose: it keeps working while the platform cluster is down or being
+# rebuilt. (Two clusters instead of three saves a node and a collector; the price is that Argo CD shares a cluster with the observability stack.)
 #
 # Sizing (about 30 applications across two clusters): requests are what the scheduler reserves, memory limits are
 # 2x the request so a busy sync cannot grow without bound but a spike does not OOMKill it (the application controller

@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""Create the three local Kubernetes clusters (kind), install Calico, and hand over to GitOps.
+"""Create the two local Kubernetes clusters (kind), install Calico, and hand over to GitOps.
 
-    platform    the production side: ingress, policy, workloads, and the collectors that ship telemetry out.
-    observability  everything used to observe and debug production: Mimir, Loki, Tempo, Grafana and alerting, plus the
-                SRE agent, Argo Workflows and the RCA report viewer.
-    gitops      Argo CD, alone. It deploys the other two clusters and itself from this repo.
+    platform       the production side: ingress, policy, workloads, and the collectors that ship telemetry out.
+    observability  everything used to observe and debug production: Mimir, Loki, Tempo, Grafana and alerting, the SRE agent,
+                   Argo Workflows and the RCA report viewer, and the one Argo CD that deploys both clusters.
 
-Each cluster is kept apart so the tools keep working when another one is down or being rebuilt. The platform and
-observability clusters have no Argo CD of their own: this script registers them in the one in the gitops cluster, which then
-deploys everything from Git. This is the only imperative step.
+The platform cluster has no Argo CD of its own: this script registers it in the one in the observability cluster, which then deploys
+everything from Git into both clusters. This is the only imperative step.
 
-    python3 bootstrap/bootstrap.py                         # create all three clusters (platform, observability, gitops)
-    python3 bootstrap/bootstrap.py --only platform         # create (or repair) one, and re-register it if gitops exists
-    python3 bootstrap/bootstrap.py --destroy --only platform   # delete one, the others keep running
-    python3 bootstrap/bootstrap.py --destroy               # delete all
+    python3 bootstrap/bootstrap.py                          # create both clusters (platform first)
+    python3 bootstrap/bootstrap.py --only platform          # create (or repair) one, and re-register it if the other exists
+    python3 bootstrap/bootstrap.py --destroy --only platform    # delete one, the other keeps running
+    python3 bootstrap/bootstrap.py --destroy                # delete both
 
-Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets each cluster needs with random
-values (Grafana admin login in observability, the fault injection token in platform), and the read-only tokens the SRE
-agent uses to read the other clusters. Set ANTHROPIC_API_KEY in the environment to also create the key the SRE agent
-uses for LLM analysis; without it the agent runs its rule based analysis. In AWS/Azure this step is replaced by
-External Secrets.
+Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets each cluster needs with random values (Grafana admin
+login in observability, the fault injection token in platform), and the read-only token the SRE agent uses to read the platform cluster.
+Set ANTHROPIC_API_KEY in the environment to also create the key the SRE agent uses for LLM analysis; without it the agent runs its rule
+based analysis. In AWS/Azure this step is replaced by External Secrets.
 """
 import argparse
 import base64
@@ -37,9 +34,9 @@ ROOT = Path(__file__).resolve().parent.parent
 ARGOCD_CHART_VERSION = "7.6.12"
 ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
-HUB = "gitops"  # the cluster that runs Argo CD
-SPOKES = ["platform", "observability"]  # registered in the hub under these names, Applications target them with destination.name
-AGENT = "observability"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
+HUB = "observability"  # the cluster that runs Argo CD (and the SRE agent); it deploys itself as "in-cluster"
+SPOKES = ["platform"]  # registered in the hub under this name, Applications target it with destination.name
+AGENT = HUB
 
 # Order matters: the spokes' API servers have to exist before the hub's Argo CD can register them.
 CLUSTERS = {
@@ -51,20 +48,14 @@ CLUSTERS = {
     },
     "observability": {
         "kind_config": ROOT / "bootstrap" / "kind-config-observability.yaml",
+        "argocd_values": ROOT / "gitops" / "observability-cluster" / "argocd" / "values.yaml",
         "host_ports": [9080, 9443],
         "seed_namespaces": ["observability", "sre-agent"],
     },
-    "gitops": {
-        "kind_config": ROOT / "bootstrap" / "kind-config-gitops.yaml",
-        "argocd_values": ROOT / "gitops" / "hub" / "argocd" / "values.yaml",
-        "host_ports": [7080, 7443],
-        "seed_namespaces": [],
-    },
 }
 ROOT_APPS = {
-    "gitops": ROOT / "gitops" / "root" / "root-app-hub.yaml",              # Argo CD itself and its ingress
-    "observability": ROOT / "gitops" / "root" / "root-app-observability.yaml",   # the observability cluster's apps
-    "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",       # the platform cluster's apps
+    "observability": ROOT / "gitops" / "root" / "root-app-observability.yaml",   # the observability cluster's apps, Argo CD included
+    "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",             # the platform cluster's apps
 }
 
 # what Argo CD needs in a spoke: the same rights `argocd cluster add` grants. The second part is what the SRE agent
@@ -120,34 +111,6 @@ metadata:
   annotations: {kubernetes.io/service-account.name: sre-agent-reader}
 type: kubernetes.io/service-account-token
 """
-
-# what the SRE agent may read in the hub: the Argo CD Applications (deploy history), nothing else
-HUB_READER = """\
-apiVersion: v1
-kind: ServiceAccount
-metadata: {name: sre-agent-reader, namespace: argocd}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: {name: sre-agent-read-applications, namespace: argocd}
-rules:
-  - {apiGroups: [argoproj.io], resources: [applications], verbs: [get, list]}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: {name: sre-agent-read-applications, namespace: argocd}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: sre-agent-read-applications}
-subjects: [{kind: ServiceAccount, name: sre-agent-reader, namespace: argocd}]
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: sre-agent-reader-token
-  namespace: argocd
-  annotations: {kubernetes.io/service-account.name: sre-agent-reader}
-type: kubernetes.io/service-account-token
-"""
-
 
 def run(*cmd, check=True, capture=False, stdin=None):
     hide = ("password", "token", "api_key")
@@ -329,8 +292,6 @@ def wire(clusters_present):
     if AGENT in clusters_present:
         if "platform" in clusters_present:
             give_agent_access(AGENT, "platform", "kube-system", "sre-agent-reader-token", "platform-reader")
-        kubectl(HUB, "apply", "-f", "-", stdin=HUB_READER)
-        give_agent_access(AGENT, HUB, ARGOCD_NS, "sre-agent-reader-token", "gitops-reader")
     for name in [HUB, *SPOKES]:
         if name in clusters_present:
             kubectl(HUB, "apply", "-f", str(ROOT_APPS[name]))
@@ -350,12 +311,11 @@ def argocd_password():
 
 
 def summary(clusters):
-    print("\nEverything else is now deployed by the Argo CD of the gitops cluster, into the other two. The first sync takes about 10 minutes.")
+    print("\nEverything else is now deployed by the Argo CD of the observability cluster, into both clusters. The first sync takes about 10 minutes.")
     print("URLs work once ingress-nginx has synced.\n")
     if HUB in clusters:
-        print("Argo CD         http://argocd.localhost:7080               admin / " + argocd_password())
-    if "observability" in clusters:
-        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("observability", "observability", "grafana-admin", "admin-password"))
+        print("Argo CD         http://argocd.localhost:9080               admin / " + argocd_password())
+        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret(HUB, "observability", "grafana-admin", "admin-password"))
         print("Workflows       http://workflows.localhost:9080")
         print("RCA reports     http://reports.localhost:9080")
     if "platform" in clusters:
@@ -366,14 +326,14 @@ def summary(clusters):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--destroy", action="store_true")
-    ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
+    ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of both")
     args = ap.parse_args()
 
     clusters = [args.only] if args.only else list(CLUSTERS)
 
     preflight()
     if args.destroy:
-        for c in clusters:  # the hub last: it is what deploys the others
+        for c in reversed(clusters):  # the hub last: it is what deploys the others
             run("kind", "delete", "cluster", "--name", c)
         return
 

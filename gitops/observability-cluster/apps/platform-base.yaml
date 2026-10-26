@@ -14,7 +14,7 @@ spec:
     directory:
       include: observability.yaml   # the observability namespace and its default-deny; demo and sre-agent live in production
   destination:
-    name: observability   # registered in this Argo CD by bootstrap.py
+    name: in-cluster
     namespace: default
   syncPolicy:
     automated:

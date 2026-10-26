@@ -853,7 +853,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (pod) (container_memory_working_set_bytes{cluster=\"gitops\", namespace=\"argocd\", container!=\"\"})",
+              "expr": "sum by (pod) (container_memory_working_set_bytes{cluster=\"observability\", namespace=\"argocd\", container!=\"\"})",
               "legendFormat": "{{pod}}",
               "datasource": {
                 "type": "prometheus",
@@ -907,7 +907,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{cluster=\"gitops\", namespace=\"argocd\", container!=\"\"}[5m]))",
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{cluster=\"observability\", namespace=\"argocd\", container!=\"\"}[5m]))",
               "legendFormat": "{{pod}}",
               "datasource": {
                 "type": "prometheus",
@@ -961,7 +961,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "{cluster=\"gitops\", namespace=\"argocd\"} |~ \"(?i)error|fail\"",
+              "expr": "{cluster=\"observability\", namespace=\"argocd\"} |~ \"(?i)error|fail\"",
               "datasource": {
                 "type": "loki",
                 "uid": "loki"

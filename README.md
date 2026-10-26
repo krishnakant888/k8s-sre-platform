@@ -21,13 +21,13 @@ export ANTHROPIC_API_KEY=...        # optional, enables LLM analysis in the agen
 python3 bootstrap/bootstrap.py
 ```
 
-The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `observability` (1 control plane, 1 worker) and `gitops` (1 control plane).
-Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints the logins at the end.
-Use `--only platform`, `--only observability` or `--only gitops` to create or destroy one of them.
+The script creates two kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers) and `observability` (1 control plane, 1 worker).
+Argo CD is installed **only in the observability cluster**. The script registers the platform cluster in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints the logins at the end.
+Use `--only platform` or `--only observability` to create or destroy one of them.
 
 | What | Cluster | URL |
 |---|---|---|
-| Argo CD (deploys the other two) | gitops | http://argocd.localhost:7080 |
+| Argo CD (deploys both clusters) | observability | http://argocd.localhost:9080 |
 | Grafana | observability | http://grafana.localhost:9080 |
 | Argo Workflows UI | observability | http://workflows.localhost:9080 |
 | RCA reports | observability | http://reports.localhost:9080 |
@@ -50,16 +50,14 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 
 ## Architecture
 
-Each concern has its own cluster, so an outage, upgrade or rebuild of one cannot take down the tools used to deal with it:
-`platform` runs the workloads, `observability` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows and the RCA viewer, and `gitops` runs Argo CD alone.
-Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: observability`. The clusters talk over the shared Docker network (collectors push to `observability-worker:<port>`, Argo CD reaches `platform-control-plane:6443` and `observability-control-plane:6443`).
+Two clusters, so an outage, upgrade or rebuild of production cannot take down the tools used to deal with it:
+`platform` runs the workloads, `observability` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows, the RCA viewer and Argo CD.
+Argo CD (hub and spoke) deploys both: the platform cluster is registered in it, and its apps are Applications with `destination: platform`; the observability cluster's own apps (Argo CD included, it manages itself) target `in-cluster`. The clusters talk over the shared Docker network (collectors push to `observability-worker:<port>`, Argo CD reaches `platform-control-plane:6443`).
+The trade-off against a separate cluster for Argo CD: it shares the observability cluster, so if that cluster is down nothing is deployed to either; running apps keep running. It saves a node, a collector and an ingress controller (about 0.8 GB).
 
 ```mermaid
 flowchart LR
   Git[(this repo)] --> Argo
-  subgraph gitops cluster
-    Argo[Argo CD, the hub]
-  end
   subgraph platform cluster
     Platform[sealed-secrets, kyverno, ingress-nginx, namespaces + netpols]
     Collect[observability: Alloy, kube-state-metrics]
@@ -67,6 +65,7 @@ flowchart LR
     Demo -->|metrics, logs, OTLP traces| Collect
   end
   subgraph observability cluster
+    Argo[Argo CD, the hub]
     Stack[observability: Mimir, Loki, Tempo, Grafana, alerting, Alloy]
     AW[argo-workflows]
     Agent[sre-agent: alert-webhook, workflow template, RCA viewer]
@@ -74,33 +73,32 @@ flowchart LR
     Agent -->|create Workflow| AW
     AW -->|steps run the agent image| Agent
     Agent -->|read only queries| Stack
+    Agent -.->|deploy history| Argo
+    Argo -->|deploys itself and| Stack
   end
   Argo -->|registered cluster| Platform
-  Argo -->|registered cluster| Stack
   Collect -->|push NodePorts :30900 :30310 :30417| Stack
-  Agent -->|read only tokens: pods, events, Argo CD applications| Platform
-  Agent -.->|deploy history| Argo
+  Agent -->|read only token: pods, events| Platform
 ```
 
 | Namespace | Cluster | Contents |
 |---|---|---|
-| `argocd` | gitops | the one Argo CD, manages itself and the other two clusters |
+| `argocd` | observability | the one Argo CD, manages itself and the platform cluster |
 | `observability` | platform | Alloy (collector, ships to the observability cluster), kube-state-metrics |
 | `observability` | observability | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
 | `argo-workflows` | observability | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
 | `sre-agent` | observability | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
 | `demo` | platform | `orders-api` and the frontend |
 | `kyverno`, `ingress-nginx`, `kube-system` | platform | policy engine, ingress controller, sealed-secrets controller |
-| `ingress-nginx` | observability, gitops | ingress controller |
+| `ingress-nginx` | observability | ingress controller |
 
 ## Repo layout
 
 ```
-bootstrap/          kind configs (platform, observability, gitops) + the one imperative script
+bootstrap/          kind configs (platform, observability) + the one imperative script
 gitops/root/        the root Applications (app of apps), one per cluster
-gitops/hub/         gitops cluster: Argo CD values and its Applications
-gitops/apps/        platform cluster apps (Applications live in the hub, `prod-*`): one per component, AppProjects, sync waves
-gitops/observability-cluster/  observability cluster: its Applications (including argo-workflows and sre-agent), Alloy values, network policies, NodePorts
+gitops/apps/        platform cluster apps (Applications live in the observability cluster's Argo CD, `prod-*`): one per component, AppProjects, sync waves
+gitops/observability-cluster/  observability cluster: its Applications (including Argo CD, argo-workflows and sre-agent), Argo CD values, network policies, NodePorts
 gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
 gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards (deployed by the cluster that owns each Application)
 gitops/workloads/   orders-api, frontend, sre-agent manifests (including the workflow template)

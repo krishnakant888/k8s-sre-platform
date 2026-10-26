@@ -13,7 +13,7 @@ import time
 import urllib.parse
 import urllib.request
 
-CLUSTERS = ["platform", "observability", "gitops"]
+CLUSTERS = ["platform", "observability"]
 MIMIR = "http://localhost:18080/prometheus"
 LOKI = "http://localhost:13100"
 

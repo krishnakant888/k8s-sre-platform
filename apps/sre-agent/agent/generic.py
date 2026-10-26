@@ -57,7 +57,7 @@ def _label_values(res: dict, label: str) -> list[str]:
 
 
 def _workload(labels: dict) -> str:
-    for key in ("deployment", "statefulset", "daemonset", "job_name", "service"):
+    for key in ("deployment", "statefulset", "daemonset", "job_name", "name", "service"):   # name: the Argo CD application
         if labels.get(key):
             return labels[key]
     if labels.get("pod"):
