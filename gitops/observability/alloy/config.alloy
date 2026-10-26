@@ -89,6 +89,7 @@ discovery.relabel "annotated_pods" {
 
 prometheus.scrape "annotated_pods" {
   scrape_interval = "30s"
+  honor_labels    = true   // series that name their own namespace / pod (kube-state-metrics, Argo CD) keep them
   targets         = discovery.relabel.annotated_pods.output
   forward_to      = [prometheus.remote_write.mimir.receiver]
 }
@@ -148,6 +149,7 @@ discovery.relabel "named_metrics_port" {
 
 prometheus.scrape "named_metrics_port" {
   scrape_interval = "30s"
+  honor_labels    = true
   targets         = discovery.relabel.named_metrics_port.output
   forward_to      = [prometheus.remote_write.mimir.receiver]
 }
@@ -239,7 +241,7 @@ prometheus.scrape "apiserver" {
 prometheus.relabel "apiserver" {
   rule {
     source_labels = ["__name__"]
-    regex         = "apiserver_(request_total|request_sli_duration_seconds_(bucket|count|sum)|current_inflight_requests|request_terminations_total|storage_objects|admission_webhook_rejection_count)|etcd_(request_duration_seconds_(count|sum)|db_total_size_in_bytes)|workqueue_(depth|retries_total)|up"
+    regex         = "apiserver_(request_total|request_sli_duration_seconds_(bucket|count|sum)|current_inflight_requests|request_terminations_total|storage_objects|storage_db_total_size_in_bytes|admission_webhook_rejection_count)|etcd_(request_duration_seconds_(count|sum)|db_total_size_in_bytes)|workqueue_(depth|retries_total)|up"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.mimir.receiver]
