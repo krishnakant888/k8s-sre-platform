@@ -1,6 +1,6 @@
-# The one Argo CD, in the monitoring cluster. It deploys BOTH clusters (hub and spoke): its own apps and, through the
-# cluster registered by bootstrap.py, the apps of the platform cluster. It lives outside production on purpose, so it
-# keeps working while production is down or being rebuilt.
+# The one Argo CD, in its own cluster (gitops). It deploys the platform and the monitoring clusters, which bootstrap.py
+# registers in it, and itself. It lives apart from both on purpose: it keeps working while production or the
+# observability stack is down or being rebuilt, and neither of them has to host the thing that deploys it.
 #
 # Sizing (about 30 applications across two clusters): requests are what the scheduler reserves, memory limits are
 # 2x the request so a busy sync cannot grow without bound but a spike does not OOMKill it (the application controller
@@ -9,7 +9,7 @@
 # For a real setup also run server and repoServer with replicas: 2 and pdb.enabled: true, and shard the controller
 # (controller.replicas) once it manages a few hundred applications.
 global:
-  domain: argocd-monitoring.localhost
+  domain: argocd.localhost
 
 configs:
   params:

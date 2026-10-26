@@ -4,7 +4,7 @@ metadata:
   name: argocd
   namespace: argocd
 spec:
-  project: platform
+  project: hub
   sources:
     - repoURL: https://argoproj.github.io/argo-helm
       chart: argo-cd
@@ -12,7 +12,7 @@ spec:
       helm:
         releaseName: argocd
         valueFiles:
-          - $values/gitops/monitoring/argocd/values.yaml
+          - $values/gitops/hub/argocd/values.yaml
     - repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
       targetRevision: main
       ref: values
