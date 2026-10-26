@@ -319,6 +319,13 @@ def test_pull_error_message_is_taken_from_the_informative_event(monkeypatch):
     assert r.fault_domain.layer == "application" and "manifest unknown" in r.what_happened
 
 
+def test_not_found_in_the_error_code_is_a_missing_tag(monkeypatch):
+    msg = 'Failed to pull image "nginx:9.9.9": rpc error: code = NotFound desc = failed to pull and unpack image "docker.io/library/nginx:9.9.9": failed to resolve reference'
+    fake(monkeypatch, pods=[pod(waiting="ImagePullBackOff")], events=[event("Failed", msg)])
+    r = investigate(alert("ContainerWaiting", cluster="platform", namespace="demo", pod="orders-api-7d9f8b5c6d-abcde", reason="ImagePullBackOff"))
+    assert r.fault_domain.layer == "application"
+
+
 def test_a_liveness_probe_that_kills_a_healthy_process_is_not_called_an_exit_code_zero(monkeypatch):
     fake(monkeypatch, pods=[pod(waiting="CrashLoopBackOff", restarts=6, term=("Completed", 0), ready=False)], events=[event("Unhealthy", "Liveness probe failed: HTTP probe failed with statuscode: 404")], logs=[("nginx: [notice] signal 3 received, exiting", 2)])
     r = investigate(alert("PodCrashLooping", cluster="platform", namespace="sandbox", pod="orders-api-7d9f8b5c6d-abcde"))

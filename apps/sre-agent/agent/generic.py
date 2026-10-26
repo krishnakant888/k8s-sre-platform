@@ -427,10 +427,10 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                             ["FailedScheduling event mentions a volume or claim"], [f"{k} -n {ns} get pvc,pv", f"{k} get storageclass  # is there a default class with a provisioner"], ["Make sure the storage class can provision (cloud: use a zonal class and WaitForFirstConsumer)"], [f"{k} -n {ns} get pvc  # Bound"], f"{wl} cannot start without its volume.")
 
         pull = _ev(sig, "Failed", "ErrImagePull", "ImagePullBackOff") if reason in ("ImagePullBackOff", "ErrImagePull", "InvalidImageName") else []
-        pull.sort(key=lambda e: (any(w in e["message"].lower() for w in ("manifest", "not found", "pull access", "unauthorized", "denied", "no such host", "timeout", "lookup")), len(e["message"])), reverse=True)
+        pull.sort(key=lambda e: (any(w in e["message"].lower() for w in ("manifest", "not found", "notfound", "pull access", "unauthorized", "denied", "no such host", "timeout", "lookup")), len(e["message"])), reverse=True)
         if reason in ("ImagePullBackOff", "ErrImagePull", "InvalidImageName"):
             m = (pull[0]["message"] if pull else "").lower()
-            if "not found" in m or "manifest unknown" in m or "invalid" in reason.lower():
+            if "not found" in m or "notfound" in m or "manifest unknown" in m or "invalid" in reason.lower():
                 comp, layer, why = "image reference of the workload (tag or name does not exist)", "application", "the registry says the image or tag does not exist"
                 fix = [f"Find the broken reference: {k} -n {ns} get pod {pod.get('pod', '')} -o jsonpath='{{.spec.containers[*].image}}'", f"Point {manifest} at an image that exists (check the CI run that builds it) and let Argo CD sync", "Or revert the commit that changed the image"]
             elif "unauthorized" in m or "denied" in m or "authentication" in m:
