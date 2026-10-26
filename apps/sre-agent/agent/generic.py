@@ -27,6 +27,7 @@ FAMILIES = {
     "ArgoAppOutOfSync": "argocd", "ArgoAppUnhealthy": "argocd", "ArgoSyncFailing": "argocd",
     "ClusterTelemetryMissing": "telemetry", "TelemetryNotDelivered": "telemetry", "LogsDropped": "telemetry",
     "PodCrashLooping": "container", "PodOOMKilled": "memory", "DeploymentReplicasUnavailable": "rollout",
+    "PodFailed": "container", "CriticalAddonDown": "rollout",
     "DatasourceError": "datasource", "DatasourceNoData": "datasource",   # Grafana's own alerts when a rule cannot query its datasource
 }
 
@@ -170,6 +171,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     if family in ("container", "scheduling", "rollout", "job", "memory", "cpu", "target"):
         pod_prefix = labels.get("pod") or workload
         pods_and_events(workload or pod_prefix, ns)
+        sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{workload}"}})', 5), "last")
+        sig["dns_servfail"] = _num(_q(f'sum(rate(coredns_dns_responses_total{{cluster="{cluster}", rcode="SERVFAIL"}}[5m])) / sum(rate(coredns_dns_responses_total{{cluster="{cluster}"}}[5m]))', 15), "max") or 0.0
         sel = _sel(cluster, ns, f'pod=~"{workload}-.*|{labels["pod"]}"' if labels.get("pod") else f'pod=~"{workload}-.*"')
         rst = _q(f'sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{lookback_minutes}m]))', 5)
         sig["restarts"] = _num(rst, "last") or 0.0
@@ -236,6 +239,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         names = _label_values(backend, "service_name")
         sig["backend"] = names[0] if names else ing
         pods_and_events(sig["backend"], ns)
+        sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
         logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{sig["backend"]}-.*"', f"error lines of backend {sig['backend']}")
         node_facts(sig.get("nodes", []))
         deploys([f"prod-{sig['backend']}", sig["backend"]])
@@ -352,6 +356,30 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
     manifest = _manifest(sig, f"the manifest of `{wl}` in Git")
     pod = pods[0] if pods else {}
 
+    # ------------------------------------------------------------------ faults that are decided before (or without) a container
+    quota = [e for e in sig.get("events", []) if e["reason"] == "FailedCreate" and "quota" in e["message"].lower()]
+    if quota:
+        return Diag("quota_exceeded", "infrastructure", f"ResourceQuota of namespace {ns}", "high", f"The namespace quota refuses new pods: {quota[0]['message'][:160]}.",
+                    f"The ReplicaSet of `{ns}/{wl}` ({cluster}) cannot create pods because the ResourceQuota of the namespace is used up: {quota[0]['message'][:200]}. The workload runs below its desired replicas and cannot scale or replace a pod that dies.",
+                    ["FailedCreate events from the ReplicaSet name the quota", "nodes have capacity: the limit is a namespace guardrail"],
+                    [f"{k} -n {ns} describe resourcequota", f"Raise the quota in the namespace definition (gitops/platform/base) if the workload is legitimate, or reduce replicas/requests of `{wl}` in {manifest}"],
+                    ["Alert on quota use above 85% (kube_resourcequota) so the limit is raised before a rollout needs it"], [f"{k} -n {ns} get pods -l app.kubernetes.io/name={wl}  # desired replicas Running"], f"{wl} cannot reach its desired replicas.")
+    evicted = _ev(sig, "Evicted")
+    if evicted:
+        m = evicted[0]["message"].lower()
+        storage = "ephemeral" in m or "storage" in m
+        return Diag("resource_exhaustion", "infrastructure" if "node was low" in m else "application", f"{'ephemeral storage' if storage else 'node resources'} of {wl}", "high", f"The pod was evicted: {evicted[0]['message'][:160]}.",
+                    f"A pod of `{ns}/{wl}` ({cluster}) was evicted by the kubelet: {evicted[0]['message'][:200]}. " + ("It wrote more to its container filesystem or emptyDir than its ephemeral-storage limit allows (logs, temp files, caches)." if storage and "node was low" not in m else "The node ran low on a resource and the kubelet removed pods to protect itself."),
+                    ["Evicted event from the kubelet", m[:120]],
+                    [f"{k} -n {ns} get pods | grep Evicted  # then delete the evicted pod records: {k} -n {ns} delete pod --field-selector=status.phase=Failed", ("Find what fills the disk: " + f"{k} -n {ns} exec <pod> -- du -sh /tmp /var/log" if storage else f"{k} describe node <node> | grep -A10 Conditions")],
+                    ["Set an ephemeral-storage request and limit that fits the workload, write logs to stdout and temp data to a sized emptyDir"], [f"{k} -n {ns} get pods  # no new Evicted"], f"{wl} loses pods when they hit the limit.")
+    if family == "rollout" and sig.get("desired") == 0:
+        critical = ns in ("kube-system", "ingress-nginx", "argocd", "kyverno", "argo-workflows", "sre-agent", "observability")
+        return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} has 0 desired replicas", "high", f"{wl} was scaled to zero.",
+                    f"`{ns}/{wl}` in the {cluster} cluster has no replicas because its desired count is 0: someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it" + (", and this is a component the cluster depends on" if critical else "") + ".",
+                    ["kube_deployment_spec_replicas is 0", "no pod exists, so there are no logs or restarts to explain it"], [f"{k} -n {ns} scale deploy/{wl} --replicas=<n>   # or revert the change in Git, Argo CD restores it on the next sync if self-heal is on", f"{k} -n {ns} get events --sort-by=.lastTimestamp | tail"],
+                    ["Keep automated sync with self-heal on for platform components and restrict `scale` rights with RBAC; alert on spec.replicas == 0 for critical add-ons (CriticalAddonDown)"], [f"{k} -n {ns} get deploy {wl}  # READY n/n"], f"Everything that depends on {wl} is affected.")
+
     # ------------------------------------------------------------------ containers that cannot start or keep dying
     if family in ("container", "job", "rollout", "target", "scheduling", "memory", "cpu") and (family in ("memory", "cpu") or labels.get("reason") or pod.get("waiting") or sig.get("restarts") or _ev(sig, "Failed", "BackOff", "FailedScheduling", "Unhealthy", "FailedMount")):
         reason = labels.get("reason") or pod.get("waiting") or ""
@@ -437,9 +465,14 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                         [f"throttled periods up to {sig.get('throttle', 0):.0%}", "no restarts needed: the symptom is latency"], [f"Raise or remove the CPU limit of `{wl}` in {manifest} (keep a request), or add replicas"],
                         ["Prefer CPU requests without limits for latency-sensitive services, and scale on CPU with an HPA"], [f"rate(container_cpu_cfs_throttled_periods_total{{cluster=\"{cluster}\",namespace=\"{ns}\",pod=~\"{wl}-.*\"}}[5m]) is near 0"], f"{wl} responds slower than it should.")
 
+        if exit_code == 0 and (reason == "CrashLoopBackOff" or sig.get("restarts")):
+            return Diag("pod_crash", "application", f"command of {wl} finishes with exit code 0", "high", "The container exits normally, so Kubernetes restarts it forever.",
+                        f"{where} is in a restart loop although nothing fails: the process exits with code 0 right after starting. A Deployment expects a long-running process, so Kubernetes restarts it with a growing delay (CrashLoopBackOff). The command or entrypoint finishes (a script, a one-shot task) instead of serving.",
+                        ["exit code 0, reason Completed", "no error lines and no node or resource problem"], [f"{k} -n {ns} logs {pod.get('pod', wl)} --previous | tail -20  # what it ran before it ended", f"Check `command`/`args` in {manifest}"],
+                        ["Run one-shot work as a Job or CronJob, and keep the long-running process in the Deployment"], [f"{k} -n {ns} get pods  # Running, restarts stable"], f"{wl} never stays up.")
         if reason == "CrashLoopBackOff" or sig.get("restarts") or term in ("Error", "Completed"):
             cfg = re.search(r"permission denied|read-only file system|eacces|erofs", msgs)
-            dns = re.search(r"name resolution|no such host|could not translate|temporary failure in name", msgs)
+            dns = re.search(r"name resolution|no such host|could not translate|temporary failure in name|bad address|server misbehaving|can't resolve|nxdomain", msgs)
             conn = re.search(r"connection refused|connect: |dial tcp|timed out|timeout|no route to host|unavailable", msgs)
             probe = _ev(sig, "Unhealthy")
             if cfg:
@@ -447,6 +480,12 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                             f"{where} keeps crashing (exit {exit_code}) because it cannot write where it tries to: `{top}`. The pod runs with a read-only root filesystem and a non-root user, so every path it writes must be a mounted volume.",
                             ["log lines show permission denied / read-only file system", "restarts began when this build started"], [f"Mount an emptyDir for the path in the log line in {manifest}", f"{k} -n {ns} logs {pod.get('pod', wl)} --previous | tail -30"],
                             ["Test the image with the same securityContext in CI (docker run --read-only --user 10001)"], [f"{k} -n {ns} get pods  # Running, restarts stable"], f"{wl} cannot stay up.")
+            if dns and sig.get("dns_servfail", 0) < 0.02:
+                return Diag("dns_failure", "application", f"a host name that {wl} cannot resolve", "medium", f"The process cannot resolve a name, but CoreDNS is healthy: {top}.",
+                            f"{where} crashes because it cannot resolve a host name (`{top}`). CoreDNS answers normally (SERVFAIL ratio {sig.get('dns_servfail', 0):.1%}) and other lookups work, so the name itself is wrong or does not exist: a typo, a missing Service, or an external name that was never registered.",
+                            ["log lines show a resolution failure", f"CoreDNS SERVFAIL ratio {sig.get('dns_servfail', 0):.1%}: the cluster DNS is not the problem"],
+                            [f"{k} -n {ns} logs {pod.get('pod', wl)} --previous | tail -20  # the exact name", f"{k} -n {ns} get svc  # does a Service with that name exist in the namespace? (name.namespace.svc for another namespace)"],
+                            ["Take host names from configuration that is validated in CI, and add the dependency to a readiness check"], [f"{k} -n {ns} get pods  # Running"], f"{wl} cannot start.")
             if dns:
                 return Diag("dns_failure", "infrastructure", f"DNS resolution in the {cluster} cluster", "medium", f"The process cannot resolve a name: {top}.",
                             f"{where} crashes because name resolution fails ({top}). Other pods are probably affected too.",
@@ -513,6 +552,12 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         ready = [p for p in pods if p.get("ready")]
         top = sig["top_log_messages"][0][0][:140] if sig.get("top_log_messages") else ""
         shape = f"{sig.get('error_ratio_peak', 0):.0%} of requests through `{ing}` ended in 5xx (statuses {sig.get('statuses')}) and p95 reached {sig.get('p95_peak', 0) * 1000:.0f} ms"
+        if not pods:
+            gone = "scaled to zero" if sig.get("desired") == 0 else "missing"
+            return Diag("ingress_backend_failure", "application", f"service {backend} has no pods ({gone})", "high", f"Users get errors because {backend} has no pods.",
+                        f"{shape}. The backend `{ns}/{backend}` has no pods ({gone}), so the ingress controller answers 503 for every request to `{ing}`.",
+                        ["ingress errors started when the backend disappeared", "no pod found for the backend"], [f"{k} -n {ns} get deploy {backend}", f"{k} -n {ns} scale deploy/{backend} --replicas=<n>   # if it was scaled down, or revert the change in Git"],
+                        ["Alert on a Service without endpoints, and keep self-heal on so a manual scale-down is reverted"], [f"{k} -n {ns} get endpoints {backend}  # has addresses", "5xx ratio on the ingress below 1%"], f"Users of {ing} get errors until {backend} runs again.")
         if pods and not ready:
             return Diag("ingress_backend_failure", "application" if not sig.get("node_not_ready") else "infrastructure", f"no ready pod behind service {backend}", "high", f"Users get errors because no pod of {backend} is ready.",
                         f"{shape}. The backend `{ns}/{backend}` has no ready pod, so the ingress controller has nothing to send traffic to (502/503). The pods' state: " + ", ".join(f"{p['pod']} {p['phase']}{' ' + p['waiting'] if p.get('waiting') else ''}" for p in pods[:3]) + ".",
@@ -576,6 +621,11 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
     if family == "telemetry":
         target = labels.get("cluster", cluster)
         pod_ok = any(p.get("ready") for p in pods)
+        if not pods and "error" not in ctx["raw"].get("pods", {}):
+            return Diag("telemetry_gap", "infrastructure", f"the collector (Alloy) of the {target} cluster has no pod", "high", f"The collector in {target} does not exist.",
+                        f"No telemetry arrives from the {target} cluster because its collector has no pod: it was scaled to zero or deleted. The cluster itself answers its API. Dashboards and alerts for {target} are blind until the collector is back.",
+                        ["no collector pod in the cluster", "the cluster API answers"], [f"{_ctl(target)} -n observability get deploy alloy", f"{_ctl(target)} -n observability scale deploy/alloy --replicas=1   # or let Argo CD restore it (self-heal)"],
+                        ["Keep self-heal on for the collector and alert on its absence from outside the cluster (this alert)"], [f"up{{job=\"alloy\",cluster=\"{target}\"}} == 1"], f"{target} is unobserved.")
         if pods and not pod_ok:
             return Diag("telemetry_gap", "infrastructure", f"the collector (Alloy) of the {target} cluster", "high", f"The collector in {target} is not running.",
                         f"No telemetry arrives from the {target} cluster because its collector is not ready ({', '.join(f'{p['pod']} {p['phase']}' for p in pods[:2])}). Dashboards and alerts for that cluster are blind until it is back.",
