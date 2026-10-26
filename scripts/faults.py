@@ -247,10 +247,10 @@ def _():
     kubectl(PLATFORM, "-n", NS, "scale", "deploy/fault-ingress-nobackend", "--replicas=0")
 
 
-def argo_app(name, path):
+def argo_app(name, path, ns=NS):
     return {"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": name, "namespace": "argocd"},
             "spec": {"project": "prod-workloads", "source": {"repoURL": "https://github.com/krishnakant888/k8s-sre-platform.git", "targetRevision": "main", "path": path},
-                     "destination": {"name": "platform", "namespace": NS}, "syncPolicy": {"automated": {"prune": True, "selfHeal": True}}}}
+                     "destination": {"name": "platform", "namespace": ns}, "syncPolicy": {"automated": {"prune": True, "selfHeal": True}}}}
 
 
 @scenario("argo-badpath", "Git path that does not exist: Argo CD cannot render the application", ["ArgoAppOutOfSync"], ["gitops_sync_failure"], ["application"], 18, service="fault-argo-badpath")
@@ -266,6 +266,38 @@ def _():
 @scenario("argo-policy", "manifest that Pod Security refuses (privileged pod)", ["ArgoSyncFailing"], ["gitops_sync_failure"], ["application"], 6, service="fault-argo-policy")
 def _():
     apply(argo_app("fault-argo-policy", "gitops/fault-drills/policy"), HUB)
+
+
+@scenario("argo-kyverno", "Kyverno refuses a floating image tag at sync", ["ArgoSyncFailing"], ["gitops_sync_failure"], ["application"], 6, service="fault-argo-kyverno")
+def _():
+    apply(argo_app("fault-argo-kyverno", "gitops/fault-drills/kyverno", "demo"), HUB)
+
+
+@scenario("sts-notready", "StatefulSet whose pod never becomes ready", ["StatefulSetReplicasNotReady"], ["probe_failure"], ["application"], 13)
+def _():
+    vols, mounts = tmp_mount()
+    c = container(image=NGINX, ports=[{"name": "http", "containerPort": 8080}], mounts=mounts, probes={"readinessProbe": {"httpGet": {"path": "/nope", "port": "http"}, "periodSeconds": 5}})
+    dep = deployment("fault-sts-notready", c, volumes=vols, uid=101)
+    sts = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": dep["metadata"], "spec": {**dep["spec"], "serviceName": "fault-sts-notready"}}
+    svc = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "fault-sts-notready", "namespace": NS}, "spec": {"clusterIP": "None", "selector": {"app.kubernetes.io/name": "fault-sts-notready"}, "ports": [{"name": "http", "port": 8080}]}}
+    apply([svc, sts])
+
+
+@scenario("ds-unavailable", "DaemonSet whose image cannot be pulled", ["DaemonSetPodsUnavailable", "ContainerWaiting"], ["image_pull_failure"], ["application"], 13)
+def _():
+    dep = deployment("fault-ds-unavailable", container(image="nginxinc/nginx-unprivileged:9.9.9-does-not-exist"))
+    ds = {"apiVersion": "apps/v1", "kind": "DaemonSet", "metadata": dep["metadata"], "spec": {"selector": dep["spec"]["selector"], "template": dep["spec"]["template"]}}
+    apply(ds)
+
+
+@scenario("workflow-fail", "an investigation workflow ends in Failed", ["InvestigationWorkflowFailed"], ["investigation_pipeline_failed"], ["application", "infrastructure"], 6, service="sre-agent")
+def _():
+    wf = {"apiVersion": "argoproj.io/v1alpha1", "kind": "Workflow", "metadata": {"name": f"drill-failing-{int(time.time())}", "namespace": "sre-agent"},
+          "spec": {"entrypoint": "main", "serviceAccountName": "sre-agent", "templates": [{"name": "main", "container": {
+              "image": "busybox:1.37.0", "command": ["sh", "-c", "echo 'anthropic.AuthenticationError: 401 invalid x-api-key' >&2; exit 1"],
+              "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"memory": "64Mi"}},
+              "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}}}]}}
+    apply(wf, OBS)
 
 
 # ---- disruptive: they break something the platform depends on, so the Argo CD sync of it is paused first
@@ -289,6 +321,17 @@ def _():
     kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=0")
 
 
+@scenario("loki-down", "the log store is scaled to zero", ["LogsDropped"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
+def _():
+    kubectl(HUB, "-n", "argocd", "patch", "application", "loki", "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":null}}}')
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=0")
+
+
+@scenario("partition", "the node that runs the stores is cut off from the other clusters", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
+def _():
+    subprocess.run(["docker", "network", "disconnect", "kind", "observability-worker"], check=True)
+
+
 @scenario("node-down", "a worker node of the platform cluster stops", ["NodeNotReady"], ["node_failure"], ["infrastructure"], 5, service="platform-worker2", group="disruptive")
 def _():
     subprocess.run(["docker", "stop", "platform-worker2"], check=True)
@@ -297,11 +340,15 @@ def _():
 def clear():
     kubectl(PLATFORM, "-n", NS, "delete", "deploy,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)
-    for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy"):
+    for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
     resume_sync("prod-ingress-nginx")
     resume_sync("hub-alloy")
+    kubectl(HUB, "-n", "argocd", "patch", "application", "loki", "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}', check=False)
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
+    subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
+    kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", "none=none", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "-n", "ingress-nginx", "scale", "deploy/ingress-nginx-controller", "--replicas=1", check=False)
     kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=1", check=False)
     print("cleared")

@@ -44,7 +44,11 @@ def fake(monkeypatch, *, pods=None, events=None, logs=None, prom=None, argocd=No
         if name == "search_traces":
             return {"traces": []}
         if name == "get_pod_status":
-            return {"error": pods_error} if pods_error else {"pods": pods or []}
+            if pods_error:
+                return {"error": pods_error}
+            if isinstance(pods, dict):  # per name prefix
+                return {"pods": pods.get(args["name_prefix"], [])}
+            return {"pods": pods or []}
         if name == "get_k8s_events":
             return {"events": events or []}
         if name == "get_argocd_app":
@@ -245,3 +249,17 @@ def test_collector_without_a_pod(monkeypatch):
     fake(monkeypatch, pods=[], prom={})
     r = investigate(alert("ClusterTelemetryMissing", "page", cluster="gitops", service="alloy"))
     assert r.root_cause.category == "telemetry_gap" and "no pod" in r.fault_domain.component
+
+
+def test_failed_investigation_workflow_with_a_rejected_key(monkeypatch):
+    fake(monkeypatch, pods=[pod("alert-webhook-5d4f7-abcde", ready=True)], logs=[("anthropic.AuthenticationError: 401 invalid x-api-key", 3)])
+    r = investigate(alert("InvestigationWorkflowFailed", cluster="observability", namespace="sre-agent", service="sre-agent"))
+    assert r.root_cause.category == "investigation_pipeline_failed"
+    assert "key" in r.fault_domain.component and r.fault_domain.layer == "application"
+
+
+def test_log_loss_names_the_store_that_is_down(monkeypatch):
+    fake(monkeypatch, pods={"alloy": [pod("alloy-5d4f7-abcde", ready=True)], "loki": [pod("loki-0", ready=False)], "mimir": [pod("mimir-0", ready=True)], "tempo": [pod("tempo-0", ready=True)]}, prom={"prometheus_remote_storage_samples_failed_total": 0.0, "loki_write_dropped_entries_total": 12.0, "timestamp(up": 5.0})
+    r = investigate(alert("LogsDropped", cluster="platform", service="alloy"))
+    assert r.root_cause.category == "telemetry_gap"
+    assert "loki" in r.fault_domain.component and "observability" in r.fault_domain.component

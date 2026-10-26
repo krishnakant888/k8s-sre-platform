@@ -1,0 +1,21 @@
+# Used by scripts/faults.py (argo-kyverno): the Kyverno policy disallow-latest-tag (enforced in demo) refuses a floating image tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drill-latest-tag
+  namespace: demo
+  labels: {app.kubernetes.io/name: drill-latest-tag, app.kubernetes.io/version: "0.0.1", team: fault-drill}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: drill-latest-tag}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: drill-latest-tag, app.kubernetes.io/version: "0.0.1", team: fault-drill}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: app
+          image: nginxinc/nginx-unprivileged:latest
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
