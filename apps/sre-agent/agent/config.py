@@ -8,6 +8,9 @@ SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 # the cluster under investigation, when it is not the one the agent runs in: a read-only token and the API CA mounted from a Secret
 PLATFORM_K8S_URL = os.getenv("PLATFORM_K8S_URL", "")
 PLATFORM_DIR = os.getenv("PLATFORM_DIR", "/var/run/platform")
+# the cluster that runs Argo CD, for the deploy history of applications
+GITOPS_K8S_URL = os.getenv("GITOPS_K8S_URL", "")
+GITOPS_DIR = os.getenv("GITOPS_DIR", "/var/run/gitops")
 
 WORKFLOW_NAMESPACE = os.getenv("WORKFLOW_NAMESPACE", "sre-agent")
 WORKFLOW_TEMPLATE = os.getenv("WORKFLOW_TEMPLATE", "incident-investigation")

@@ -181,10 +181,13 @@ def get_trace(trace_id: str) -> dict:
 _k8s_transport = None  # tests inject an httpx.MockTransport here
 
 
-def _k8s_get(path: str, platform: bool = False) -> dict:
-    """platform=True reads the cluster under investigation (pods, events), another cluster when PLATFORM_K8S_URL is set."""
-    if platform and config.PLATFORM_K8S_URL:
+def _k8s_get(path: str, cluster: str = "") -> dict:
+    """cluster="platform" reads the cluster under investigation (pods, events), "gitops" the one running Argo CD.
+    Each is another cluster when its URL is set, otherwise the cluster the agent runs in."""
+    if cluster == "platform" and config.PLATFORM_K8S_URL:
         base, creds = config.PLATFORM_K8S_URL, config.PLATFORM_DIR
+    elif cluster == "gitops" and config.GITOPS_K8S_URL:
+        base, creds = config.GITOPS_K8S_URL, config.GITOPS_DIR
     else:
         base, creds = config.K8S_URL, config.SA_DIR
     # httpx only takes `verify` when the client is built, not per request, so the API server CA needs its own client
@@ -199,7 +202,7 @@ def _k8s_get(path: str, platform: bool = False) -> dict:
 def get_pod_status(namespace: str, name_prefix: str) -> dict:
     """Phase, restarts and last termination reason of pods whose name starts with name_prefix."""
     pods = []
-    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", platform=True)["items"]:
+    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", cluster="platform")["items"]:
         if not p["metadata"]["name"].startswith(name_prefix):
             continue
         limits = {c["name"]: c.get("resources", {}).get("limits", {}).get("memory") for c in p["spec"].get("containers", [])}
@@ -225,7 +228,7 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
 def get_k8s_events(namespace: str, minutes: int = 30) -> dict:
     cutoff = time.time() - _clamp_minutes(minutes) * 60
     events = []
-    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", platform=True)["items"]:
+    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", cluster="platform")["items"]:
         ts = e.get("lastTimestamp") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
         epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
@@ -240,7 +243,7 @@ def get_recent_deploys(application: str) -> dict:
     # the platform cluster's applications are named prod-<name> in the Argo CD that deploys both clusters
     for name in (f"prod-{application}", application):
         try:
-            app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{name}")
+            app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{name}", cluster="gitops")
             break
         except httpx.HTTPStatusError as e:
             if e.response.status_code != 404:

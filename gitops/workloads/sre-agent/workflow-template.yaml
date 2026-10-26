@@ -26,6 +26,8 @@ spec:
       emptyDir: {}
     - name: platform-reader   # read-only token and CA of the platform cluster, created by bootstrap.py
       secret: {secretName: platform-reader}
+    - name: gitops-reader   # read-only token and CA of the gitops cluster (Argo CD Applications), created by bootstrap.py
+      secret: {secretName: gitops-reader}
   templates:
     - name: investigate
       steps:
@@ -75,6 +77,7 @@ spec:
         command: [python, -m, agent.steps, collect]
         env:   # Mimir, Loki and Tempo are in this cluster (agent/config.py has their addresses); pods and events come from the platform cluster
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
+          - {name: GITOPS_K8S_URL, value: "https://gitops-control-plane:6443"}
         resources:
           requests: {cpu: 100m, memory: 128Mi}
           limits: {memory: 512Mi}
@@ -85,6 +88,7 @@ spec:
         volumeMounts:
           - {name: tmp, mountPath: /tmp}
           - {name: platform-reader, mountPath: /var/run/platform, readOnly: true}
+          - {name: gitops-reader, mountPath: /var/run/gitops, readOnly: true}
       outputs:
         parameters:
           - name: ctx
@@ -112,6 +116,7 @@ spec:
         env:
           - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
+          - {name: GITOPS_K8S_URL, value: "https://gitops-control-plane:6443"}
           - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
         resources:
@@ -124,6 +129,7 @@ spec:
         volumeMounts:
           - {name: tmp, mountPath: /tmp}
           - {name: platform-reader, mountPath: /var/run/platform, readOnly: true}
+          - {name: gitops-reader, mountPath: /var/run/gitops, readOnly: true}
       outputs:
         parameters:
           - name: report

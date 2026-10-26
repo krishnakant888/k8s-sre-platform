@@ -213,7 +213,7 @@ def test_k8s_get_sends_the_token_and_builds_its_own_client(monkeypatch, tmp_path
     assert pod["memory_limit"] == "192Mi" and pod["app_instance"] == "orders-api" and pod["last_terminated"]["reason"] == "OOMKilled"
 
 
-def test_pods_are_read_from_the_platform_cluster_with_its_own_token(monkeypatch, tmp_path):
+def test_pods_and_deploys_are_read_from_their_own_clusters_with_their_own_tokens(monkeypatch, tmp_path):
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir(), remote.mkdir()
     (local / "token").write_text("local-token")
@@ -221,6 +221,11 @@ def test_pods_are_read_from_the_platform_cluster_with_its_own_token(monkeypatch,
     monkeypatch.setattr(tools.config, "SA_DIR", str(local))
     monkeypatch.setattr(tools.config, "PLATFORM_DIR", str(remote))
     monkeypatch.setattr(tools.config, "PLATFORM_K8S_URL", "https://platform-control-plane:6443")
+    gitops = tmp_path / "gitops"
+    gitops.mkdir()
+    (gitops / "token").write_text("gitops-token")
+    monkeypatch.setattr(tools.config, "GITOPS_DIR", str(gitops))
+    monkeypatch.setattr(tools.config, "GITOPS_K8S_URL", "https://gitops-control-plane:6443")
     seen = []
 
     def handler(request: httpx.Request):
@@ -231,8 +236,8 @@ def test_pods_are_read_from_the_platform_cluster_with_its_own_token(monkeypatch,
     tools.get_pod_status("demo", "orders-api")
     tools.get_recent_deploys("orders-api")
     assert seen[0] == ("https://platform-control-plane:6443/api/v1/namespaces/demo/pods", "Bearer remote-token")
-    assert seen[1][0].startswith("https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/prod-orders-api")
-    assert seen[1][1] == "Bearer local-token"
+    assert seen[1][0].startswith("https://gitops-control-plane:6443/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/prod-orders-api")
+    assert seen[1][1] == "Bearer gitops-token"
 
 
 def test_dependency_problem_is_application_level(monkeypatch):

@@ -14,7 +14,7 @@ spec:
     targetRevision: main
     path: gitops/monitoring/config
   destination:
-    server: https://kubernetes.default.svc
+    name: monitoring   # registered in this Argo CD by bootstrap.py
     namespace: observability
   syncPolicy:
     automated:

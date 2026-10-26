@@ -6,13 +6,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Monitoring cluster add-ons (argocd, ingress-nginx, base namespaces)
+  description: Monitoring cluster add-ons (ingress-nginx, argo-workflows, base namespaces)
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://argoproj.github.io/argo-helm
     - https://kubernetes.github.io/ingress-nginx
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: monitoring
       namespace: "*"
   clusterResourceWhitelist:
     - group: "*"
@@ -32,7 +32,7 @@ spec:
     - https://grafana.github.io/helm-charts
     - https://prometheus-community.github.io/helm-charts
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: monitoring
       namespace: observability
   clusterResourceWhitelist:
     - group: rbac.authorization.k8s.io
@@ -52,10 +52,8 @@ spec:
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: monitoring
       namespace: sre-agent
-    - server: https://kubernetes.default.svc
-      namespace: argocd   # the read-only Role on Applications, so the agent can read deploy history
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

@@ -19,7 +19,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    server: https://kubernetes.default.svc
+    name: monitoring   # registered in this Argo CD by bootstrap.py
     namespace: argo-workflows
   syncPolicy:
     automated:
