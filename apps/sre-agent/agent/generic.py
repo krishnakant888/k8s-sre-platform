@@ -27,7 +27,7 @@ FAMILIES = {
     "ArgoAppOutOfSync": "argocd", "ArgoAppUnhealthy": "argocd", "ArgoSyncFailing": "argocd",
     "ClusterTelemetryMissing": "telemetry", "TelemetryNotDelivered": "telemetry", "LogsDropped": "telemetry",
     "PodCrashLooping": "container", "PodOOMKilled": "memory", "DeploymentReplicasUnavailable": "rollout",
-    "PodFailed": "container", "CriticalAddonDown": "rollout",
+    "PodFailed": "container", "CriticalAddonDown": "rollout", "InvestigationWorkflowFailed": "pipeline",
     "DatasourceError": "datasource", "DatasourceNoData": "datasource",   # Grafana's own alerts when a rule cannot query its datasource
 }
 
@@ -289,6 +289,13 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         logs_for(f'cluster="observability", namespace="observability", service="grafana"', "Grafana error lines")
         sig["ongoing"] = any(not p["ready"] for p in sig["pods"]) or not sig["pods"]
 
+    elif family == "pipeline":
+        cluster, ns, workload = "observability", "sre-agent", "alert-webhook"
+        sig.update({"cluster": cluster, "namespace": ns, "workload": "sre-agent"})
+        pods_and_events("alert-webhook", ns)
+        logs_for('cluster="observability", namespace="sre-agent"', "error lines of the investigation steps and the webhook")
+        sig["ongoing"] = True
+
     elif family == "telemetry":
         target = labels.get("cluster") or cluster
         up = _q(f'max by (job) (up{{cluster="{target}"}})', 15)
@@ -300,6 +307,13 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["jobs_down"] = [s["labels"].get("job") for s in up.get("series", []) if s["last"] == 0]
         add("mimir", f"alloy in {target}", (f"last sample {sig['telemetry_age']:.0f}s ago" if sig["telemetry_age"] is not None else "no sample from the collector in the window")
             + f"; failed remote writes {sig['remote_write_failed']:.2f}/s, dropped log lines {sig['log_dropped']:.2f}/s; scrape jobs down: {', '.join(sig['jobs_down']) or 'none'}")
+        stores = {}
+        for store in ("mimir", "loki", "tempo"):
+            st = tools.call_tool("get_pod_status", {"namespace": "observability", "name_prefix": store, "cluster": "observability"})
+            stores[store] = bool([p for p in st.get("pods", []) if p.get("ready")]) if "error" not in st else None
+        sig["stores_down"] = [s for s, up_ in stores.items() if up_ is False or (up_ is not None and not up_)]
+        if sig["stores_down"]:
+            add("kubernetes", "mimir / loki / tempo pods in the observability cluster", f"no ready pod for: {', '.join(sig['stores_down'])}")
         cluster = target
         pods_and_events("alloy", "observability")
         logs_for(f'cluster="{target}", namespace="observability", service="alloy"', "collector error lines")
@@ -635,10 +649,34 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
             return Diag("telemetry_gap", "infrastructure", f"the {target} cluster or the network path to it", "medium", f"The {target} cluster is unreachable or down.",
                         f"No metrics arrive from {target} and its API does not answer ({raw.get('error', '')[:100]}). The cluster is down, stopped, or cut off from the network.",
                         ["no samples from the collector", "the API server of the cluster is unreachable too"], [f"docker ps -a --filter name={target}-  # kind: are the node containers running?", f"docker start {target}-control-plane  # if stopped"], ["Alert on the absence of a cluster from a place outside it"], [f"{_ctl(target)} get nodes"], f"Everything in {target} is unobserved, and possibly down.")
+        if sig.get("stores_down"):
+            names = ", ".join(sig["stores_down"])
+            return Diag("telemetry_gap", "infrastructure", f"{names} in the observability cluster", "high", f"The collector runs, but {names} cannot receive its data.",
+                        f"The collector in {target} is running but its writes fail (metrics failing {sig.get('remote_write_failed', 0):.2f}/s, logs dropped {sig.get('log_dropped', 0):.2f}/s) because `{names}` has no ready pod in the observability cluster. Telemetry from every cluster that writes to it is being lost until it is back.",
+                        [f"no ready pod for {names}", "collector pod is ready"], [f"{_ctl('observability')} -n observability get pods", f"{_ctl('observability')} -n observability describe pod -l app.kubernetes.io/name={sig['stores_down'][0]} | tail -20", "If it was scaled down: scale it back, or let Argo CD restore it (self-heal)"],
+                        ["Give the stores a PodDisruptionBudget and a persistent buffer in the collectors so a short outage loses nothing"], [f"{_ctl('observability')} -n observability get pods  # all Running", "rate(prometheus_remote_storage_samples_failed_total[5m]) is 0"], "Metrics or logs of every cluster are lost until the store is back.")
         return Diag("telemetry_gap", "infrastructure", f"delivery from {target} to the observability cluster", "medium", "The collector runs but its data does not arrive.",
                     f"The collector in {target} is running but writes fail (metrics failing {sig.get('remote_write_failed', 0):.2f}/s, logs dropped {sig.get('log_dropped', 0):.2f}/s). Mimir or Loki is down, overloaded or unreachable, or a network policy blocks the NodePort.",
                     ["remote write failures or dropped log lines"], [f"{_ctl('observability')} -n observability get pods  # Mimir and Loki Running?", f"{_ctl(target)} -n observability logs -l app.kubernetes.io/name=alloy --tail=40"],
                     ["Add a retry queue sized for 15 minutes, and alert on the failure rate (TelemetryNotDelivered)"], ["rate(prometheus_remote_storage_samples_failed_total[5m]) is 0"], f"Data from {target} is lost while writes fail.")
+
+    if family == "pipeline":
+        msgs = _msgs(sig)
+        auth = re.search(r"401|invalid x-api-key|authentication|api key", msgs)
+        rbac = re.search(r"403|forbidden", msgs)
+        top = sig["top_log_messages"][0][0][:140] if sig.get("top_log_messages") else ""
+        if auth:
+            return Diag("investigation_pipeline_failed", "application", "the Anthropic API key of the SRE agent", "high", "An investigation failed because the model API rejected the key.",
+                        f"An incident workflow ended in Failed: the agent's call to the model API was refused (`{top}`). Reports fall back to the rule-based analysis, which is less detailed, until the key is fixed.",
+                        ["error lines name an authentication failure", "the webhook accepts alerts and starts workflows"], [f"{_ctl('observability')} -n sre-agent get secret anthropic-api-key", "Replace the key: ANTHROPIC_API_KEY=... python3 bootstrap/bootstrap.py --only observability   (or delete the secret to run rule-based only)"],
+                        ["Alert on workflow failures (this alert) and rotate the key through the secret manager"], [f"{_ctl('observability')} -n sre-agent get wf  # new workflows Succeeded"], "Investigations lose their LLM analysis.")
+        if rbac:
+            return Diag("investigation_pipeline_failed", "infrastructure", "read access of the SRE agent", "medium", "An investigation failed on a permission error.",
+                        f"An incident workflow ended in Failed with a permission error (`{top}`): the agent's service account or one of its read-only tokens lacks a right.", ["error lines contain 403 / forbidden"],
+                        [f"{_ctl('observability')} -n sre-agent logs -l workflows.argoproj.io/workflow --tail=40", "Check the ClusterRoles sre-agent-local-read (observability), sre-agent-read (platform) and sre-agent-hub-read (gitops)"], ["Test the agent's access after every cluster rebuild (bootstrap creates the tokens)"], ["next workflow Succeeded"], "Some investigations are incomplete.")
+        return Diag("investigation_pipeline_failed", "application", "an investigation workflow", "low", "An investigation workflow failed.",
+                    f"An incident workflow ended in Failed" + (f" with `{top}`" if top else "") + ". The alert that started it has no report until it is re-run.", ["the Argo Workflows metric counts a failed workflow"],
+                    [f"{_ctl('observability')} -n sre-agent get wf | grep -v Succeeded", f"{_ctl('observability')} -n sre-agent logs <failed workflow pod> -c main"], ["Keep the steps idempotent so a failed workflow can be resubmitted"], ["new workflows Succeeded"], "A report is missing.")
 
     if family == "datasource":
         be = sig.get("datasource_backend", "mimir")

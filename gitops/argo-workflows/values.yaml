@@ -24,6 +24,8 @@ controller:
       podMetadata:
         labels:
           app.kubernetes.io/name: sre-agent   # so alloy labels the logs service="sre-agent"
+          app.kubernetes.io/version: "1.0.0"
+          team: platform
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
