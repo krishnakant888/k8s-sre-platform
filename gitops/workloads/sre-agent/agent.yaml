@@ -1,5 +1,5 @@
 # The investigation steps run as Argo Workflow pods under this service account (see workflow-template.yaml).
-# The agent runs in the monitoring cluster, next to Loki, Mimir and Tempo. It reads the platform cluster (pods, events) and
+# The agent runs in the observability cluster, next to Loki, Mimir and Tempo. It reads the platform cluster (pods, events) and
 # the Argo CD Applications of the gitops cluster with read-only tokens in the Secrets platform-reader and gitops-reader,
 # which bootstrap.py creates from service accounts in those clusters.
 apiVersion: v1
