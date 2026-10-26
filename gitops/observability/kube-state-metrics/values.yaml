@@ -22,3 +22,16 @@ containerSecurityContext:
 prometheus:
   monitor:
     enabled: false
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: /metrics
+
+# labels that let a dashboard or the agent group by app, version and team without naming any application
+metricLabelsAllowlist:
+  - pods=[app.kubernetes.io/name,app.kubernetes.io/version,app.kubernetes.io/component,team,tier]
+  - deployments=[app.kubernetes.io/name,app.kubernetes.io/version,team,tier]
+  - statefulsets=[app.kubernetes.io/name,app.kubernetes.io/version,team,tier]
+  - daemonsets=[app.kubernetes.io/name,app.kubernetes.io/version,team,tier]
+  - nodes=[kubernetes.io/hostname,node.kubernetes.io/instance-type,topology.kubernetes.io/zone]

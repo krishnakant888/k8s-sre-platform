@@ -1,0 +1,10 @@
+# Same as the platform cluster: the stores are in the observability cluster.
+alloy:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  extraEnv:
+    - {name: CLUSTER, value: gitops}
+    - {name: MIMIR_PUSH_URL, value: "http://observability-control-plane:30900/api/v1/push"}
+    - {name: LOKI_PUSH_URL, value: "http://observability-control-plane:30310/loki/api/v1/push"}
+    - {name: TEMPO_OTLP, value: "observability-control-plane:30417"}

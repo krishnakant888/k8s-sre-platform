@@ -1,0 +1,380 @@
+// One collector configuration for every cluster. The only differences between clusters come from environment variables
+// set in the Helm values of each cluster (values-<cluster>.yaml): CLUSTER, MIMIR_PUSH_URL, LOKI_PUSH_URL, TEMPO_OTLP.
+//
+// Nothing here names an application. A new workload is observed as soon as it runs:
+//   metrics  every pod with a container port named "metrics" (or the prometheus.io/scrape annotation), plus the
+//            kubelet, cAdvisor, the API server and CoreDNS
+//   logs     every container, JSON or plain text, with a parsed level label
+//   events   every Kubernetes event, as logs
+//   traces   OTLP from any app, tagged with the cluster
+// Every series and line carries cluster, namespace, pod, service and version, so one dashboard or alert rule written
+// once covers every workload in every cluster.
+
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// ---------------------------------------------------------------- metrics
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = sys.env("MIMIR_PUSH_URL")
+  }
+  external_labels = {cluster = sys.env("CLUSTER")}
+}
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+// pods that opt in with annotations (prometheus.io/scrape, port, path)
+discovery.relabel "annotated_pods" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+    regex         = "true"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+    regex         = "(.+)"
+    target_label  = "__metrics_path__"
+  }
+  rule {
+    source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+    regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+    replacement   = "$1:$2"
+    target_label  = "__address__"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+  // service: the most specific name the pod carries (later rules win)
+  rule {
+    source_labels = ["__meta_kubernetes_pod_controller_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_version"]
+    regex         = "(.+)"
+    target_label  = "version"
+  }
+}
+
+prometheus.scrape "annotated_pods" {
+  scrape_interval = "30s"
+  targets         = discovery.relabel.annotated_pods.output
+  forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+// pods that expose a container port named "metrics" are scraped with no annotation at all (Argo CD, ingress-nginx,
+// CoreDNS, and any chart that follows the convention). Pods that carry the annotation are left to the pipeline above.
+discovery.relabel "named_metrics_port" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "(http-)?metrics|prom-metrics"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+    regex         = "true|false"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_controller_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_version"]
+    regex         = "(.+)"
+    target_label  = "version"
+  }
+}
+
+prometheus.scrape "named_metrics_port" {
+  scrape_interval = "30s"
+  targets         = discovery.relabel.named_metrics_port.output
+  forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+// the collector itself
+prometheus.scrape "alloy" {
+  scrape_interval = "30s"
+  targets         = [{"__address__" = "localhost:12345", "job" = "alloy", "namespace" = "observability", "service" = "alloy"}]
+  forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+// ---- nodes: container cpu and memory from cAdvisor, kubelet health and volumes
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+discovery.relabel "cadvisor" {
+  targets = discovery.kubernetes.nodes.targets
+  rule {
+    target_label = "__metrics_path__"
+    replacement  = "/metrics/cadvisor"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "node"
+  }
+}
+
+prometheus.scrape "cadvisor" {
+  scrape_interval   = "30s"
+  targets           = discovery.relabel.cadvisor.output
+  scheme            = "https"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  tls_config {
+    insecure_skip_verify = true   // kubeadm kubelet serving cert is self-signed
+  }
+  job_name   = "cadvisor"
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+discovery.relabel "kubelet" {
+  targets = discovery.kubernetes.nodes.targets
+  rule {
+    target_label = "__metrics_path__"
+    replacement  = "/metrics"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "node"
+  }
+}
+
+// kubelet_* (pod start latency, volume usage, PLEG), kept small: the Go runtime series are not needed per node
+prometheus.scrape "kubelet" {
+  scrape_interval   = "30s"
+  targets           = discovery.relabel.kubelet.output
+  scheme            = "https"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  tls_config {
+    insecure_skip_verify = true
+  }
+  job_name   = "kubelet"
+  forward_to = [prometheus.relabel.kubelet.receiver]
+}
+
+prometheus.relabel "kubelet" {
+  rule {
+    source_labels = ["__name__"]
+    regex         = "kubelet_(volume_stats_.*|node_name|running_pods|running_containers|pod_start_duration_seconds_.*|pod_worker_duration_seconds_.*|runtime_operations_errors_total|pleg_relist_duration_seconds_.*|evictions)|kubelet_http_requests_total|rest_client_requests_total|up"
+    action        = "keep"
+  }
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+// ---- API server: request rate, errors and latency, etcd, admission
+prometheus.scrape "apiserver" {
+  scrape_interval   = "30s"
+  targets           = [{"__address__" = "kubernetes.default.svc:443", "job" = "apiserver"}]
+  scheme            = "https"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  tls_config {
+    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  }
+  forward_to = [prometheus.relabel.apiserver.receiver]
+}
+
+prometheus.relabel "apiserver" {
+  rule {
+    source_labels = ["__name__"]
+    regex         = "apiserver_(request_total|request_duration_seconds_(bucket|count|sum)|current_inflight_requests|request_terminations_total|storage_objects|admission_webhook_rejection_count)|etcd_(request_duration_seconds_(bucket|count|sum)|db_total_size_in_bytes)|workqueue_(depth|retries_total)|up"
+    action        = "keep"
+  }
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+// ---------------------------------------------------------------- logs
+
+loki.write "loki" {
+  endpoint {
+    url = sys.env("LOKI_PUSH_URL")
+  }
+  external_labels = {cluster = sys.env("CLUSTER")}
+}
+
+discovery.relabel "pod_logs" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_controller_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_version"]
+    regex         = "(.+)"
+    target_label  = "version"
+  }
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pod_logs.output
+  forward_to = [loki.process.pods.receiver]
+}
+
+// a level label for every line: read from JSON logs, guessed from the text of plain logs
+loki.process "pods" {
+  stage.match {
+    selector = "{namespace=~\".+\"} |~ \"^\\\\s*\\\\{\""
+    stage.json {
+      expressions = {level = "level"}
+    }
+  }
+  stage.match {
+    selector = "{namespace=~\".+\"} !~ \"^\\\\s*\\\\{\""
+    stage.regex {
+      expression = "(?i)\\b(?P<level>fatal|panic|critical|error|warn(?:ing)?|info|debug)\\b"
+    }
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if eq (ToLower .Value) \"warning\" }}warn{{ else if eq (ToLower .Value) \"critical\" }}fatal{{ else }}{{ ToLower .Value }}{{ end }}"
+  }
+  stage.labels {
+    values = {level = ""}
+  }
+  forward_to = [loki.write.loki.receiver]
+}
+
+// ---------------------------------------------------------------- kubernetes events (scheduling, probes, OOM, image pulls, node pressure)
+loki.source.kubernetes_events "events" {
+  log_format = "json"
+  forward_to = [loki.process.events.receiver]
+}
+
+loki.process "events" {
+  stage.static_labels {
+    values = {service = "kubernetes-events"}
+  }
+  forward_to = [loki.write.loki.receiver]
+}
+
+// ---------------------------------------------------------------- traces
+
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.processor.transform.cluster.input]
+  }
+}
+
+otelcol.processor.transform "cluster" {
+  error_mode = "ignore"
+  trace_statements {
+    context    = "resource"
+    statements = [string.join(["set(attributes[\"k8s.cluster.name\"], \"", sys.env("CLUSTER"), "\")"], "")]
+  }
+  output {
+    traces = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = sys.env("TEMPO_OTLP")
+    tls {
+      insecure = true
+    }
+  }
+}
