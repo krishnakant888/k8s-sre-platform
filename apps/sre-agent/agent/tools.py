@@ -251,7 +251,7 @@ def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform",
         epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
             continue
-        events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": obj, "message": e["message"][:300], "count": e.get("count", 1)})
+        events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": obj, "message": e["message"][:500], "count": e.get("count", 1)})
     events.sort(key=lambda e: e["ts"], reverse=True)
     return _trim({"cluster": cluster, "namespace": namespace, "events": events[:30]})
 
