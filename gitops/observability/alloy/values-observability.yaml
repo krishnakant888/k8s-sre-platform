@@ -1,0 +1,11 @@
+# The stores are in this cluster: write to them through their services. This collector also watches the stack itself
+# (without it nothing would alert when Mimir, Loki, Tempo or Grafana fail).
+alloy:
+  resources:
+    requests: {cpu: 150m, memory: 320Mi}
+    limits: {memory: 640Mi}
+  extraEnv:
+    - {name: CLUSTER, value: observability}
+    - {name: MIMIR_PUSH_URL, value: "http://mimir:8080/api/v1/push"}
+    - {name: LOKI_PUSH_URL, value: "http://loki:3100/loki/api/v1/push"}
+    - {name: TEMPO_OTLP, value: "tempo:4317"}

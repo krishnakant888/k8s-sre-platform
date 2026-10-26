@@ -1,0 +1,12 @@
+# The collector configuration is the same in every cluster (see the header of config.alloy), so it lives here once and
+# each cluster's alloy-config Application deploys it. No name hash: the Helm release refers to the ConfigMap by name, and
+# Alloy's config reloader picks up a changed file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: alloy-config
+    files:
+      - config.alloy

@@ -60,3 +60,18 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: sre-agent}
       ports:
         - {port: 8080, protocol: TCP}
+---
+# the collector scrapes pods of every namespace (any port), so a new workload needs no network policy change to be observed
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-egress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}

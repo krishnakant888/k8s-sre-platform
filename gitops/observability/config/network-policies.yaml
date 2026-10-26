@@ -30,9 +30,6 @@ spec:
   egress:
     - to:
         - namespaceSelector: {}
-      ports:
-        - {port: 8080, protocol: TCP}
-        - {port: 9090, protocol: TCP}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
