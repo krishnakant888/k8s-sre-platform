@@ -1,0 +1,14 @@
+# Used by scripts/faults.py (argo-policy): a privileged pod that the Pod Security admission of the sandbox namespace refuses.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: drill-privileged
+  namespace: sandbox
+  labels: {app.kubernetes.io/name: drill-privileged, app.kubernetes.io/version: "0.0.1", team: fault-drill}
+spec:
+  containers:
+    - name: app
+      image: busybox:1.37.0
+      command: [sleep, "3600"]
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+      securityContext: {privileged: true}
