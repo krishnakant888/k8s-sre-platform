@@ -5,6 +5,9 @@ LOKI_URL = os.getenv("LOKI_URL", "http://loki.observability:3100")
 TEMPO_URL = os.getenv("TEMPO_URL", "http://tempo.observability:3200")
 K8S_URL = os.getenv("K8S_URL", "https://kubernetes.default.svc")
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+# the cluster under investigation, when it is not the one the agent runs in: a read-only token and the API CA mounted from a Secret
+PLATFORM_K8S_URL = os.getenv("PLATFORM_K8S_URL", "")
+PLATFORM_DIR = os.getenv("PLATFORM_DIR", "/var/run/platform")
 
 WORKFLOW_NAMESPACE = os.getenv("WORKFLOW_NAMESPACE", "sre-agent")
 WORKFLOW_TEMPLATE = os.getenv("WORKFLOW_TEMPLATE", "incident-investigation")

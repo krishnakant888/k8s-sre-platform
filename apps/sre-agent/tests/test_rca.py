@@ -213,6 +213,28 @@ def test_k8s_get_sends_the_token_and_builds_its_own_client(monkeypatch, tmp_path
     assert pod["memory_limit"] == "192Mi" and pod["app_instance"] == "orders-api" and pod["last_terminated"]["reason"] == "OOMKilled"
 
 
+def test_pods_are_read_from_the_platform_cluster_with_its_own_token(monkeypatch, tmp_path):
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir(), remote.mkdir()
+    (local / "token").write_text("local-token")
+    (remote / "token").write_text("remote-token\n")
+    monkeypatch.setattr(tools.config, "SA_DIR", str(local))
+    monkeypatch.setattr(tools.config, "PLATFORM_DIR", str(remote))
+    monkeypatch.setattr(tools.config, "PLATFORM_K8S_URL", "https://platform-control-plane:6443")
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append((str(request.url), request.headers["authorization"]))
+        return httpx.Response(200, json={"items": []})
+
+    monkeypatch.setattr(tools, "_k8s_transport", httpx.MockTransport(handler))
+    tools.get_pod_status("demo", "orders-api")
+    tools.get_recent_deploys("orders-api")
+    assert seen[0] == ("https://platform-control-plane:6443/api/v1/namespaces/demo/pods", "Bearer remote-token")
+    assert seen[1][0].startswith("https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/prod-orders-api")
+    assert seen[1][1] == "Bearer local-token"
+
+
 def test_dependency_problem_is_application_level(monkeypatch):
     r = run(monkeypatch, bad=0.9, p99=1.2, slow_span={"name": "inventory.lookup", "duration_ms": 1000.0}, chaos=1)
     assert r.fault_domain.layer == "application"
