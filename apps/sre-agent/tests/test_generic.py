@@ -355,3 +355,5 @@ def test_one_workload_has_one_target_and_a_recent_twin_is_found():
     old = {"metadata": {"name": "incident-y", "creationTimestamp": rca.iso(NOW - 4000)}}
     assert incident.recent_duplicate([young], NOW) == "incident-x"
     assert incident.recent_duplicate([old], NOW) is None
+    failed = {"metadata": {"name": "incident-z", "creationTimestamp": rca.iso(NOW - 60)}, "status": {"phase": "Failed"}}
+    assert incident.recent_duplicate([failed], NOW) is None   # a failed investigation does not suppress the next one
