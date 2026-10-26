@@ -14,7 +14,7 @@ class TimelineEntry(BaseModel):
 
 
 class RootCause(BaseModel):
-    category: str = Field(description="one of: dependency_latency, dependency_errors, pod_crash, deploy_regression, resource_exhaustion, unknown")
+    category: str = Field(description="short snake_case cause, for example dependency_latency, dependency_errors, dependency_unreachable, pod_crash, probe_failure, config_error, image_pull_failure, scheduling_failure, resource_exhaustion, volume_full, node_failure, node_pressure, deploy_regression, gitops_sync_failure, ingress_backend_failure, control_plane_degraded, dns_failure, telemetry_gap, unknown")
     description: str
     confidence: str = Field(description="low, medium or high")
 
