@@ -22,8 +22,12 @@ VARS = {"cluster": ".+", "namespace": ".+", "node": ".+", "ingress": ".+", "proj
         "workload": "orders-api", "__interval": "5m", "__range": "1h", "__rate_interval": "5m"}
 
 
-def sub(expr):
-    for k, v in VARS.items():
+SINGLE = {"cluster": "platform", "namespace": "demo", "workload": "orders-api"}  # dashboards whose variables are single select
+
+
+def sub(expr, where=""):
+    vars_ = {**VARS, **(SINGLE if where.startswith("obs-workload") else {})}
+    for k, v in vars_.items():
         expr = expr.replace("${" + k + "}", v).replace("$" + k, v)
     return expr
 
@@ -63,7 +67,7 @@ def targets():
 
 bad = empty = ok = 0
 for where, title, kind, expr in targets():
-    e = sub(expr)
+    e = sub(expr, where)
     try:
         res = run_prom(e) if kind == "prom" else run_loki(e)
     except Exception as exc:  # noqa: BLE001
@@ -73,7 +77,15 @@ for where, title, kind, expr in targets():
             msg = exc.read().decode()[:200]
         print(f"ERROR  {where} / {title}: {msg}\n       {e[:160]}")
         continue
-    if not res:
+    if not res and where == "rules-generic":
+        # an alert query is empty while everything is healthy: it is only wrong when one of its metrics does not exist
+        missing = [m for m in sorted(set(re.findall(r"\b([a-z][a-z0-9_]*_[a-z0-9_]+)(?=[\{\[\)\s]|$)", e))) if m not in ("by", "on", "without", "group_left", "histogram_quantile", "vector", "count") and not run_prom(f'count({{__name__="{m}"}})')]
+        if missing:
+            bad += 1
+            print(f"MISSING METRIC  {title}: {missing}")
+        else:
+            ok += 1
+    elif not res:
         empty += 1
         print(f"EMPTY  {where} / {title}\n       {e[:160]}")
     else:

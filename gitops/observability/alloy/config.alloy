@@ -222,7 +222,9 @@ prometheus.relabel "kubelet" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 }
 
-// ---- API server: request rate, errors and latency, etcd, admission
+// ---- API server: request rate, errors and latency, etcd, admission.
+// Latency comes from apiserver_request_sli_duration_seconds (verb and scope only). The classic apiserver_request_duration_seconds and
+// etcd_request_duration_seconds buckets carry one series per resource type and were half of all series in a three cluster setup.
 prometheus.scrape "apiserver" {
   scrape_interval   = "30s"
   targets           = [{"__address__" = "kubernetes.default.svc:443", "job" = "apiserver"}]
@@ -237,7 +239,7 @@ prometheus.scrape "apiserver" {
 prometheus.relabel "apiserver" {
   rule {
     source_labels = ["__name__"]
-    regex         = "apiserver_(request_total|request_duration_seconds_(bucket|count|sum)|current_inflight_requests|request_terminations_total|storage_objects|admission_webhook_rejection_count)|etcd_(request_duration_seconds_(bucket|count|sum)|db_total_size_in_bytes)|workqueue_(depth|retries_total)|up"
+    regex         = "apiserver_(request_total|request_sli_duration_seconds_(bucket|count|sum)|current_inflight_requests|request_terminations_total|storage_objects|admission_webhook_rejection_count)|etcd_(request_duration_seconds_(count|sum)|db_total_size_in_bytes)|workqueue_(depth|retries_total)|up"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.mimir.receiver]

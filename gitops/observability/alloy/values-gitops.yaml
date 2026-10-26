@@ -1,8 +1,8 @@
 # Same as the platform cluster: the stores are in the observability cluster.
 alloy:
   resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 1536Mi}
   extraEnv:
     - {name: CLUSTER, value: gitops}
     - {name: MIMIR_PUSH_URL, value: "http://observability-worker:30900/api/v1/push"}

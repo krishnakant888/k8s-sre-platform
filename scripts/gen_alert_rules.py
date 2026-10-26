@@ -97,7 +97,7 @@ RULES = [
          "The API server of {{ $labels.cluster }} returns errors",
          "Over 5% of API requests fail with 5xx in {{ $labels.cluster }}: controllers, deployments and Argo CD are affected."),
         ("generic-apiserver-slow", "ApiServerSlow",
-         'histogram_quantile(0.99, sum by (cluster, le) (rate(apiserver_request_duration_seconds_bucket{verb!~"WATCH|CONNECT"}[5m]))) > 1',
+         'histogram_quantile(0.99, sum by (cluster, le) (rate(apiserver_request_sli_duration_seconds_bucket{verb!~"WATCH|CONNECT"}[5m]))) > 1',
          "10m", "ticket", {"service": "kube-apiserver"},
          "The API server of {{ $labels.cluster }} is slow",
          "The 99th percentile of API requests in {{ $labels.cluster }} is over one second."),
