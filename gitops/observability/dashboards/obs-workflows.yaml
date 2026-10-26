@@ -56,7 +56,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(argo_workflows_count{status=\"Running\"}) or vector(0)",
+              "expr": "sum(argo_workflows_gauge{phase=\"Running\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -110,7 +110,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(argo_workflows_count{status=\"Succeeded\"}) or vector(0)",
+              "expr": "sum(argo_workflows_gauge{phase=\"Succeeded\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -164,7 +164,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(argo_workflows_count{status=\"Failed\"}) or vector(0)",
+              "expr": "sum(argo_workflows_gauge{phase=\"Failed\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -222,7 +222,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(argo_workflows_count{status=\"Error\"}) or vector(0)",
+              "expr": "sum(argo_workflows_gauge{phase=\"Error\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -392,8 +392,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (status) (argo_workflows_count)",
-              "legendFormat": "{{status}}",
+              "expr": "sum by (phase) (argo_workflows_gauge)",
+              "legendFormat": "{{phase}}",
               "datasource": {
                 "type": "prometheus",
                 "uid": "mimir"

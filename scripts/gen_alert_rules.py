@@ -158,7 +158,7 @@ RULES = [
          "No telemetry from the gitops cluster",
          "The collector of the gitops cluster stopped sending metrics: Argo CD, which deploys everything, may be down."),
         ("generic-workflow-failed", "InvestigationWorkflowFailed",
-         'max by (cluster) (increase(argo_workflows_count{status=~"Failed|Error"}[10m])) > 0',
+         'max by (cluster) (increase(argo_workflows_total_count{phase=~"Failed|Error"}[10m])) > 0',
          "1m", "ticket", {"service": "sre-agent", "namespace": "sre-agent"},
          "An incident investigation workflow failed",
          "A workflow of the SRE agent ended in Failed or Error: an alert has no report, or only a partial one."),

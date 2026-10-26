@@ -344,6 +344,14 @@ def test_failed_job_pod_is_diagnosed_from_its_exit_and_log(monkeypatch):
     assert r.root_cause.category == "dependency_unreachable"
 
 
+def test_argo_applications_are_separate_targets():
+    from agent import incident
+    a = alert("ArgoAppUnhealthy", cluster="observability", name="fault-argo-degraded", service="argocd")
+    b = alert("ArgoAppUnhealthy", cluster="observability", name="prod-orders-api", service="argocd")
+    assert incident.target_key(a) != incident.target_key(b)
+    assert generic._workload(a["labels"]) == "fault-argo-degraded"
+
+
 def test_one_workload_has_one_target_and_a_recent_twin_is_found():
     from agent import incident
     a = alert("ContainerWaiting", cluster="platform", namespace="sandbox", pod="fault-crash-b48f849d-dvhtf")

@@ -21,11 +21,11 @@ data:
             settings:
               url: http://alert-webhook.sre-agent:8080/alertmanager
               httpMethod: POST
-              maxAlerts: 5
+              maxAlerts: 20
     policies:
       - orgId: 1
         receiver: sre-agent
-        group_by: [alertname, cluster, namespace, service, pod, node, ingress, name]
+        group_by: ["..."]   # every alert instance is its own notification: the agent deduplicates by workload itself
         group_wait: 10s
         group_interval: 1m
         repeat_interval: 4h
