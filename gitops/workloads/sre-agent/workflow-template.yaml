@@ -18,8 +18,8 @@ spec:
   podGC:
     strategy: OnWorkflowCompletion   # the logs of the steps are in Loki; the pods piled up by the hundred
   ttlStrategy:
-    secondsAfterSuccess: 86400
-    secondsAfterFailure: 259200
+    secondsAfterSuccess: 3600     # the report is a file on the volume; the Workflow object is 100+ KB of evidence
+    secondsAfterFailure: 14400
   arguments:
     parameters:
       - name: alert
