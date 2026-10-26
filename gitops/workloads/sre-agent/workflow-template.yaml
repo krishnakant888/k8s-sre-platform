@@ -79,8 +79,8 @@ spec:
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
           - {name: GITOPS_K8S_URL, value: "https://gitops-control-plane:6443"}
         resources:
-          requests: {cpu: 100m, memory: 128Mi}
-          limits: {memory: 512Mi}
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 1Gi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -120,8 +120,8 @@ spec:
           - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
         resources:
-          requests: {cpu: 100m, memory: 256Mi}
-          limits: {memory: 768Mi}
+          requests: {cpu: 100m, memory: 512Mi}
+          limits: {memory: 1536Mi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -151,8 +151,8 @@ spec:
         image: ghcr.io/krishnakant888/sre-agent:sha-031f149003877087538215d87a485f8cdd4814e4
         command: [python, -m, agent.steps, store]
         resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {memory: 256Mi}
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -187,8 +187,8 @@ spec:
           - name: NOTIFY_WEBHOOK_URL
             valueFrom: {secretKeyRef: {name: notify-webhook, key: url, optional: true}}
         resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {memory: 256Mi}
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

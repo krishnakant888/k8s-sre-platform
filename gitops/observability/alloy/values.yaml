@@ -42,5 +42,5 @@ serviceMonitor:
 # the sidecar that reloads the config, the chart default is far larger than it uses
 configReloader:
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 128Mi}

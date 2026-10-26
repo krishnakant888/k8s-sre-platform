@@ -12,8 +12,8 @@ controller:
     port: 9090
     secure: false   # plain http, the collector scrapes it inside the cluster
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 1Gi}
   podAnnotations:
     prometheus.io/scrape: "true"
     prometheus.io/port: "9090"
@@ -36,8 +36,8 @@ executor:
   image:
     nonroot: true
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 128Mi}
+    requests: {cpu: 25m, memory: 256Mi}
+    limits: {memory: 512Mi}
   securityContext:
     runAsNonRoot: true
     runAsUser: 10001
@@ -62,8 +62,8 @@ server:
   podAnnotations:
     prometheus.io/scrape: "false"
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
   ingress:
     enabled: true
     ingressClassName: nginx
