@@ -340,7 +340,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "histogram_quantile(0.99, sum by (cluster, le) (rate(apiserver_request_duration_seconds_bucket{verb!~\"WATCH|CONNECT\"}[5m]))) > 1", instant: true}
+                model: {refId: A, expr: "histogram_quantile(0.99, sum by (cluster, le) (rate(apiserver_request_sli_duration_seconds_bucket{verb!~\"WATCH|CONNECT\"}[5m]))) > 1", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}

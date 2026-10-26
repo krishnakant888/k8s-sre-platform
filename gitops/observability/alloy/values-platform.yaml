@@ -2,8 +2,8 @@
 # (gitops/observability-cluster/exposure) of the node that runs them. kind nodes share a Docker network, which resolves container names.
 alloy:
   resources:
-    requests: {cpu: 200m, memory: 384Mi}
-    limits: {memory: 768Mi}
+    requests: {cpu: 200m, memory: 768Mi}
+    limits: {memory: 2Gi}
   extraEnv:
     - {name: CLUSTER, value: platform}
     - {name: MIMIR_PUSH_URL, value: "http://observability-worker:30900/api/v1/push"}

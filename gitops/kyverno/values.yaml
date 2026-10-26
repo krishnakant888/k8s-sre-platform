@@ -1,25 +1,25 @@
-# single replicas, this is a laptop
+# single replicas, this is a laptop; memory sized for a 32 GB host (WSL given 20 GB), see README
 admissionController:
   replicas: 1
   container:
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {memory: 768Mi}
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 1536Mi}
 backgroundController:
   replicas: 1
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 1Gi}
 cleanupController:
   replicas: 1
   resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {memory: 512Mi}
 reportsController:
   replicas: 1
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 1Gi}
 features:
   policyExceptions:
     enabled: false

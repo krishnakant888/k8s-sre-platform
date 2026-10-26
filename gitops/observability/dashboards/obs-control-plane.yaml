@@ -207,7 +207,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (cluster, verb, le) (rate(apiserver_request_duration_seconds_bucket{cluster=~\"$cluster\", verb!~\"WATCH|CONNECT\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (cluster, verb, le) (rate(apiserver_request_sli_duration_seconds_bucket{cluster=~\"$cluster\", verb!~\"WATCH|CONNECT\"}[5m])))",
               "legendFormat": "{{cluster}} {{verb}}",
               "datasource": {
                 "type": "prometheus",
@@ -443,7 +443,7 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "Request latency p99",
+          "title": "Request latency (average)",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -452,8 +452,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (cluster, type, le) (rate(etcd_request_duration_seconds_bucket{cluster=~\"$cluster\"}[5m])))",
-              "legendFormat": "{{cluster}} {{type}}",
+              "expr": "sum by (cluster) (rate(etcd_request_duration_seconds_sum{cluster=~\"$cluster\"}[5m])) / sum by (cluster) (rate(etcd_request_duration_seconds_count{cluster=~\"$cluster\"}[5m]))",
+              "legendFormat": "{{cluster}}",
               "datasource": {
                 "type": "prometheus",
                 "uid": "mimir"

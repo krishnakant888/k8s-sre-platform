@@ -50,8 +50,8 @@ spec:
                 - -c
                 - find /reports -mindepth 1 -maxdepth 1 -type d -mtime +"${RETENTION_DAYS}" -print -exec rm -rf {} +
               resources:
-                requests: {cpu: 10m, memory: 16Mi}
-                limits: {memory: 64Mi}
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

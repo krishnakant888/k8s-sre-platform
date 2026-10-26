@@ -261,14 +261,14 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     elif family in ("controlplane", "dns"):
         a_err = _q(f'sum by (code) (rate(apiserver_request_total{{cluster="{cluster}", code=~"5.."}}[2m]))')
         a_ratio = _q(f'sum(rate(apiserver_request_total{{cluster="{cluster}", code=~"5.."}}[2m])) / sum(rate(apiserver_request_total{{cluster="{cluster}"}}[2m]))')
-        a_p99 = _q(f'histogram_quantile(0.99, sum by (le) (rate(apiserver_request_duration_seconds_bucket{{cluster="{cluster}", verb!~"WATCH|CONNECT"}}[2m])))')
-        etcd = _q(f'histogram_quantile(0.99, sum by (le) (rate(etcd_request_duration_seconds_bucket{{cluster="{cluster}"}}[2m])))')
+        a_p99 = _q(f'histogram_quantile(0.99, sum by (le) (rate(apiserver_request_sli_duration_seconds_bucket{{cluster="{cluster}", verb!~"WATCH|CONNECT"}}[2m])))')
+        etcd = _q(f'sum(rate(etcd_request_duration_seconds_sum{{cluster="{cluster}"}}[2m])) / sum(rate(etcd_request_duration_seconds_count{{cluster="{cluster}"}}[2m]))')
         dns = _q(f'sum(rate(coredns_dns_responses_total{{cluster="{cluster}", rcode="SERVFAIL"}}[2m])) / sum(rate(coredns_dns_responses_total{{cluster="{cluster}"}}[2m]))')
         sig["apiserver_error_ratio"] = _num(a_ratio, "max") or 0.0
         sig["apiserver_p99"] = _num(a_p99, "max") or 0.0
         sig["etcd_p99"] = _num(etcd, "max") or 0.0
         sig["dns_servfail"] = _num(dns, "max") or 0.0
-        add("mimir", f"apiserver / etcd / coredns in {cluster}", f"API 5xx ratio peaked at {sig['apiserver_error_ratio']:.1%}, API p99 {sig['apiserver_p99'] * 1000:.0f} ms, etcd p99 {sig['etcd_p99'] * 1000:.0f} ms, DNS SERVFAIL ratio {sig['dns_servfail']:.1%}")
+        add("mimir", f"apiserver / etcd / coredns in {cluster}", f"API 5xx ratio peaked at {sig['apiserver_error_ratio']:.1%}, API p99 {sig['apiserver_p99'] * 1000:.0f} ms, etcd average {sig['etcd_p99'] * 1000:.0f} ms, DNS SERVFAIL ratio {sig['dns_servfail']:.1%}")
         prefix = "coredns" if family == "dns" else "kube-apiserver"
         pods_and_events(prefix, "kube-system")
         node_facts(sorted({p["node"] for p in sig["pods"] if p.get("node")}))
@@ -552,7 +552,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
     if family == "controlplane":
         why = "etcd is slow" if sig.get("etcd_p99", 0) > 0.5 else ("a node of the control plane is under pressure" if sig.get("node_pressure") else "no single component stands out")
         return Diag("control_plane_degraded", "infrastructure", f"API server of the {cluster} cluster", "medium", f"The API server of {cluster} returns errors or answers slowly ({why}).",
-                    f"The API server of the {cluster} cluster has a 5xx ratio of {sig.get('apiserver_error_ratio', 0):.1%} and p99 {sig.get('apiserver_p99', 0) * 1000:.0f} ms (etcd p99 {sig.get('etcd_p99', 0) * 1000:.0f} ms). Controllers, deployments, Argo CD and every kubectl call are affected; running pods keep serving, but nothing can change.",
+                    f"The API server of the {cluster} cluster has a 5xx ratio of {sig.get('apiserver_error_ratio', 0):.1%} and p99 {sig.get('apiserver_p99', 0) * 1000:.0f} ms (etcd average {sig.get('etcd_p99', 0) * 1000:.0f} ms). Controllers, deployments, Argo CD and every kubectl call are affected; running pods keep serving, but nothing can change.",
                     [f"API 5xx {sig.get('apiserver_error_ratio', 0):.1%}", why], [f"{k} -n kube-system get pods -l component=kube-apiserver", f"docker exec {cluster}-control-plane crictl logs $(docker exec {cluster}-control-plane crictl ps -a --name kube-apiserver -q | head -1) | tail -30", "Check the control plane node for disk or memory pressure"],
                     ["Run an HA control plane in the cloud, and alert on etcd latency and database size"], [f"{k} get --raw /readyz  # ok"], "No deployments or scaling can happen until the API server recovers.")
 

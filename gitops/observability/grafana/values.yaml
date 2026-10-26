@@ -27,8 +27,8 @@ initChownData:
   enabled: false   # fsGroup already makes the PVC writable, and the root chown fails with dropped caps
 
 resources:
-  requests: {cpu: 100m, memory: 256Mi}
-  limits: {memory: 512Mi}
+  requests: {cpu: 100m, memory: 512Mi}
+  limits: {memory: 1536Mi}
 
 securityContext:
   runAsNonRoot: true
@@ -76,8 +76,8 @@ sidecar:
     labelValue: "1"
     searchNamespace: observability
   resources:
-    requests: {cpu: 20m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 20m, memory: 256Mi}
+    limits: {memory: 512Mi}
 
 datasources:
   datasources.yaml:

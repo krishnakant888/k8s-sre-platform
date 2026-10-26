@@ -40,4 +40,11 @@ limits_config:
   retention_period: 168h
   allow_structured_metadata: true
   volume_enabled: true
-  max_query_series: 5000
+  max_query_series: 20000                  # 5000
+  # 4x Loki's defaults (shown after each): three clusters tail every container, plus Kubernetes events
+  ingestion_rate_mb: 16                    # 4
+  ingestion_burst_size_mb: 24              # 6
+  per_stream_rate_limit: 12MB              # 3MB
+  per_stream_rate_limit_burst: 60MB        # 15MB
+  max_global_streams_per_user: 20000       # 5000
+  max_entries_limit_per_query: 20000       # 5000
