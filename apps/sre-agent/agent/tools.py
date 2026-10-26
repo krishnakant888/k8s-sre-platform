@@ -200,40 +200,58 @@ def _k8s_get(path: str, cluster: str = "") -> dict:
 
 
 def get_pod_status(namespace: str, name_prefix: str, cluster: str = "platform") -> dict:
-    """Phase, restarts and last termination reason of pods whose name starts with name_prefix, in the named cluster."""
+    """Phase, restarts, waiting reason and termination of pods whose name starts with name_prefix, in the named cluster.
+    A pod that was never scheduled has no container statuses; it still gets an entry, with the scheduler's reason in `waiting`."""
     pods = []
     for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", cluster=cluster)["items"]:
         if not p["metadata"]["name"].startswith(name_prefix):
             continue
         limits = {c["name"]: c.get("resources", {}).get("limits", {}).get("memory") for c in p["spec"].get("containers", [])}
-        for cs in p["status"].get("containerStatuses", []):
-            last = cs.get("lastState", {}).get("terminated", {})
+        common = {
+            "pod": p["metadata"]["name"],
+            "phase": p["status"].get("phase"),
+            "started_at": p["status"].get("startTime"),
+            "node": p["spec"].get("nodeName"),
+            "app_instance": p["metadata"].get("labels", {}).get("app.kubernetes.io/instance"),
+        }
+        statuses = p["status"].get("containerStatuses", [])
+        if not statuses:
+            cond = next((c for c in p["status"].get("conditions", []) if c.get("type") == "PodScheduled" and c.get("status") == "False"), {})
+            pods.append({**common, "ready": False, "restarts": 0, "waiting": cond.get("reason") or p["status"].get("reason"), "waiting_message": (cond.get("message") or p["status"].get("message") or "")[:200],
+                         "last_terminated": None, "memory_limit": next(iter(limits.values()), None)})
+            continue
+        for cs in statuses:
+            # a container that was restarted shows its last exit in lastState; one that is not restarted (a Job pod) shows it in state
+            term = cs.get("lastState", {}).get("terminated") or cs.get("state", {}).get("terminated") or {}
+            waiting = cs["state"].get("waiting", {})
             pods.append(
                 {
-                    "pod": p["metadata"]["name"],
-                    "phase": p["status"]["phase"],
+                    **common,
                     "ready": cs["ready"],
                     "restarts": cs["restartCount"],
-                    "waiting": cs["state"].get("waiting", {}).get("reason"),
-                    "last_terminated": {"reason": last.get("reason"), "exit_code": last.get("exitCode"), "at": last.get("finishedAt")} if last else None,
-                    "started_at": p["status"].get("startTime"),
+                    "waiting": waiting.get("reason"),
+                    "waiting_message": (waiting.get("message") or "")[:200],
+                    "last_terminated": {"reason": term.get("reason"), "exit_code": term.get("exitCode"), "at": term.get("finishedAt")} if term else None,
                     "memory_limit": limits.get(cs.get("name")),
-                    "node": p["spec"].get("nodeName"),
-                    "app_instance": p["metadata"].get("labels", {}).get("app.kubernetes.io/instance"),
                 }
             )
     return _trim({"cluster": cluster, "namespace": namespace, "pods": pods})
 
 
-def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform") -> dict:
+def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform", name_prefix: str = "") -> dict:
+    """Recent events of a namespace, newest first. With name_prefix only events about objects of that name are kept, before the list is
+    cut: in a busy namespace the newest 30 events of everything would otherwise push out the ones about the workload under investigation."""
     cutoff = time.time() - _clamp_minutes(minutes) * 60
     events = []
-    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", cluster=cluster)["items"]:
-        ts = e.get("lastTimestamp") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
+    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events?limit=1000", cluster=cluster)["items"]:
+        obj = e["involvedObject"]["name"]
+        if name_prefix and not (obj.startswith(name_prefix) or name_prefix.startswith(obj)):
+            continue
+        ts = e.get("lastTimestamp") or (e.get("series") or {}).get("lastObservedTime") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
         epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
             continue
-        events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": e["involvedObject"]["name"], "message": e["message"][:200]})
+        events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": obj, "message": e["message"][:300], "count": e.get("count", 1)})
     events.sort(key=lambda e: e["ts"], reverse=True)
     return _trim({"cluster": cluster, "namespace": namespace, "events": events[:30]})
 
@@ -361,7 +379,7 @@ TOOLS = {
         get_k8s_events,
         {
             "description": "Recent Kubernetes events in a namespace (kills, probe failures, scheduling).",
-            "input_schema": {"type": "object", "properties": {"namespace": {"type": "string"}, "minutes": {"type": "integer"}, "cluster": {"type": "string", "description": "platform (default), observability or gitops"}}, "required": ["namespace"]},
+            "input_schema": {"type": "object", "properties": {"namespace": {"type": "string"}, "minutes": {"type": "integer"}, "cluster": {"type": "string", "description": "platform (default), observability or gitops"}, "name_prefix": {"type": "string", "description": "only events about objects whose name starts with this"}}, "required": ["namespace"]},
         },
     ),
     "get_argocd_app": (
