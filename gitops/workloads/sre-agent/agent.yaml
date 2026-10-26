@@ -1,10 +1,12 @@
 # The investigation steps run as Argo Workflow pods under this service account (see workflow-template.yaml).
+# The agent runs in the monitoring cluster, next to Loki, Mimir and Tempo. It reads the platform cluster (pods, events)
+# with the read-only token in the Secret platform-reader, which bootstrap.py creates from a service account there.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: sre-agent
   namespace: sre-agent
-automountServiceAccountToken: true   # needed: reads the cluster API, and the Argo executor reports step results
+automountServiceAccountToken: true   # needed: reads Argo CD applications here, and the Argo executor reports step results
 ---
 # the webhook can start investigations and nothing else
 apiVersion: v1
@@ -105,18 +107,6 @@ spec:
   ports:
     - {name: http, port: 8080, targetPort: http}
 ---
-# Grafana alerting runs in the monitoring cluster and posts here: monitoring -> platform-control-plane:30880
-apiVersion: v1
-kind: Service
-metadata:
-  name: alert-webhook-external
-  namespace: sre-agent
-spec:
-  type: NodePort
-  selector: {app.kubernetes.io/name: alert-webhook}
-  ports:
-    - {name: http, port: 8080, targetPort: http, nodePort: 30880}
----
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -126,3 +116,26 @@ spec:
   minAvailable: 1
   selector:
     matchLabels: {app.kubernetes.io/name: alert-webhook}
+---
+# deploy history: read-only on the Argo CD Applications (this Argo CD deploys both clusters)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sre-agent-read-applications
+  namespace: argocd
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sre-agent-read-applications
+  namespace: argocd
+subjects:
+  - {kind: ServiceAccount, name: sre-agent, namespace: sre-agent}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sre-agent-read-applications

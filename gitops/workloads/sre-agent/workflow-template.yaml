@@ -4,7 +4,7 @@
 #   settle -> collect -> analyze -> store -> notify
 #
 # Retries and timeouts per step replace what the old Temporal activities had. A failed step is retried with
-# backoff, and the Workflow object keeps the history (kubectl -n sre-agent get wf, or the UI at workflows.localhost).
+# backoff, and the Workflow object keeps the history (kubectl -n sre-agent get wf, or the UI at workflows.localhost:9080).
 # Data moves between steps as workflow parameters, written to /tmp/in as raw artifacts (no object store needed).
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -24,6 +24,8 @@ spec:
   volumes:
     - name: tmp
       emptyDir: {}
+    - name: platform-reader   # read-only token and CA of the platform cluster, created by bootstrap.py
+      secret: {secretName: platform-reader}
   templates:
     - name: investigate
       steps:
@@ -71,10 +73,8 @@ spec:
       container:
         image: ghcr.io/krishnakant888/sre-agent:sha-82261f3d7480f17fd3ae1f181660005471c7edcb
         command: [python, -m, agent.steps, collect]
-        env:   # the stores run in the monitoring cluster (NodePorts, see gitops/monitoring/exposure)
-          - {name: MIMIR_URL, value: "http://monitoring-control-plane:30900/prometheus"}
-          - {name: LOKI_URL, value: "http://monitoring-control-plane:30310"}
-          - {name: TEMPO_URL, value: "http://monitoring-control-plane:30320"}
+        env:   # Mimir, Loki and Tempo are in this cluster (agent/config.py has their addresses); pods and events come from the platform cluster
+          - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
         resources:
           requests: {cpu: 100m, memory: 128Mi}
           limits: {memory: 512Mi}
@@ -84,6 +84,7 @@ spec:
           capabilities: {drop: [ALL]}
         volumeMounts:
           - {name: tmp, mountPath: /tmp}
+          - {name: platform-reader, mountPath: /var/run/platform, readOnly: true}
       outputs:
         parameters:
           - name: ctx
@@ -110,6 +111,7 @@ spec:
         command: [python, -m, agent.steps, analyze]
         env:
           - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
+          - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
           - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
         resources:
@@ -121,6 +123,7 @@ spec:
           capabilities: {drop: [ALL]}
         volumeMounts:
           - {name: tmp, mountPath: /tmp}
+          - {name: platform-reader, mountPath: /var/run/platform, readOnly: true}
       outputs:
         parameters:
           - name: report

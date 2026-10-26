@@ -1,12 +1,12 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: prod-argo-workflows
+  name: argo-workflows
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  project: prod-platform
+  project: platform
   sources:
     - repoURL: https://argoproj.github.io/argo-helm
       chart: argo-workflows
@@ -19,7 +19,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    name: platform   # registered in this Argo CD by bootstrap.py
+    server: https://kubernetes.default.svc
     namespace: argo-workflows
   syncPolicy:
     automated:
