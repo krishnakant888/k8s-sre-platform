@@ -1,0 +1,96 @@
+# A deliberately plain web app: no metrics endpoint, no scrape annotations, no tracing, plain-text access logs. The only things
+# it carries are the standard labels (name, version, team) and resources. Everything else about observing it
+# (metrics from the kubelet and kube-state-metrics, ingress traffic, logs, events, alerts, dashboards, RCA) comes from the platform.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dummy-shop
+  namespace: sandbox
+  labels: &labels
+    app.kubernetes.io/name: dummy-shop
+    app.kubernetes.io/version: "1.0.0"
+    team: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: dummy-shop}
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: dummy-shop}
+      containers:
+        - name: web
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dummy-shop
+  namespace: sandbox
+  labels: {app.kubernetes.io/name: dummy-shop}
+spec:
+  selector: {app.kubernetes.io/name: dummy-shop}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dummy-shop
+  namespace: sandbox
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dummy.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dummy-shop
+                port: {name: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dummy-shop
+  namespace: sandbox
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: dummy-shop}
