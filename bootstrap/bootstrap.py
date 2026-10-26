@@ -193,11 +193,21 @@ def cluster_exists(cluster):
 def create_cluster(cluster):
     if cluster_exists(cluster):
         print(f"cluster {cluster} already exists, leaving it alone")
+        keep_running(cluster)
         return
     run("kind", "create", "cluster", "--config", str(CLUSTERS[cluster]["kind_config"]))
+    keep_running(cluster)
     # kind has no CNI here (see the kind configs); Calico provides pod networking and NetworkPolicy
     kubectl(cluster, "apply", "-f", CALICO_MANIFEST)
     kubectl(cluster, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s")
+
+
+def keep_running(cluster):
+    """kind nodes are plain containers: when the Docker daemon restarts (a WSL2 restart, a reboot) they stay stopped and
+    the cluster looks gone. A restart policy brings them back with the daemon, and the cluster recovers on its own."""
+    nodes = run("docker", "ps", "-a", "--filter", f"label=io.x-k8s.kind.cluster={cluster}", "--format", "{{.Names}}", capture=True).stdout.split()
+    if nodes:
+        run("docker", "update", "--restart", "unless-stopped", *nodes, capture=True)
 
 
 def install_argocd(cluster):

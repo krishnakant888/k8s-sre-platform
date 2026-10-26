@@ -126,6 +126,8 @@ Covered: crash loops by cause (missing setting, read-only filesystem, dependency
 
 ## Observability
 
+**If the clusters look gone after a restart.** The kind nodes are Docker containers. `bootstrap.py` gives them a restart policy, so they come back with Docker. On WSL2 also set `vmIdleTimeout=-1` in `%UserProfile%\.wslconfig` (and give the VM enough memory, see Sizing); otherwise WSL stops the VM when no terminal is open. Clusters created before this was added: run `python3 bootstrap/bootstrap.py` once, it only adds the policy to clusters that exist.
+
 ### Sizing
 
 Requests and limits are set for a 32 GB workstation (the three clusters use about 9 GB when idle, so 12 GB is the practical minimum) with WSL2 given 12 GB (`%UserProfile%\.wslconfig`: `memory=12GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
