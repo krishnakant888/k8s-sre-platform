@@ -1,5 +1,10 @@
-# How the production cluster talks to this one. kind nodes share a Docker network, so production reaches
-# observability-control-plane:<nodePort> directly. NodePorts are open on every node of this cluster.
+# How the other clusters talk to this one. kind nodes share a Docker network, so they reach the NodePorts of the node that
+# runs the stores (observability-worker:<nodePort>) directly.
+#
+# externalTrafficPolicy: Local keeps the real source address of the caller. With the default (Cluster), kube-proxy
+# rewrites it to the address of the node that received the packet, which Calico's IP-in-IP tunnel turns into a pod-network
+# address, and the network policy (it admits the Docker network 172.16.0.0/12 only) would drop it. The cost: the NodePort
+# answers only on the node that runs the pod. With more nodes use an internal load balancer instead.
 #   30900  mimir   metrics push (/api/v1/push) and query (/prometheus)
 #   30310  loki    logs push and query
 #   30320  tempo   trace query
@@ -11,6 +16,7 @@ metadata:
   namespace: observability
 spec:
   type: NodePort
+  externalTrafficPolicy: Local
   selector: {app.kubernetes.io/name: mimir}
   ports:
     - {name: http, port: 8080, targetPort: http, nodePort: 30900}
@@ -22,6 +28,7 @@ metadata:
   namespace: observability
 spec:
   type: NodePort
+  externalTrafficPolicy: Local
   selector: {app.kubernetes.io/name: loki}
   ports:
     - {name: http, port: 3100, targetPort: http, nodePort: 30310}
@@ -33,6 +40,7 @@ metadata:
   namespace: observability
 spec:
   type: NodePort
+  externalTrafficPolicy: Local
   selector: {app.kubernetes.io/name: tempo}
   ports:
     - {name: http, port: 3200, targetPort: http, nodePort: 30320}
