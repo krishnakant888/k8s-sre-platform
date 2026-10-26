@@ -480,6 +480,12 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                         [f"throttled periods up to {sig.get('throttle', 0):.0%}", "no restarts needed: the symptom is latency"], [f"Raise or remove the CPU limit of `{wl}` in {manifest} (keep a request), or add replicas"],
                         ["Prefer CPU requests without limits for latency-sensitive services, and scale on CPU with an HPA"], [f"rate(container_cpu_cfs_throttled_periods_total{{cluster=\"{cluster}\",namespace=\"{ns}\",pod=~\"{wl}-.*\"}}[5m]) is near 0"], f"{wl} responds slower than it should.")
 
+        not_ready_by_probe = [e for e in _ev(sig, "Unhealthy") if "readiness probe failed" in e["message"].lower()]
+        if not_ready_by_probe and pod and pod.get("phase") == "Running" and not pod.get("ready") and reason != "CrashLoopBackOff":
+            return Diag("probe_failure", "application", f"readiness probe of {wl}", "high", "The pod runs but its readiness probe fails, so it never receives traffic.",
+                        f"{where} is Running but not Ready: {not_ready_by_probe[0]['message'][:160]}. Kubernetes keeps it out of the Service until the probe answers, so the workload has fewer (or no) usable replicas and a rollout cannot complete. The process itself is up" + (f"; the last request in its log is `{top}`" if top else "") + ".",
+                        ["Unhealthy events say the readiness probe failed", "the container is running and not restarting"], [f"{k} -n {ns} describe pod {pod.get('pod', wl)} | grep -A6 Readiness  # path, port, timeout", f"{k} -n {ns} logs {pod.get('pod', wl)} --tail=20  # what the probe request got", f"Fix the probe path/port in {manifest}, or the endpoint it calls"],
+                        ["Make the readiness endpoint report what the pod needs to serve (not a path that may not exist), and test it in CI"], [f"{k} -n {ns} get pods  # READY 1/1"], f"{wl} serves nothing until it is ready.")
         killed_by_probe = [e for e in _ev(sig, "Unhealthy") if "liveness probe failed" in e["message"].lower() or "startup probe failed" in e["message"].lower()]
         if killed_by_probe and (reason == "CrashLoopBackOff" or sig.get("restarts")) and exit_code in (0, 137, 143, None):
             return Diag("probe_failure", "application", f"liveness probe of {wl}", "high", "The kubelet keeps killing a running process because its liveness probe fails.",

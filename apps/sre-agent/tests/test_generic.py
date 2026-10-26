@@ -332,6 +332,12 @@ def test_a_liveness_probe_that_kills_a_healthy_process_is_not_called_an_exit_cod
     assert r.root_cause.category == "probe_failure"
 
 
+def test_readiness_probe_that_never_passes(monkeypatch):
+    fake(monkeypatch, pods=[{**pod("fault-sts-notready-0", ready=False), "phase": "Running"}], events=[event("Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 404", obj="fault-sts-notready-0")], logs=[("GET /nope HTTP/1.1 404", 4)])
+    r = investigate(alert("StatefulSetReplicasNotReady", cluster="platform", namespace="sandbox", statefulset="fault-sts-notready"))
+    assert r.root_cause.category == "probe_failure" and r.fault_domain.layer == "application"
+
+
 def test_failed_job_pod_is_diagnosed_from_its_exit_and_log(monkeypatch):
     fake(monkeypatch, pods=[{**pod("fault-job-fail-z97w6", ready=False, term=("Error", 2)), "phase": "Failed"}], logs=[("migration failed: connection refused to db:5432", 1)])
     r = investigate(alert("JobFailed", cluster="platform", namespace="sandbox", job_name="fault-job-fail"))
