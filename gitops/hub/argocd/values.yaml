@@ -1,4 +1,4 @@
-# The one Argo CD, in its own cluster (gitops). It deploys the platform and the monitoring clusters, which bootstrap.py
+# The one Argo CD, in its own cluster (gitops). It deploys the platform and the observability clusters, which bootstrap.py
 # registers in it, and itself. It lives apart from both on purpose: it keeps working while production or the
 # observability stack is down or being rebuilt, and neither of them has to host the thing that deploys it.
 #

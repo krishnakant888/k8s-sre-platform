@@ -1,4 +1,4 @@
-# AppProjects for the apps that run in the platform cluster. They are created in the monitoring cluster, where the
+# AppProjects for the apps that run in the platform cluster. They are created in the observability cluster, where the
 # single Argo CD runs, and every destination is the registered cluster named "platform".
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -30,7 +30,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Alloy and kube-state-metrics in the platform cluster. The LGTM stack and Grafana run in the monitoring cluster.
+  description: Alloy and kube-state-metrics in the platform cluster. The LGTM stack and Grafana run in the observability cluster.
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://grafana.github.io/helm-charts

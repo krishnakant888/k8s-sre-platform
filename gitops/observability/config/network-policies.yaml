@@ -1,6 +1,6 @@
 # cross-namespace and API server access for the observability namespace of the production cluster.
 # default-deny and same-namespace traffic come from platform-base.
-# Mimir, Loki, Tempo and Grafana are not here: they run in the monitoring cluster (gitops/monitoring).
+# Mimir, Loki, Tempo and Grafana are not here: they run in the observability cluster (gitops/observability-cluster).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -55,12 +55,12 @@ spec:
         - {port: 4317, protocol: TCP}
         - {port: 4318, protocol: TCP}
 ---
-# alloy ships metrics, logs and traces to the monitoring cluster through NodePorts on its kind nodes
+# alloy ships metrics, logs and traces to the observability cluster through NodePorts on its kind nodes
 # (addresses on the shared Docker network, 172.16.0.0/12). In a cloud setup this is an internal load balancer.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-ship-to-monitoring
+  name: allow-ship-to-observability
   namespace: observability
 spec:
   podSelector:

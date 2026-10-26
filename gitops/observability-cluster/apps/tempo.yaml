@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: exposure
+  name: tempo
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -12,9 +12,9 @@ spec:
   source:
     repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
     targetRevision: main
-    path: gitops/monitoring/exposure
+    path: gitops/observability/tempo
   destination:
-    name: monitoring   # registered in this Argo CD by bootstrap.py
+    name: observability   # registered in this Argo CD by bootstrap.py
     namespace: observability
   syncPolicy:
     automated:

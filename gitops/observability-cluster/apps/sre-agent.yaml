@@ -14,7 +14,7 @@ spec:
     targetRevision: main
     path: gitops/workloads/sre-agent
   destination:
-    name: monitoring   # registered in this Argo CD by bootstrap.py
+    name: observability   # registered in this Argo CD by bootstrap.py
     namespace: sre-agent
   syncPolicy:
     automated:

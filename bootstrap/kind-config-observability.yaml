@@ -1,6 +1,6 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: monitoring
+name: observability
 networking:
   # same reason as the production cluster: kindnet does not enforce NetworkPolicy, bootstrap.py installs Calico
   disableDefaultCNI: true

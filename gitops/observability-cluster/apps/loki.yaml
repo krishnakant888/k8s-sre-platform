@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: mimir
+  name: loki
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "1"
@@ -12,9 +12,9 @@ spec:
   source:
     repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
     targetRevision: main
-    path: gitops/observability/mimir
+    path: gitops/observability/loki
   destination:
-    name: monitoring   # registered in this Argo CD by bootstrap.py
+    name: observability   # registered in this Argo CD by bootstrap.py
     namespace: observability
   syncPolicy:
     automated:
