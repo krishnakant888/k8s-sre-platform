@@ -422,7 +422,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster, name, dest_name, project) (argocd_app_info{sync_status!=\"Synced\"}) == 1", instant: true}
+                model: {refId: A, expr: "max by (cluster, name, dest_server, project) (argocd_app_info{sync_status!=\"Synced\"}) == 1", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -432,7 +432,7 @@ data:
             labels: {severity: ticket, service: argocd}
             annotations:
               summary: "Argo CD app {{ $labels.name }} is out of sync"
-              description: "{{ $labels.name }} (project {{ $labels.project }}, destination {{ $labels.dest_name }}) differs from Git for 15 minutes."
+              description: "{{ $labels.name }} (project {{ $labels.project }}, destination {{ $labels.dest_server }}) differs from Git for 15 minutes."
           - uid: generic-argocd-unhealthy
             title: ArgoAppUnhealthy
             condition: C
@@ -440,7 +440,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster, name, dest_name, project, health_status) (argocd_app_info{health_status=~\"Degraded|Missing\"}) == 1", instant: true}
+                model: {refId: A, expr: "max by (cluster, name, dest_server, project, health_status) (argocd_app_info{health_status=~\"Degraded|Missing\"}) == 1", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -450,7 +450,7 @@ data:
             labels: {severity: ticket, service: argocd}
             annotations:
               summary: "Argo CD app {{ $labels.name }} is {{ $labels.health_status }}"
-              description: "The resources of {{ $labels.name }} (destination {{ $labels.dest_name }}) are not healthy."
+              description: "The resources of {{ $labels.name }} (destination {{ $labels.dest_server }}) are not healthy."
           - uid: generic-argocd-sync-failing
             title: ArgoSyncFailing
             condition: C
@@ -458,7 +458,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "sum by (cluster, name, dest_name) (increase(argocd_app_sync_total{phase=~\"Error|Failed\"}[15m])) > 0", instant: true}
+                model: {refId: A, expr: "sum by (cluster, name, dest_server) (increase(argocd_app_sync_total{phase=~\"Error|Failed\"}[15m])) > 0", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -468,7 +468,7 @@ data:
             labels: {severity: ticket, service: argocd}
             annotations:
               summary: "Argo CD sync of {{ $labels.name }} is failing"
-              description: "A sync of {{ $labels.name }} (destination {{ $labels.dest_name }}) ended in an error in the last 15 minutes."
+              description: "A sync of {{ $labels.name }} (destination {{ $labels.dest_server }}) ended in an error in the last 15 minutes."
       - orgId: 1
         name: telemetry
         folder: Alerts

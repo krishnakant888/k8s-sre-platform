@@ -401,7 +401,7 @@ d.ts("Objects stored (top 10)", [(f'topk(10, max by (cluster, resource) (apiserv
 d.ts("Webhook rejections", [(f'sum by (cluster, name) (rate(apiserver_admission_webhook_rejection_count{{{K}}}[5m]))', "{{cluster}} {{name}}")], w=12)
 d.row("etcd")
 d.ts("Request latency (average)", [(f'sum by (cluster) (rate(etcd_request_duration_seconds_sum{{{K}}}[5m])) / sum by (cluster) (rate(etcd_request_duration_seconds_count{{{K}}}[5m]))', "{{cluster}}")], unit="s", w=12)
-d.ts("Database size", [(f'max by (cluster) (etcd_db_total_size_in_bytes{{{K}}})', "{{cluster}}")], unit="bytes", w=12)
+d.ts("Database size", [(f'max by (cluster) (apiserver_storage_db_total_size_in_bytes{{{K}}})', "{{cluster}}")], unit="bytes", w=12)
 d.row("DNS (CoreDNS)")
 d.ts("Queries / s by rcode", [(f'sum by (cluster, rcode) (rate(coredns_dns_responses_total{{{K}}}[5m]))', "{{cluster}} {{rcode}}")], unit="reqps", stack=True, w=8)
 d.ts("SERVFAIL ratio", [(f'sum by (cluster) (rate(coredns_dns_responses_total{{{K}, rcode="SERVFAIL"}}[5m])) / sum by (cluster) (rate(coredns_dns_responses_total{{{K}}}[5m]))', "{{cluster}}")], unit="percentunit", w=8, th=steps((None, GREEN), (0.05, RED)))
@@ -415,8 +415,8 @@ d.write()
 # 7. Argo CD
 d = Dash("obs-argocd", "Argo CD and GitOps", "Platform", ["obs", "gitops"], "Sync and health of every application, controller work, repo server, cluster connections")
 d.var_query("project", "label_values(argocd_app_info, project)", "Project")
-d.var_query("dest", 'label_values(argocd_app_info{project=~"$project"}, dest_name)', "Destination cluster")
-A = 'project=~"$project", dest_name=~"$dest"'
+d.var_query("dest", 'label_values(argocd_app_info{project=~"$project"}, dest_server)', "Destination cluster (API server)")
+A = 'project=~"$project", dest_server=~"$dest"'
 d.row("Applications")
 d.stat("Applications", f'count(argocd_app_info{{{A}}})', w=4)
 d.stat("Synced", f'count(argocd_app_info{{{A}, sync_status="Synced"}}) or vector(0)', th=steps((None, GREEN)), w=4)
@@ -425,7 +425,7 @@ d.stat("Healthy", f'count(argocd_app_info{{{A}, health_status="Healthy"}}) or ve
 d.stat("Degraded / missing", f'count(argocd_app_info{{{A}, health_status=~"Degraded|Missing"}}) or vector(0)', th=steps((None, GREEN), (1, RED)), w=4)
 d.stat("Sync failures (1h)", f'sum(increase(argocd_app_sync_total{{{A}, phase=~"Error|Failed"}}[1h])) or vector(0)', th=steps((None, GREEN), (1, RED)), decimals=0, w=4)
 d.table("Applications", [
-    f'max by (name, project, dest_name, sync_status, health_status) (argocd_app_info{{{A}}})',
+    f'max by (name, project, dest_server, sync_status, health_status) (argocd_app_info{{{A}}})',
 ], rename=["Present"], hide=["Present"], h=10,
     desc="sync_status and health_status per application, destination is the registered cluster it deploys to")
 d.row("Controller and repo server")
@@ -520,7 +520,7 @@ d.stat("Notification failures (1h)", 'sum(increase(grafana_alerting_notification
 d.alerts("Active alerts", h=10)
 d.row("History")
 d.ts("Alerts by state", [('sum by (state) (grafana_alerting_alerts)', "{{state}}")], w=12)
-d.ts("Investigations started by alert", [('sum by (alertname) (increase(investigations_started_total[15m]))', "{{alertname}}")], w=12)
+d.ts("Investigations started by alert", [('sum by (alertname) (increase(investigations_started_total[15m])) or vector(0)', "{{alertname}}")], w=12)
 d.logs("Agent and webhook logs", '{cluster="observability", namespace="sre-agent"}', h=10)
 d.write()
 
@@ -537,7 +537,7 @@ d.stat("Controller up", 'min(up{service=~"argo-workflows.*", namespace="argo-wor
 d.ts("Workflows by status", [('sum by (status) (argo_workflows_count)', "{{status}}")], stack=True, w=12)
 d.ts("Operation duration p95", [('histogram_quantile(0.95, sum by (le) (rate(argo_workflows_operation_duration_seconds_bucket[5m])))', "p95")], unit="s", w=12)
 d.row("Agent")
-d.ts("Webhook alerts received", [('sum by (alertname) (increase(investigations_started_total[15m]))', "{{alertname}}")], w=12)
+d.ts("Webhook alerts received", [('sum by (alertname) (increase(investigations_started_total[15m])) or vector(0)', "{{alertname}}")], w=12)
 d.ts("Agent pod memory", [('sum by (pod) (container_memory_working_set_bytes{cluster="observability", namespace="sre-agent", container!=""})', "{{pod}}")], unit="bytes", w=12)
 d.logs("Workflow controller logs", '{cluster="observability", namespace="argo-workflows"}', h=8)
 d.logs("Investigation step logs", '{cluster="observability", namespace="sre-agent"} | json', h=10)
