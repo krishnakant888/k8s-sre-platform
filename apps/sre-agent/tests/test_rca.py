@@ -279,16 +279,6 @@ def test_priority_falls_when_it_has_recovered_and_a_ticket_alert(monkeypatch):
     assert r.priority.level in ("P3", "P4") and not r.priority.ongoing
 
 
-def test_platform_component_without_user_impact_is_capped_at_p3(monkeypatch):
-    fake_tools(monkeypatch, oom=True, restarts=2)
-    alert = {"labels": {"alertname": "PodOOMKilled", "severity": "page", "service": "argocd-application-controller", "namespace": "argocd"},
-             "startsAt": rca.iso(NOW - 300), "fingerprint": "x"}
-    ctx = rca.gather(alert, now=NOW)
-    r = rca.analyze_rules(alert, ctx, now=NOW)
-    assert r.priority.level in ("P3", "P4")
-    assert any("platform component" in x for x in r.priority.rationale)
-
-
 def test_errors_from_one_node_and_one_replica_point_at_infrastructure(monkeypatch):
     r = run(monkeypatch, restarts=3, replicas=1, logs=["connection reset"], log_breakdown={"node": {"n1": 9}, "pod": {"orders-api-1": 9}})
     assert r.root_cause.category == "pod_crash"

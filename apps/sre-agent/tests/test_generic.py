@@ -167,3 +167,37 @@ def test_every_family_has_a_report_that_reads_as_a_runbook(monkeypatch):
         assert "What happened" in md and "How to fix it now" in md
         assert r.priority.level in ("P1", "P2", "P3", "P4"), name
         assert r.how_to_fix.immediate and r.how_to_fix.verify, name
+
+
+def test_older_platform_alerts_use_the_generic_playbooks():
+    for name in ("PodCrashLooping", "PodOOMKilled", "DeploymentReplicasUnavailable", "DatasourceError", "DatasourceNoData"):
+        assert generic.is_generic(alert(name))
+    assert not generic.is_generic(alert("OrdersApiNoAvailableReplicas"))  # the SLO path of orders-api is unchanged
+
+
+def test_datasource_error_with_a_down_backend_is_a_blind_stack(monkeypatch):
+    fake(monkeypatch, pods=[pod("mimir-0", ready=False, restarts=3)])
+    r = investigate(alert("DatasourceError", "page", datasource_uid="mimir", rulename="PodStuckPending"))
+    assert r.root_cause.category == "telemetry_gap" and r.fault_domain.layer == "infrastructure"
+    assert "mimir" in r.fault_domain.component and r.priority.ongoing
+
+
+def test_datasource_error_after_a_short_restart_is_not_urgent(monkeypatch):
+    fake(monkeypatch, pods=[pod("mimir-0", ready=True, restarts=1)])
+    r = investigate(alert("DatasourceError", "page", datasource_uid="mimir"))
+    assert "briefly" in r.root_cause.description or "short time" in r.what_happened
+    assert r.priority.level in ("P3", "P4")
+
+
+def test_target_down_with_ready_pods_points_at_the_scrape_path(monkeypatch):
+    fake(monkeypatch, pods=[pod("argo-workflows-workflow-controller-7fc5796fb6-9vhm8", ready=True)], prom={"min(up{": 0.0})
+    r = investigate(alert("TargetDown", cluster="observability", namespace="argo-workflows", pod="argo-workflows-workflow-controller-7fc5796fb6-9vhm8", service="argo-workflows-workflow-controller"))
+    assert r.root_cause.category == "scrape_failure"
+    assert any("networkpolicy" in s for s in r.how_to_fix.immediate)
+
+
+def test_platform_component_without_user_impact_is_capped_at_p3(monkeypatch):
+    fake(monkeypatch, pods=[pod("argocd-application-controller-0", ready=True, term=("OOMKilled", 137), restarts=2, limit="768Mi")], prom={"restarts_total": 2})
+    r = investigate(alert("PodOOMKilled", "page", cluster="gitops", namespace="argocd", pod="argocd-application-controller-0"))
+    assert r.priority.level in ("P3", "P4")
+    assert any("platform component" in x for x in r.priority.rationale)
