@@ -28,10 +28,12 @@ def target_key(alert: dict) -> str:
 
 
 def recent_duplicate(existing: list[dict], now: float, window_minutes: int = DEDUPE_MINUTES) -> str | None:
-    """Name of a workflow for the same target created within the window (running or finished), if any."""
+    """Name of a workflow for the same target created within the window (running or finished successfully), if any."""
     from datetime import datetime
 
     for wf in existing:
+        if wf.get("status", {}).get("phase") in ("Failed", "Error"):
+            continue   # an investigation that failed produced no report: a new alert must be allowed to try again
         created = datetime.fromisoformat(wf["metadata"]["creationTimestamp"].replace("Z", "+00:00")).timestamp()
         if now - created < window_minutes * 60:
             return wf["metadata"]["name"]

@@ -425,6 +425,8 @@ def main(argv):
             if n not in SCENARIOS:
                 sys.exit(f"unknown fault {n}, see `list`")
             print("injecting", n)
+            for target in (f"platform-sandbox-{SCENARIOS[n]['service']}", f"gitops-{SCENARIOS[n]['service']}", f"platform-fault-quota-{SCENARIOS[n]['service']}"):
+                kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", f"sre-agent/target={target}", "--ignore-not-found", check=False)
             SCENARIOS[n]["fn"]()
             state[n] = time.time()
         save_state(state)
