@@ -1,4 +1,4 @@
-# Collector of the monitoring cluster: it watches the monitoring stack itself and writes to the local Mimir and Loki.
+# Collector of the observability cluster: it watches the observability stack itself and writes to the local Mimir and Loki.
 # Without it nothing would alert when Mimir, Loki, Tempo or Grafana fail. The production cluster has its own collector
 # (gitops/observability/alloy) that ships to this cluster.
 crds:
@@ -45,7 +45,7 @@ alloy:
         endpoint {
           url = "http://mimir:8080/api/v1/push"
         }
-        external_labels = {cluster = "monitoring"}
+        external_labels = {cluster = "observability"}
       }
 
       discovery.kubernetes "pods" {

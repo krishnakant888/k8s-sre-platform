@@ -1,5 +1,5 @@
 # How the production cluster talks to this one. kind nodes share a Docker network, so production reaches
-# monitoring-control-plane:<nodePort> directly. NodePorts are open on every node of this cluster.
+# observability-control-plane:<nodePort> directly. NodePorts are open on every node of this cluster.
 #   30900  mimir   metrics push (/api/v1/push) and query (/prometheus)
 #   30310  loki    logs push and query
 #   30320  tempo   trace query

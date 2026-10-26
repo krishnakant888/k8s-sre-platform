@@ -1,5 +1,5 @@
 # The Argo CD cluster deploys itself (argocd) and its ingress controller here; everything else it deploys is in the
-# projects of the platform and monitoring clusters.
+# projects of the platform and observability clusters.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:

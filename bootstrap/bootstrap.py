@@ -2,21 +2,21 @@
 """Create the three local Kubernetes clusters (kind), install Calico, and hand over to GitOps.
 
     platform    the production side: ingress, policy, workloads, and the collectors that ship telemetry out.
-    monitoring  everything used to observe and debug production: Mimir, Loki, Tempo, Grafana and alerting, plus the
+    observability  everything used to observe and debug production: Mimir, Loki, Tempo, Grafana and alerting, plus the
                 SRE agent, Argo Workflows and the RCA report viewer.
     gitops      Argo CD, alone. It deploys the other two clusters and itself from this repo.
 
 Each cluster is kept apart so the tools keep working when another one is down or being rebuilt. The platform and
-monitoring clusters have no Argo CD of their own: this script registers them in the one in the gitops cluster, which then
+observability clusters have no Argo CD of their own: this script registers them in the one in the gitops cluster, which then
 deploys everything from Git. This is the only imperative step.
 
-    python3 bootstrap/bootstrap.py                         # create all three clusters (platform, monitoring, gitops)
+    python3 bootstrap/bootstrap.py                         # create all three clusters (platform, observability, gitops)
     python3 bootstrap/bootstrap.py --only platform         # create (or repair) one, and re-register it if gitops exists
     python3 bootstrap/bootstrap.py --destroy --only platform   # delete one, the others keep running
     python3 bootstrap/bootstrap.py --destroy               # delete all
 
 Secrets: nothing secret is stored in Git. The bootstrap creates the few secrets each cluster needs with random
-values (Grafana admin login in monitoring, the fault injection token in platform), and the read-only tokens the SRE
+values (Grafana admin login in observability, the fault injection token in platform), and the read-only tokens the SRE
 agent uses to read the other clusters. Set ANTHROPIC_API_KEY in the environment to also create the key the SRE agent
 uses for LLM analysis; without it the agent runs its rule based analysis. In AWS/Azure this step is replaced by
 External Secrets.
@@ -38,8 +38,8 @@ ARGOCD_CHART_VERSION = "7.6.12"
 ARGOCD_NS = "argocd"
 CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 HUB = "gitops"  # the cluster that runs Argo CD
-SPOKES = ["platform", "monitoring"]  # registered in the hub under these names, Applications target them with destination.name
-AGENT = "monitoring"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
+SPOKES = ["platform", "observability"]  # registered in the hub under these names, Applications target them with destination.name
+AGENT = "observability"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
 
 # Order matters: the spokes' API servers have to exist before the hub's Argo CD can register them.
 CLUSTERS = {
@@ -49,8 +49,8 @@ CLUSTERS = {
         # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
         "seed_namespaces": ["demo"],
     },
-    "monitoring": {
-        "kind_config": ROOT / "bootstrap" / "kind-config-monitoring.yaml",
+    "observability": {
+        "kind_config": ROOT / "bootstrap" / "kind-config-observability.yaml",
         "host_ports": [9080, 9443],
         "seed_namespaces": ["observability", "sre-agent"],
     },
@@ -63,7 +63,7 @@ CLUSTERS = {
 }
 ROOT_APPS = {
     "gitops": ROOT / "gitops" / "root" / "root-app-hub.yaml",              # Argo CD itself and its ingress
-    "monitoring": ROOT / "gitops" / "root" / "root-app-monitoring.yaml",   # the monitoring cluster's apps
+    "observability": ROOT / "gitops" / "root" / "root-app-observability.yaml",   # the observability cluster's apps
     "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",       # the platform cluster's apps
 }
 
@@ -240,7 +240,7 @@ def seed_secrets(cluster):
     for ns in CLUSTERS[cluster]["seed_namespaces"]:
         ensure_namespace(cluster, ns)
 
-    if cluster == "monitoring":
+    if cluster == "observability":
         if not secret_exists(cluster, "observability", "grafana-admin"):
             create_secret(cluster, "observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
         key = os.environ.get("ANTHROPIC_API_KEY", "")  # the SRE agent runs in this cluster
@@ -327,8 +327,8 @@ def summary(clusters):
     print("URLs work once ingress-nginx has synced.\n")
     if HUB in clusters:
         print("Argo CD         http://argocd.localhost:7080               admin / " + argocd_password())
-    if "monitoring" in clusters:
-        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("monitoring", "observability", "grafana-admin", "admin-password"))
+    if "observability" in clusters:
+        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("observability", "observability", "grafana-admin", "admin-password"))
         print("Workflows       http://workflows.localhost:9080")
         print("RCA reports     http://reports.localhost:9080")
     if "platform" in clusters:

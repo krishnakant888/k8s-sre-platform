@@ -21,7 +21,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    name: monitoring   # registered in this Argo CD by bootstrap.py
+    name: observability   # registered in this Argo CD by bootstrap.py
     namespace: ingress-nginx
   syncPolicy:
     automated:

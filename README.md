@@ -21,16 +21,16 @@ export ANTHROPIC_API_KEY=...        # optional, enables LLM analysis in the agen
 python3 bootstrap/bootstrap.py
 ```
 
-The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `monitoring` (1 control plane, 1 worker) and `gitops` (1 control plane).
+The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `observability` (1 control plane, 1 worker) and `gitops` (1 control plane).
 Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints the logins at the end.
-Use `--only platform`, `--only monitoring` or `--only gitops` to create or destroy one of them.
+Use `--only platform`, `--only observability` or `--only gitops` to create or destroy one of them.
 
 | What | Cluster | URL |
 |---|---|---|
 | Argo CD (deploys the other two) | gitops | http://argocd.localhost:7080 |
-| Grafana | monitoring | http://grafana.localhost:9080 |
-| Argo Workflows UI | monitoring | http://workflows.localhost:9080 |
-| RCA reports | monitoring | http://reports.localhost:9080 |
+| Grafana | observability | http://grafana.localhost:9080 |
+| Argo Workflows UI | observability | http://workflows.localhost:9080 |
+| RCA reports | observability | http://reports.localhost:9080 |
 | Sample API | platform | http://orders.localhost:8080/orders |
 
 `*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy` (add `--only platform` to keep the others running).
@@ -43,16 +43,16 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 
 1. The API's downstream call becomes slow. The SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
 2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
-3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl --context kind-monitoring -n sre-agent get wf`, or the Argo Workflows UI).
+3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl --context kind-observability -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
-   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:9080, or `kubectl --context kind-monitoring -n sre-agent exec deploy/rca-viewer -- ls /reports`.
+   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:9080, or `kubectl --context kind-observability -n sre-agent exec deploy/rca-viewer -- ls /reports`.
 5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
 
 ## Architecture
 
 Each concern has its own cluster, so an outage, upgrade or rebuild of one cannot take down the tools used to deal with it:
-`platform` runs the workloads, `monitoring` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows and the RCA viewer, and `gitops` runs Argo CD alone.
-Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: monitoring`. The clusters talk over the shared Docker network (collectors push to `monitoring-control-plane:<port>`, Argo CD reaches `platform-control-plane:6443` and `monitoring-control-plane:6443`).
+`platform` runs the workloads, `observability` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows and the RCA viewer, and `gitops` runs Argo CD alone.
+Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: observability`. The clusters talk over the shared Docker network (collectors push to `observability-control-plane:<port>`, Argo CD reaches `platform-control-plane:6443` and `observability-control-plane:6443`).
 
 ```mermaid
 flowchart LR
@@ -66,7 +66,7 @@ flowchart LR
     Demo[demo: orders-api, frontend]
     Demo -->|metrics, logs, OTLP traces| Collect
   end
-  subgraph monitoring cluster
+  subgraph observability cluster
     Stack[observability: Mimir, Loki, Tempo, Grafana, alerting, Alloy]
     AW[argo-workflows]
     Agent[sre-agent: alert-webhook, workflow template, RCA viewer]
@@ -85,22 +85,22 @@ flowchart LR
 | Namespace | Cluster | Contents |
 |---|---|---|
 | `argocd` | gitops | the one Argo CD, manages itself and the other two clusters |
-| `observability` | platform | Alloy (collector, ships to the monitoring cluster), kube-state-metrics |
-| `observability` | monitoring | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
-| `argo-workflows` | monitoring | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
-| `sre-agent` | monitoring | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
+| `observability` | platform | Alloy (collector, ships to the observability cluster), kube-state-metrics |
+| `observability` | observability | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
+| `argo-workflows` | observability | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
+| `sre-agent` | observability | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
 | `demo` | platform | `orders-api` and the frontend |
 | `kyverno`, `ingress-nginx`, `kube-system` | platform | policy engine, ingress controller, sealed-secrets controller |
-| `ingress-nginx` | monitoring, gitops | ingress controller |
+| `ingress-nginx` | observability, gitops | ingress controller |
 
 ## Repo layout
 
 ```
-bootstrap/          kind configs (platform, monitoring, gitops) + the one imperative script
+bootstrap/          kind configs (platform, observability, gitops) + the one imperative script
 gitops/root/        the root Applications (app of apps), one per cluster
 gitops/hub/         gitops cluster: Argo CD values and its Applications
 gitops/apps/        platform cluster apps (Applications live in the hub, `prod-*`): one per component, AppProjects, sync waves
-gitops/monitoring/  monitoring cluster: its Applications (including argo-workflows and sre-agent), Alloy values, network policies, NodePorts
+gitops/observability-cluster/  observability cluster: its Applications (including argo-workflows and sre-agent), Alloy values, network policies, NodePorts
 gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
 gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards (deployed by the cluster that owns each Application)
 gitops/workloads/   orders-api, frontend, sre-agent manifests (including the workflow template)
@@ -155,7 +155,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 ## Design decisions and trade-offs
 
 - **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and ingress-nginx is deployed by Argo CD (host ports 8080/8443 map to its NodePorts).
-- **Monitoring in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `monitoring` cluster with their own Argo CD, so monitoring survives a production rebuild. Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
+- **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster with their own Argo CD, so observability survives a production rebuild. Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
 - **Alerting lives in Grafana.** Alert rules, the contact point and the notification policy are ConfigMaps in Git that the Grafana sidecar loads. Mimir only runs the SLO recording rules. One UI for dashboards, alert state and silences, and no separate Alertmanager to operate or keep alive.

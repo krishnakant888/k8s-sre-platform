@@ -1,5 +1,5 @@
 apiVersion: argoproj.io/v1alpha1
-# The apps of the platform cluster. This Application lives in the monitoring cluster (where the one Argo CD runs)
+# The apps of the platform cluster. This Application lives in the observability cluster (where the one Argo CD runs)
 # and creates one child Application per component of gitops/apps; each child deploys into the cluster "platform".
 kind: Application
 metadata:

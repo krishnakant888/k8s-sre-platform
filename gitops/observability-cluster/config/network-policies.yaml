@@ -1,7 +1,7 @@
-# Extra rules for the observability namespace of the monitoring cluster.
+# Extra rules for the observability namespace of the observability cluster.
 # default-deny, DNS, same-namespace and ingress-nginx traffic come from platform-base (gitops/platform/base/observability.yaml).
 #
-# The production cluster reaches this one through NodePorts on the kind nodes (see gitops/monitoring/exposure), so the
+# The production cluster reaches this one through NodePorts on the kind nodes (see gitops/observability-cluster/exposure), so the
 # sources below are node addresses on the shared Docker network (172.16.0.0/12), not pods.
 # In a cloud setup replace these with internal load balancers plus TLS and tenant auth.
 apiVersion: networking.k8s.io/v1

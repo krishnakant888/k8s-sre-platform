@@ -9,6 +9,6 @@ nodes:
   - role: control-plane
     image: kindest/node:v1.31.0
     extraPortMappings:
-      # host :7080 -> ingress-nginx http NodePort, host :7443 -> https NodePort (platform 8080/8443, monitoring 9080/9443)
+      # host :7080 -> ingress-nginx http NodePort, host :7443 -> https NodePort (platform 8080/8443, observability 9080/9443)
       - {containerPort: 30080, hostPort: 7080, protocol: TCP}
       - {containerPort: 30443, hostPort: 7443, protocol: TCP}
