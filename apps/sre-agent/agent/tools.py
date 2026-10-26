@@ -182,8 +182,8 @@ _k8s_transport = None  # tests inject an httpx.MockTransport here
 
 
 def _k8s_get(path: str, cluster: str = "") -> dict:
-    """cluster="platform" reads the cluster under investigation (pods, events), "gitops" the one running Argo CD.
-    Each is another cluster when its URL is set, otherwise the cluster the agent runs in."""
+    """Reads one cluster's API: "platform" and "gitops" through their read-only tokens, "observability" (or empty) is the
+    cluster the agent runs in. A cluster whose URL is not set falls back to the local one (single cluster setups, tests)."""
     if cluster == "platform" and config.PLATFORM_K8S_URL:
         base, creds = config.PLATFORM_K8S_URL, config.PLATFORM_DIR
     elif cluster == "gitops" and config.GITOPS_K8S_URL:
@@ -199,10 +199,10 @@ def _k8s_get(path: str, cluster: str = "") -> dict:
     return r.json()
 
 
-def get_pod_status(namespace: str, name_prefix: str) -> dict:
-    """Phase, restarts and last termination reason of pods whose name starts with name_prefix."""
+def get_pod_status(namespace: str, name_prefix: str, cluster: str = "platform") -> dict:
+    """Phase, restarts and last termination reason of pods whose name starts with name_prefix, in the named cluster."""
     pods = []
-    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", cluster="platform")["items"]:
+    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", cluster=cluster)["items"]:
         if not p["metadata"]["name"].startswith(name_prefix):
             continue
         limits = {c["name"]: c.get("resources", {}).get("limits", {}).get("memory") for c in p["spec"].get("containers", [])}
@@ -222,20 +222,20 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
                     "app_instance": p["metadata"].get("labels", {}).get("app.kubernetes.io/instance"),
                 }
             )
-    return _trim({"namespace": namespace, "pods": pods})
+    return _trim({"cluster": cluster, "namespace": namespace, "pods": pods})
 
 
-def get_k8s_events(namespace: str, minutes: int = 30) -> dict:
+def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform") -> dict:
     cutoff = time.time() - _clamp_minutes(minutes) * 60
     events = []
-    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", cluster="platform")["items"]:
+    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", cluster=cluster)["items"]:
         ts = e.get("lastTimestamp") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
         epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
             continue
         events.append({"ts": ts, "type": e["type"], "reason": e["reason"], "object": e["involvedObject"]["name"], "message": e["message"][:200]})
     events.sort(key=lambda e: e["ts"], reverse=True)
-    return _trim({"namespace": namespace, "events": events[:30]})
+    return _trim({"cluster": cluster, "namespace": namespace, "events": events[:30]})
 
 
 def get_recent_deploys(application: str) -> dict:
@@ -265,6 +265,41 @@ def get_recent_deploys(application: str) -> dict:
                 {"deployed_at": h.get("deployedAt"), "revision": (h.get("revision") or "")[:10], "id": h.get("id")}
                 for h in reversed(history)
             ],
+        }
+    )
+
+
+def get_argocd_app(name: str) -> dict:
+    """Sync and health of one Argo CD application: conditions, last operation message and the resources that are not healthy."""
+    app = None
+    for candidate in (name, f"prod-{name}"):
+        try:
+            app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{candidate}", cluster="gitops")
+            break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+    if app is None:
+        raise LookupError(f"no Argo CD application {name}")
+    status, spec = app.get("status", {}), app.get("spec", {})
+    dest = spec.get("destination", {})
+    unhealthy = [
+        f"{r.get('kind')}/{r.get('name')}: {(r.get('health') or {}).get('status', r.get('status', ''))} {((r.get('health') or {}).get('message') or '')[:80]}".strip()
+        for r in status.get("resources", [])
+        if (r.get("health") or {}).get("status") not in (None, "Healthy") or r.get("status") == "OutOfSync"
+    ]
+    op = status.get("operationState") or {}
+    return _trim(
+        {
+            "name": app["metadata"]["name"],
+            "sync_status": (status.get("sync") or {}).get("status"),
+            "health_status": (status.get("health") or {}).get("status"),
+            "destination": dest.get("name") or dest.get("server"),
+            "destination_namespace": dest.get("namespace"),
+            "paths": [s.get("path") for s in (spec.get("sources") or [spec.get("source", {})]) if s.get("path")],
+            "conditions": [f"{c.get('type')}: {c.get('message', '')[:200]}" for c in status.get("conditions", [])],
+            "operation": {"phase": op.get("phase"), "message": (op.get("message") or "")[:300]} if op else None,
+            "unhealthy": unhealthy[:8],
         }
     )
 
@@ -317,7 +352,7 @@ TOOLS = {
             "description": "Pod phase, restart count and last termination reason (for example OOMKilled) for pods with a name prefix.",
             "input_schema": {
                 "type": "object",
-                "properties": {"namespace": {"type": "string"}, "name_prefix": {"type": "string"}},
+                "properties": {"namespace": {"type": "string"}, "name_prefix": {"type": "string"}, "cluster": {"type": "string", "description": "platform (default), observability or gitops"}},
                 "required": ["namespace", "name_prefix"],
             },
         },
@@ -326,7 +361,14 @@ TOOLS = {
         get_k8s_events,
         {
             "description": "Recent Kubernetes events in a namespace (kills, probe failures, scheduling).",
-            "input_schema": {"type": "object", "properties": {"namespace": {"type": "string"}, "minutes": {"type": "integer"}}, "required": ["namespace"]},
+            "input_schema": {"type": "object", "properties": {"namespace": {"type": "string"}, "minutes": {"type": "integer"}, "cluster": {"type": "string", "description": "platform (default), observability or gitops"}}, "required": ["namespace"]},
+        },
+    ),
+    "get_argocd_app": (
+        get_argocd_app,
+        {
+            "description": "Sync status, health, last operation message and unhealthy resources of an Argo CD application (apps of the platform cluster are named prod-<name>).",
+            "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
         },
     ),
     "get_recent_deploys": (

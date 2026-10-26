@@ -40,6 +40,10 @@ def _first(result: dict, fn=max, key="max", default=None):
 
 def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) -> dict:
     """Run the playbook. Returns {'service', 'namespace', 'signals', 'evidence', 'raw'}."""
+    from agent import generic
+
+    if generic.is_generic(alert):
+        return generic.gather(alert, now, lookback_minutes)
     now = now or time.time()
     svc = service_of(alert)
     ns = alert.get("labels", {}).get("namespace", DEFAULT_NAMESPACE)
@@ -145,7 +149,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     add("tempo", f"{q_slow} / {q_err}", f"{sig['slow_traces']} traces slower than 500ms, {sig['error_traces']} error traces in the window")
 
     # --- kubernetes and deploys
-    pods = tools.call_tool("get_pod_status", {"namespace": ns, "name_prefix": svc})
+    cluster = alert.get("labels", {}).get("cluster") or "platform"
+    pods = tools.call_tool("get_pod_status", {"namespace": ns, "name_prefix": svc, "cluster": cluster})
     raw["pods"] = pods
     sig["tool_errors"] = []
     if "error" in pods:
@@ -162,7 +167,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     if "error" not in pods:
         add("kubernetes", f"pods {ns}/{svc}-*", f"{len(pods.get('pods', []))} pods, restarts={sig['pod_restarts_total']}, oom_killed={sig['oom']}, not_ready={sig['not_ready']}")
 
-    events = tools.call_tool("get_k8s_events", {"namespace": ns, "minutes": lookback_minutes})
+    events = tools.call_tool("get_k8s_events", {"namespace": ns, "minutes": lookback_minutes, "cluster": cluster})
     raw["events"] = events
     sig["kill_events"] = [e for e in events.get("events", []) if e["reason"] in ("Killing", "OOMKilling", "BackOff", "Unhealthy")]
     sig["probe_failures"] = len([e for e in events.get("events", []) if e["reason"] == "Unhealthy" and e["object"].startswith(svc)])
@@ -550,6 +555,10 @@ def decide_priority(alert: dict, sig: dict, category: str, domain: FaultDomain, 
 
 
 def analyze_rules(alert: dict, ctx: dict, now: float | None = None) -> RcaReport:
+    if ctx.get("family") == "generic":
+        from agent import generic
+
+        return generic.analyze(alert, ctx, now)
     now = now or time.time()
     sig = ctx["signals"]
     svc = ctx["service"]
