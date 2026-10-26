@@ -57,17 +57,17 @@ data:
           },
           {
             "name": "dest",
-            "label": "Destination cluster",
+            "label": "Destination cluster (API server)",
             "type": "query",
             "datasource": {
               "type": "prometheus",
               "uid": "mimir"
             },
             "query": {
-              "query": "label_values(argocd_app_info{project=~\"$project\"}, dest_name)",
+              "query": "label_values(argocd_app_info{project=~\"$project\"}, dest_server)",
               "refId": "v_dest"
             },
-            "definition": "label_values(argocd_app_info{project=~\"$project\"}, dest_name)",
+            "definition": "label_values(argocd_app_info{project=~\"$project\"}, dest_server)",
             "includeAll": true,
             "multi": true,
             "allValue": ".+",
@@ -107,7 +107,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(argocd_app_info{project=~\"$project\", dest_name=~\"$dest\"})",
+              "expr": "count(argocd_app_info{project=~\"$project\", dest_server=~\"$dest\"})",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -161,7 +161,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(argocd_app_info{project=~\"$project\", dest_name=~\"$dest\", sync_status=\"Synced\"}) or vector(0)",
+              "expr": "count(argocd_app_info{project=~\"$project\", dest_server=~\"$dest\", sync_status=\"Synced\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -215,7 +215,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(argocd_app_info{project=~\"$project\", dest_name=~\"$dest\", sync_status!=\"Synced\"}) or vector(0)",
+              "expr": "count(argocd_app_info{project=~\"$project\", dest_server=~\"$dest\", sync_status!=\"Synced\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -273,7 +273,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(argocd_app_info{project=~\"$project\", dest_name=~\"$dest\", health_status=\"Healthy\"}) or vector(0)",
+              "expr": "count(argocd_app_info{project=~\"$project\", dest_server=~\"$dest\", health_status=\"Healthy\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -327,7 +327,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(argocd_app_info{project=~\"$project\", dest_name=~\"$dest\", health_status=~\"Degraded|Missing\"}) or vector(0)",
+              "expr": "count(argocd_app_info{project=~\"$project\", dest_server=~\"$dest\", health_status=~\"Degraded|Missing\"}) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -385,7 +385,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(increase(argocd_app_sync_total{project=~\"$project\", dest_name=~\"$dest\", phase=~\"Error|Failed\"}[1h])) or vector(0)",
+              "expr": "sum(increase(argocd_app_sync_total{project=~\"$project\", dest_server=~\"$dest\", phase=~\"Error|Failed\"}[1h])) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -444,7 +444,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "max by (name, project, dest_name, sync_status, health_status) (argocd_app_info{project=~\"$project\", dest_name=~\"$dest\"})",
+              "expr": "max by (name, project, dest_server, sync_status, health_status) (argocd_app_info{project=~\"$project\", dest_server=~\"$dest\"})",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -516,7 +516,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (phase) (increase(argocd_app_sync_total{project=~\"$project\", dest_name=~\"$dest\"}[5m])) / 5",
+              "expr": "sum by (phase) (increase(argocd_app_sync_total{project=~\"$project\", dest_server=~\"$dest\"}[5m])) / 5",
               "legendFormat": "{{phase}}",
               "datasource": {
                 "type": "prometheus",

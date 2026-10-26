@@ -506,7 +506,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "max by (cluster) (etcd_db_total_size_in_bytes{cluster=~\"$cluster\"})",
+              "expr": "max by (cluster) (apiserver_storage_db_total_size_in_bytes{cluster=~\"$cluster\"})",
               "legendFormat": "{{cluster}}",
               "datasource": {
                 "type": "prometheus",

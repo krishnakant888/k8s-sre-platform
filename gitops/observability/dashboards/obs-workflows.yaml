@@ -513,7 +513,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (alertname) (increase(investigations_started_total[15m]))",
+              "expr": "sum by (alertname) (increase(investigations_started_total[15m])) or vector(0)",
               "legendFormat": "{{alertname}}",
               "datasource": {
                 "type": "prometheus",
