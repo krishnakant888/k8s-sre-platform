@@ -1,5 +1,5 @@
 # Grafana alerting is provisioned from Git: the sidecar loads every ConfigMap labelled grafana_alert.
-# Every alert goes to the SRE agent webhook, which starts a Temporal investigation workflow.
+# Every alert goes to the SRE agent webhook, which starts an Argo Workflows investigation.
 # Grafana's webhook payload has the same shape as an Alertmanager one (alerts[].status, labels, annotations, startsAt, fingerprint).
 apiVersion: v1
 kind: ConfigMap
@@ -19,7 +19,7 @@ data:
             type: webhook
             disableResolveMessage: true
             settings:
-              url: http://platform-control-plane:30880/alertmanager   # NodePort of alert-webhook-external in the production cluster
+              url: http://alert-webhook.sre-agent:8080/alertmanager
               httpMethod: POST
               maxAlerts: 5
     policies:

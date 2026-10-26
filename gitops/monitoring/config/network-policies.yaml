@@ -36,6 +36,8 @@ spec:
     - from:
         - ipBlock:
             cidr: 172.16.0.0/12
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: sre-agent}   # the agent queries the stores
       ports:
         - {port: 8080, protocol: TCP}   # mimir push and query
         - {port: 3100, protocol: TCP}   # loki push and query
@@ -50,11 +52,11 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: grafana   # grafana alerting calls the SRE agent webhook in the production cluster
+      app.kubernetes.io/name: grafana   # grafana alerting calls the SRE agent webhook (namespace sre-agent, same cluster)
   policyTypes: [Egress]
   egress:
     - to:
-        - ipBlock:
-            cidr: 172.16.0.0/12
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: sre-agent}
       ports:
-        - {port: 30880, protocol: TCP}
+        - {port: 8080, protocol: TCP}

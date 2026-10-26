@@ -47,13 +47,13 @@ CLUSTERS = {
         "kind_config": ROOT / "bootstrap" / "kind-config.yaml",
         "host_ports": [8080, 8443],
         # namespaces that need secrets before Argo CD creates them (Argo adopts them and adds labels)
-        "seed_namespaces": ["demo", "sre-agent"],
+        "seed_namespaces": ["demo"],
     },
     "monitoring": {
         "kind_config": ROOT / "bootstrap" / "kind-config-monitoring.yaml",
         "argocd_values": ROOT / "gitops" / "monitoring" / "argocd" / "values.yaml",
         "host_ports": [9080, 9443],
-        "seed_namespaces": ["observability"],
+        "seed_namespaces": ["observability", "sre-agent"],
     },
 }
 ROOT_APPS = {
@@ -86,6 +86,32 @@ metadata:
   name: argocd-manager-token
   namespace: kube-system
   annotations: {kubernetes.io/service-account.name: argocd-manager}
+type: kubernetes.io/service-account-token
+---
+# what the SRE agent (it runs in the hub cluster) may read in this cluster: pods, events and workloads, no secrets, no writes
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: sre-agent-reader, namespace: kube-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: sre-agent-read}
+rules:
+  - {apiGroups: [""], resources: [pods, events, nodes], verbs: [get, list]}
+  - {apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: sre-agent-read}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: sre-agent-read}
+subjects: [{kind: ServiceAccount, name: sre-agent-reader, namespace: kube-system}]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sre-agent-reader-token
+  namespace: kube-system
+  annotations: {kubernetes.io/service-account.name: sre-agent-reader}
 type: kubernetes.io/service-account-token
 """
 
@@ -175,18 +201,17 @@ def seed_secrets(cluster):
     if cluster == "monitoring":
         if not secret_exists(cluster, "observability", "grafana-admin"):
             create_secret(cluster, "observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
+        key = os.environ.get("ANTHROPIC_API_KEY", "")  # the SRE agent runs in this cluster
+        if key:
+            kubectl(cluster, "-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
+            create_secret(cluster, "sre-agent", "anthropic-api-key", ANTHROPIC_API_KEY=key)
+            print("anthropic-api-key created: the SRE agent will use LLM analysis")
+        else:
+            print("ANTHROPIC_API_KEY not set: the SRE agent will use rule based analysis")
         return
 
     if not secret_exists(cluster, "demo", "orders-api-chaos"):
         create_secret(cluster, "demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
-
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if key:
-        kubectl(cluster, "-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
-        create_secret(cluster, "sre-agent", "anthropic-api-key", ANTHROPIC_API_KEY=key)
-        print("anthropic-api-key created: the SRE agent will use LLM analysis")
-    else:
-        print("ANTHROPIC_API_KEY not set: the SRE agent will use rule based analysis")
 
 
 def register_spoke():
@@ -213,6 +238,22 @@ def register_spoke():
     )
     kubectl(HUB, "apply", "-f", "-", stdin=cluster_secret)
     print(f"cluster '{SPOKE}' registered in the Argo CD of '{HUB}'")
+
+    # the SRE agent runs in the hub and reads the platform cluster with a read-only token
+    reader_token = reader_ca = ""
+    for _ in range(30):
+        reader_token = read_secret(SPOKE, "kube-system", "sre-agent-reader-token", "token")
+        reader_ca = read_secret(SPOKE, "kube-system", "sre-agent-reader-token", "ca\\.crt")
+        if reader_token and reader_ca:
+            break
+        time.sleep(1)
+    if not (reader_token and reader_ca):
+        sys.exit("the sre-agent-reader token was not created in the platform cluster")
+    manifest = kubectl(HUB, "create", "namespace", "sre-agent", "--dry-run=client", "-o", "yaml", capture=True).stdout
+    kubectl(HUB, "apply", "-f", "-", stdin=manifest)
+    kubectl(HUB, "-n", "sre-agent", "delete", "secret", "platform-reader", "--ignore-not-found")
+    create_secret(HUB, "sre-agent", "platform-reader", **{"token": reader_token, "ca.crt": reader_ca})
+    print("platform-reader created in the sre-agent namespace of the monitoring cluster")
 
 
 def read_secret_raw(cluster, ns, name, key):
