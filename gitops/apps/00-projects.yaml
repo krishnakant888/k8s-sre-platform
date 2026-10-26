@@ -1,12 +1,14 @@
+# AppProjects for the apps that run in the platform cluster. They are created in the monitoring cluster, where the
+# single Argo CD runs, and every destination is the registered cluster named "platform".
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: platform
+  name: prod-platform
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Cluster add-ons and operators (argocd, argo-workflows, sealed-secrets, kyverno, ingress-nginx)
+  description: Platform cluster add-ons and operators (argo-workflows, sealed-secrets, kyverno, ingress-nginx)
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://argoproj.github.io/argo-helm
@@ -14,7 +16,7 @@ spec:
     - https://kyverno.github.io/kyverno
     - https://kubernetes.github.io/ingress-nginx
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: platform
       namespace: "*"
   clusterResourceWhitelist:
     - group: "*"
@@ -23,18 +25,18 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: observability
+  name: prod-observability
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Alloy and kube-state-metrics (production side). The LGTM stack and Grafana run in the monitoring cluster.
+  description: Alloy and kube-state-metrics in the platform cluster. The LGTM stack and Grafana run in the monitoring cluster.
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://grafana.github.io/helm-charts
     - https://prometheus-community.github.io/helm-charts
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: platform
       namespace: observability
   clusterResourceWhitelist:
     - group: rbac.authorization.k8s.io
@@ -45,17 +47,17 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: workloads
+  name: prod-workloads
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Sample api, frontend, sre agent
+  description: Sample api, frontend and the sre agent in the platform cluster
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: platform
       namespace: demo
-    - server: https://kubernetes.default.svc
+    - name: platform
       namespace: sre-agent
   clusterResourceWhitelist: []

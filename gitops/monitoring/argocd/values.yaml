@@ -1,10 +1,15 @@
-# Argo CD of the monitoring cluster. It is separate from the production one on purpose:
-# monitoring keeps deploying and healing itself while the production cluster is down or being rebuilt.
+# The one Argo CD, in the monitoring cluster. It deploys BOTH clusters (hub and spoke): its own apps and, through the
+# cluster registered by bootstrap.py, the apps of the platform cluster. It lives outside production on purpose, so it
+# keeps working while production is down or being rebuilt.
 #
-# Sizing: this instance manages about 14 applications, so it is smaller than the platform one (see
-# gitops/argocd/values.yaml for the reasoning: memory limit 2x the request, CPU limit 4x the request).
+# Sizing (about 30 applications across two clusters): requests are what the scheduler reserves, memory limits are
+# 2x the request so a busy sync cannot grow without bound but a spike does not OOMKill it (the application controller
+# keeps every managed object of both clusters in memory), and CPU limits are generous, 4x the request, because a
+# tight CPU limit throttles the controller and slows every sync without protecting anything.
+# For a real setup also run server and repoServer with replicas: 2 and pdb.enabled: true, and shard the controller
+# (controller.replicas) once it manages a few hundred applications.
 global:
-  domain: argocd-monitoring.localhost   # not argocd.localhost: browsers share cookies between ports of one host
+  domain: argocd-monitoring.localhost
 
 configs:
   params:
@@ -23,32 +28,37 @@ dex:
 notifications:
   enabled: false
 
+# renders manifests (helm template, kustomize build) for every sync: short CPU and memory spikes
 repoServer:
   resources:
-    requests: {cpu: 500m, memory: 768Mi}
-    limits: {cpu: "2", memory: 1536Mi}
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "4", memory: 2Gi}
 
+# the UI and API
 server:
   ingress:
     enabled: true
     ingressClassName: nginx
   resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {cpu: "1", memory: 768Mi}
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
 
+# reconciles every application of both clusters against its cluster
 controller:
   resources:
-    requests: {cpu: 500m, memory: 1536Mi}
-    limits: {cpu: "2", memory: 3Gi}
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
 
+# cache of rendered manifests and application state
 redis:
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
 
 applicationSet:
   enabled: false
 
+# one-shot job that creates the redis password secret
 redisSecretInit:
   resources:
     requests: {cpu: 20m, memory: 64Mi}

@@ -21,15 +21,14 @@ export ANTHROPIC_API_KEY=...        # optional, enables LLM analysis in the agen
 python3 bootstrap/bootstrap.py
 ```
 
-The script creates two kind clusters, each with Calico for NetworkPolicy, its own Argo CD, the few secrets it needs with random values, and one root Application:
-`monitoring` (1 control plane, 1 worker) first, then `platform` (1 control plane, 2 workers). The first sync takes about 10 minutes. It prints the logins at the end.
+The script creates two kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers) first, then `monitoring` (1 control plane, 1 worker).
+Argo CD is installed **only in the monitoring cluster**. The script registers the platform cluster in it, and that one Argo CD deploys both clusters from this repo. The first sync takes about 10 minutes. It prints the logins at the end.
 Use `--only monitoring` or `--only platform` to create or destroy one of them.
 
 | What | Cluster | URL |
 |---|---|---|
 | Grafana | monitoring | http://grafana.localhost:9080 |
-| Argo CD (monitoring) | monitoring | http://argocd-monitoring.localhost:9080 |
-| Argo CD (production) | platform | http://argocd.localhost:8080 |
+| Argo CD (deploys both clusters) | monitoring | http://argocd-monitoring.localhost:9080 |
 | Argo Workflows UI | platform | http://workflows.localhost:8080 |
 | Sample API | platform | http://orders.localhost:8080/orders |
 | RCA reports | platform | http://reports.localhost:8080 |
@@ -52,18 +51,17 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 ## Architecture
 
 Monitoring runs in its own cluster, so a production outage, upgrade or rebuild cannot take down the tools used to debug it.
-Each cluster has its own Argo CD, and the two clusters only talk through NodePorts on the shared Docker network (`monitoring-control-plane:<port>`, `platform-control-plane:30880`).
+Argo CD runs only in the monitoring cluster (hub and spoke) and deploys both clusters: the platform cluster is registered in it, and its apps are Applications there with `destination: platform`. The two clusters talk over the shared Docker network (collectors push to `monitoring-control-plane:<port>`, Argo CD reaches `platform-control-plane:6443`).
 
 ```mermaid
 flowchart LR
-  Git[(this repo)] -->|gitops/apps| ArgoP[Argo CD platform]
-  Git -->|gitops/monitoring/apps| ArgoM[Argo CD monitoring]
+  Git[(this repo)] -->|gitops/apps and gitops/monitoring/apps| ArgoM[Argo CD, the hub]
   subgraph platform cluster
-    ArgoP --> Platform[sealed-secrets, kyverno, ingress-nginx, rbac, namespaces + netpols]
-    ArgoP --> Collect[observability: Alloy, kube-state-metrics]
-    ArgoP --> AW[argo-workflows]
-    ArgoP --> Demo[demo: orders-api, loadgen]
-    ArgoP --> Agent[sre-agent: alert-webhook, workflow template]
+    ArgoM -->|registered cluster| Platform[sealed-secrets, kyverno, ingress-nginx, rbac, namespaces + netpols]
+    ArgoM --> Collect[observability: Alloy, kube-state-metrics]
+    ArgoM --> AW[argo-workflows]
+    ArgoM --> Demo[demo: orders-api, loadgen]
+    ArgoM --> Agent[sre-agent: alert-webhook, workflow template]
     Demo -->|metrics, logs, OTLP traces| Collect
     Agent -->|create Workflow| AW
     AW -->|steps run the agent image| Agent
@@ -78,7 +76,7 @@ flowchart LR
 
 | Namespace | Cluster | Contents |
 |---|---|---|
-| `argocd` | both | Argo CD, manages itself |
+| `argocd` | monitoring | the one Argo CD, manages itself and the platform cluster |
 | `observability` | platform | Alloy (collector, ships to the monitoring cluster), kube-state-metrics |
 | `observability` | monitoring | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
 | `argo-workflows` | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
