@@ -39,3 +39,23 @@ spec:
       kind: ClusterRole
     - group: rbac.authorization.k8s.io
       kind: ClusterRoleBinding
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: sre-agent
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: The SRE agent (alert webhook, workflow template, RCA viewer). It runs here and investigates the platform cluster.
+  sourceRepos:
+    - https://github.com/krishnakant888/k8s-sre-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: sre-agent
+    - server: https://kubernetes.default.svc
+      namespace: argocd   # the read-only Role on Applications, so the agent can read deploy history
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

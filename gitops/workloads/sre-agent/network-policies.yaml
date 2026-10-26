@@ -7,15 +7,15 @@ spec:
   podSelector: {}
   policyTypes: [Egress]
   egress:
-    # the stores the agent queries, they run in the monitoring cluster (NodePorts, see gitops/monitoring/exposure)
+    # the stores the agent queries, in the same cluster
     - to:
-        - ipBlock:
-            cidr: 172.16.0.0/12
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
       ports:
-        - {port: 30900, protocol: TCP}   # mimir
-        - {port: 30310, protocol: TCP}   # loki
-        - {port: 30320, protocol: TCP}   # tempo
-    # kubernetes API
+        - {port: 8080, protocol: TCP}   # mimir
+        - {port: 3100, protocol: TCP}   # loki
+        - {port: 3200, protocol: TCP}   # tempo
+    # kubernetes API of this cluster (workflows, Argo CD applications) and of the platform cluster (pods, events, over the Docker network)
     - ports:
         - {port: 443, protocol: TCP}
         - {port: 6443, protocol: TCP}
@@ -37,11 +37,12 @@ spec:
     matchLabels: {app.kubernetes.io/name: alert-webhook}
   policyTypes: [Ingress]
   ingress:
-    # Grafana runs in the monitoring cluster and arrives through the NodePort of alert-webhook-external
-    # (source = a node address on the shared Docker network). Alloy is in this cluster.
+    # Grafana alerting posts the alerts, alloy scrapes /metrics
     - from:
-        - ipBlock:
-            cidr: 172.16.0.0/12
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:

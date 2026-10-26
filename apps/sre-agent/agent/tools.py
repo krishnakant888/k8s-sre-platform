@@ -181,12 +181,17 @@ def get_trace(trace_id: str) -> dict:
 _k8s_transport = None  # tests inject an httpx.MockTransport here
 
 
-def _k8s_get(path: str) -> dict:
+def _k8s_get(path: str, platform: bool = False) -> dict:
+    """platform=True reads the cluster under investigation (pods, events), another cluster when PLATFORM_K8S_URL is set."""
+    if platform and config.PLATFORM_K8S_URL:
+        base, creds = config.PLATFORM_K8S_URL, config.PLATFORM_DIR
+    else:
+        base, creds = config.K8S_URL, config.SA_DIR
     # httpx only takes `verify` when the client is built, not per request, so the API server CA needs its own client
-    token = Path(f"{config.SA_DIR}/token").read_text()  # re-read every time, projected tokens rotate
-    kwargs = {"transport": _k8s_transport} if _k8s_transport else {"verify": f"{config.SA_DIR}/ca.crt"}
+    token = Path(f"{creds}/token").read_text().strip()  # re-read every time, projected tokens rotate
+    kwargs = {"transport": _k8s_transport} if _k8s_transport else {"verify": f"{creds}/ca.crt"}
     with httpx.Client(timeout=20, **kwargs) as client:
-        r = client.get(config.K8S_URL + path, headers={"Authorization": f"Bearer {token}"})
+        r = client.get(base + path, headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
     return r.json()
 
@@ -194,7 +199,7 @@ def _k8s_get(path: str) -> dict:
 def get_pod_status(namespace: str, name_prefix: str) -> dict:
     """Phase, restarts and last termination reason of pods whose name starts with name_prefix."""
     pods = []
-    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods")["items"]:
+    for p in _k8s_get(f"/api/v1/namespaces/{namespace}/pods", platform=True)["items"]:
         if not p["metadata"]["name"].startswith(name_prefix):
             continue
         limits = {c["name"]: c.get("resources", {}).get("limits", {}).get("memory") for c in p["spec"].get("containers", [])}
@@ -220,7 +225,7 @@ def get_pod_status(namespace: str, name_prefix: str) -> dict:
 def get_k8s_events(namespace: str, minutes: int = 30) -> dict:
     cutoff = time.time() - _clamp_minutes(minutes) * 60
     events = []
-    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events")["items"]:
+    for e in _k8s_get(f"/api/v1/namespaces/{namespace}/events", platform=True)["items"]:
         ts = e.get("lastTimestamp") or e.get("eventTime") or e["metadata"]["creationTimestamp"]
         epoch = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
         if epoch < cutoff:
@@ -232,7 +237,16 @@ def get_k8s_events(namespace: str, minutes: int = 30) -> dict:
 
 def get_recent_deploys(application: str) -> dict:
     """Argo CD sync history for an application, newest first."""
-    app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{application}")
+    # the platform cluster's applications are named prod-<name> in the Argo CD that deploys both clusters
+    for name in (f"prod-{application}", application):
+        try:
+            app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{name}")
+            break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+    else:
+        raise LookupError(f"no Argo CD application prod-{application} or {application}")
     history = app.get("status", {}).get("history", [])[-6:]
     spec = app.get("spec", {})
     files = []

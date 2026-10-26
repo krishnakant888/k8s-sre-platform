@@ -29,9 +29,9 @@ Use `--only monitoring` or `--only platform` to create or destroy one of them.
 |---|---|---|
 | Grafana | monitoring | http://grafana.localhost:9080 |
 | Argo CD (deploys both clusters) | monitoring | http://argocd-monitoring.localhost:9080 |
-| Argo Workflows UI | platform | http://workflows.localhost:8080 |
+| Argo Workflows UI | monitoring | http://workflows.localhost:9080 |
+| RCA reports | monitoring | http://reports.localhost:9080 |
 | Sample API | platform | http://orders.localhost:8080/orders |
-| RCA reports | platform | http://reports.localhost:8080 |
 
 `*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy` (add `--only platform` to keep monitoring running).
 
@@ -43,35 +43,37 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 
 1. The API's downstream call becomes slow. The SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
 2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
-3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl -n sre-agent get wf`, or the Argo Workflows UI).
+3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl --context kind-monitoring -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
-   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:8080, or `kubectl -n sre-agent exec deploy/rca-viewer -- ls /reports`.
+   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:9080, or `kubectl --context kind-monitoring -n sre-agent exec deploy/rca-viewer -- ls /reports`.
 5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
 
 ## Architecture
 
 Monitoring runs in its own cluster, so a production outage, upgrade or rebuild cannot take down the tools used to debug it.
+Everything that operates the platform runs in the monitoring cluster: Argo CD, Argo Workflows, the alert webhook and the RCA viewer, next to Grafana, Loki, Mimir and Tempo. The platform cluster only runs the workloads and the collectors (plus the cluster add-ons).
 Argo CD runs only in the monitoring cluster (hub and spoke) and deploys both clusters: the platform cluster is registered in it, and its apps are Applications there with `destination: platform`. The two clusters talk over the shared Docker network (collectors push to `monitoring-control-plane:<port>`, Argo CD reaches `platform-control-plane:6443`).
 
 ```mermaid
 flowchart LR
   Git[(this repo)] -->|gitops/apps and gitops/monitoring/apps| ArgoM[Argo CD, the hub]
   subgraph platform cluster
-    ArgoM -->|registered cluster| Platform[sealed-secrets, kyverno, ingress-nginx, rbac, namespaces + netpols]
+    ArgoM -->|registered cluster| Platform[sealed-secrets, kyverno, ingress-nginx, namespaces + netpols]
     ArgoM --> Collect[observability: Alloy, kube-state-metrics]
-    ArgoM --> AW[argo-workflows]
-    ArgoM --> Demo[demo: orders-api, loadgen]
-    ArgoM --> Agent[sre-agent: alert-webhook, workflow template]
+    ArgoM --> Demo[demo: orders-api, frontend]
     Demo -->|metrics, logs, OTLP traces| Collect
-    Agent -->|create Workflow| AW
-    AW -->|steps run the agent image| Agent
   end
   subgraph monitoring cluster
     ArgoM --> Stack[observability: Mimir, Loki, Tempo, Grafana, alerting, Alloy]
+    ArgoM --> AW[argo-workflows]
+    ArgoM --> Agent[sre-agent: alert-webhook, workflow template, RCA viewer]
+    Stack -->|alert webhook| Agent
+    Agent -->|create Workflow| AW
+    AW -->|steps run the agent image| Agent
+    Agent -->|read only queries| Stack
   end
   Collect -->|push :30900 :30310 :30417| Stack
-  Agent -->|read only queries :30900 :30310 :30320| Stack
-  Stack -->|alert webhook :30880| Agent
+  Agent -->|read only token: pods, events| Platform
 ```
 
 | Namespace | Cluster | Contents |
@@ -79,18 +81,19 @@ flowchart LR
 | `argocd` | monitoring | the one Argo CD, manages itself and the platform cluster |
 | `observability` | platform | Alloy (collector, ships to the monitoring cluster), kube-state-metrics |
 | `observability` | monitoring | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
-| `argo-workflows` | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
-| `demo` | `orders-api` and a load generator |
-| `sre-agent` | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
-| `kyverno`, `ingress-nginx`, `kube-system` | policy engine, ingress controller, sealed-secrets controller |
+| `argo-workflows` | monitoring | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
+| `sre-agent` | monitoring | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
+| `demo` | platform | `orders-api` and the frontend |
+| `kyverno`, `ingress-nginx`, `kube-system` | platform | policy engine, ingress controller, sealed-secrets controller |
+| `ingress-nginx` | monitoring | ingress controller |
 
 ## Repo layout
 
 ```
 bootstrap/          kind configs (platform, monitoring) + the one imperative script
 gitops/root/        the root Applications (app of apps), one per cluster
-gitops/apps/        production cluster: one Application per component, AppProjects, sync waves
-gitops/monitoring/  monitoring cluster: its Applications, Argo CD values, Alloy values, network policies, NodePorts
+gitops/apps/        platform cluster apps (Applications live in the hub, `prod-*`): one per component, AppProjects, sync waves
+gitops/monitoring/  monitoring cluster: its Applications (including argo-workflows and sre-agent), Argo CD values, Alloy values, network policies, NodePorts
 gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
 gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards (deployed by the cluster that owns each Application)
 gitops/workloads/   orders-api, frontend, sre-agent manifests (including the workflow template)
@@ -122,7 +125,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 
 ## The AI SRE agent
 
-- **Read only by construction.** Tools are bounded (time range, row count, output size) and the ServiceAccount can only read pods, events and Argo CD applications. It can write one thing: report files on its own volume.
+- **Read only by construction.** Tools are bounded (time range, row count, output size) and the agent can only read pods and events of the platform cluster (a read-only token created by `bootstrap.py`) and Argo CD applications. It can write one thing: report files on its own volume.
 - **Playbook first.** A fixed set of queries (error ratio, p99, replicas, restarts, top error logs, slow and failing traces, pod state, events, recent Argo CD syncs) produces evidence and a rule based classification: dependency latency, dependency errors, pod crash, resource exhaustion (OOM), deploy regression or unknown.
 - **LLM on top.** With `ANTHROPIC_API_KEY`, Claude gets the evidence plus the same read only tools and must verify it, then submit a report that validates against a schema (`submit_rca`). If the key is missing or the call fails the rule based report is kept and says `mode: rule_based`.
 - **Honest output.** Reports carry the evidence with the exact query, a confidence level, contributing factors, and say when a fault injection flag is active (a drill).
