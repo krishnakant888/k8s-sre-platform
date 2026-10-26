@@ -73,7 +73,7 @@ spec:
             path: /tmp/in/alert.json
             raw: {data: "{{inputs.parameters.alert}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb78e01e5046fb81259e78b76d9ea7707ba03cf6
+        image: ghcr.io/krishnakant888/sre-agent:sha-868eef45fcb22942ed8bcb53e79cb21e7a82c376
         command: [python, -m, agent.steps, collect]
         env:   # Mimir, Loki and Tempo are in this cluster (agent/config.py has their addresses); pods and events come from the platform cluster
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
@@ -111,7 +111,7 @@ spec:
             path: /tmp/in/ctx.json
             raw: {data: "{{inputs.parameters.ctx}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb78e01e5046fb81259e78b76d9ea7707ba03cf6
+        image: ghcr.io/krishnakant888/sre-agent:sha-868eef45fcb22942ed8bcb53e79cb21e7a82c376
         command: [python, -m, agent.steps, analyze]
         env:
           - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
@@ -148,7 +148,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb78e01e5046fb81259e78b76d9ea7707ba03cf6
+        image: ghcr.io/krishnakant888/sre-agent:sha-868eef45fcb22942ed8bcb53e79cb21e7a82c376
         command: [python, -m, agent.steps, store]
         resources:
           requests: {cpu: 50m, memory: 128Mi}
@@ -181,7 +181,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-bb78e01e5046fb81259e78b76d9ea7707ba03cf6
+        image: ghcr.io/krishnakant888/sre-agent:sha-868eef45fcb22942ed8bcb53e79cb21e7a82c376
         command: [python, -m, agent.steps, notify]
         env:
           - name: NOTIFY_WEBHOOK_URL
