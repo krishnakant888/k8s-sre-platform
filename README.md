@@ -114,7 +114,7 @@ docs/               secrets, runbooks, RCA samples
 
 ### Sizing
 
-Requests and limits are set for a 32 GB workstation with WSL2 given 24 GB (`%UserProfile%\.wslconfig`: `memory=24GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
+Requests and limits are set for a 32 GB workstation with WSL2 given 20 GB (`%UserProfile%\.wslconfig`: `memory=20GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
 Mimir 2 Gi / 6 Gi (600k active series), Loki 1 Gi / 3 Gi, Tempo 1 Gi / 3 Gi, Grafana 512 Mi / 1.5 Gi, collectors 512 Mi to 768 Mi / 1.5 Gi to 2 Gi, Argo CD controller 2 Gi / 4 Gi, Kyverno admission 512 Mi / 1.5 Gi, ingress-nginx 256 Mi / 1 Gi.
 The limits add up to more than the machine has on purpose (they are caps, not reservations); real use with the three clusters idle is about 8 GB. The per-tenant limits of Mimir and Loki are 4x their defaults.
 
