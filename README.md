@@ -112,7 +112,7 @@ docs/               secrets, runbooks, RCA samples
 
 ## Fault injection: does the agent get it right?
 
-`scripts/faults.py` injects 28 kinds of fault and then checks the RCA report the agent wrote against what each fault should conclude (alert, root-cause category, application vs infrastructure level):
+`scripts/faults.py` injects 36 kinds of fault and then checks the RCA report the agent wrote against what each fault should conclude (alert, root-cause category, application vs infrastructure level):
 
 ```bash
 scripts/faults.py list                 # every fault, its alert and the expected conclusion
@@ -121,6 +121,8 @@ scripts/faults.py check                # PASS / WRONG / NO ALERT per fault (wait
 scripts/faults.py start disruptive     # ingress controller down, collector down, a node down (Argo CD sync of them is paused)
 scripts/faults.py clear
 ```
+
+`scripts/coverage_audit.py` asks the live Mimir and Loki, for every Deployment, StatefulSet and DaemonSet of the three clusters, whether metrics and logs arrive, and lists what an owner would have to fix (missing labels, memory limits, probes, PodDisruptionBudgets).
 
 Covered: crash loops by cause (missing setting, read-only filesystem, dependency refused, blocked by a network policy, unresolvable name, command that exits 0), image pull errors (missing tag, unreachable registry), missing secret or config map, unschedulable pods (capacity, node selector, unbound volume), memory kill, CPU throttling, failing liveness and readiness probes, failed job, stuck rollout, namespace quota, eviction for ephemeral storage, ingress errors, slow backend and missing backend, Argo CD applications (unrenderable manifests, unhealthy resources, policy rejection), a platform add-on scaled to zero, a collector gone, a node down. The orders-api service has its own SLO drills in `scripts/drill.sh`. Volume-full cannot be tested on kind (host-path volumes report no usage).
 

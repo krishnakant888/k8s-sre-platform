@@ -194,12 +194,29 @@ def create_cluster(cluster):
     if cluster_exists(cluster):
         print(f"cluster {cluster} already exists, leaving it alone")
         keep_running(cluster)
+        size_system_components(cluster)
         return
     run("kind", "create", "cluster", "--config", str(CLUSTERS[cluster]["kind_config"]))
     keep_running(cluster)
     # kind has no CNI here (see the kind configs); Calico provides pod networking and NetworkPolicy
     kubectl(cluster, "apply", "-f", CALICO_MANIFEST)
     kubectl(cluster, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s")
+    size_system_components(cluster)
+
+
+# components that arrive with the cluster or the CNI manifest and carry no memory limit (or a small one)
+SYSTEM_SIZING = [
+    ("kube-system", "ds/calico-node", "calico-node", "cpu=100m,memory=128Mi", "memory=512Mi"),
+    ("kube-system", "deploy/calico-kube-controllers", "calico-kube-controllers", "cpu=20m,memory=64Mi", "memory=256Mi"),
+    ("kube-system", "ds/kube-proxy", "kube-proxy", "cpu=50m,memory=64Mi", "memory=256Mi"),
+    ("kube-system", "deploy/coredns", "coredns", "cpu=100m,memory=70Mi", "memory=256Mi"),
+    ("local-path-storage", "deploy/local-path-provisioner", "local-path-provisioner", "cpu=10m,memory=32Mi", "memory=128Mi"),
+]
+
+
+def size_system_components(cluster):
+    for ns, target, container, requests, limits in SYSTEM_SIZING:
+        kubectl(cluster, "-n", ns, "set", "resources", target, "-c", container, f"--requests={requests}", f"--limits={limits}", check=False)
 
 
 def keep_running(cluster):

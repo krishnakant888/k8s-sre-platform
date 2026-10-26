@@ -546,6 +546,24 @@ data:
             annotations:
               summary: "No telemetry from the gitops cluster"
               description: "The collector of the gitops cluster stopped sending metrics: Argo CD, which deploys everything, may be down."
+          - uid: generic-workflow-failed
+            title: InvestigationWorkflowFailed
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "max by (cluster) (increase(argo_workflows_count{status=~\"Failed|Error\"}[10m])) > 0", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 1m
+            labels: {severity: ticket, service: sre-agent, namespace: sre-agent}
+            annotations:
+              summary: "An incident investigation workflow failed"
+              description: "A workflow of the SRE agent ended in Failed or Error: an alert has no report, or only a partial one."
           - uid: generic-remote-write-failing
             title: TelemetryNotDelivered
             condition: C

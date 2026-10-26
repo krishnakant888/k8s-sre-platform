@@ -55,8 +55,11 @@ redis:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "1", memory: 512Mi}
 
+# the chart has no switch for it; it is not used, so it is kept small
 applicationSet:
-  enabled: false
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
 
 # one-shot job that creates the redis password secret
 redisSecretInit:

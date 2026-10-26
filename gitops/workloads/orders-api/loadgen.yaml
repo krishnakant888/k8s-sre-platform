@@ -3,14 +3,14 @@ kind: Deployment
 metadata:
   name: loadgen
   namespace: demo
-  labels: {app.kubernetes.io/name: loadgen}
+  labels: {app.kubernetes.io/name: loadgen, app.kubernetes.io/version: "1.0.0", team: platform}
 spec:
   replicas: 1
   selector:
     matchLabels: {app.kubernetes.io/name: loadgen}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: loadgen}
+      labels: {app.kubernetes.io/name: loadgen, app.kubernetes.io/version: "1.0.0", team: platform}
     spec:
       automountServiceAccountToken: false
       securityContext:
