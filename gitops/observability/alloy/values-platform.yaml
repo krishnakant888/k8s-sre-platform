@@ -1,11 +1,11 @@
 # The stores run in the observability cluster: everything is shipped there through its NodePorts
-# (gitops/observability-cluster/exposure). kind nodes share a Docker network, which resolves container names.
+# (gitops/observability-cluster/exposure) of the node that runs them. kind nodes share a Docker network, which resolves container names.
 alloy:
   resources:
     requests: {cpu: 200m, memory: 384Mi}
     limits: {memory: 768Mi}
   extraEnv:
     - {name: CLUSTER, value: platform}
-    - {name: MIMIR_PUSH_URL, value: "http://observability-control-plane:30900/api/v1/push"}
-    - {name: LOKI_PUSH_URL, value: "http://observability-control-plane:30310/loki/api/v1/push"}
-    - {name: TEMPO_OTLP, value: "observability-control-plane:30417"}
+    - {name: MIMIR_PUSH_URL, value: "http://observability-worker:30900/api/v1/push"}
+    - {name: LOKI_PUSH_URL, value: "http://observability-worker:30310/loki/api/v1/push"}
+    - {name: TEMPO_OTLP, value: "observability-worker:30417"}

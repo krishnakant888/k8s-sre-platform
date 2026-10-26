@@ -52,7 +52,7 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 
 Each concern has its own cluster, so an outage, upgrade or rebuild of one cannot take down the tools used to deal with it:
 `platform` runs the workloads, `observability` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows and the RCA viewer, and `gitops` runs Argo CD alone.
-Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: observability`. The clusters talk over the shared Docker network (collectors push to `observability-control-plane:<port>`, Argo CD reaches `platform-control-plane:6443` and `observability-control-plane:6443`).
+Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: observability`. The clusters talk over the shared Docker network (collectors push to `observability-worker:<port>`, Argo CD reaches `platform-control-plane:6443` and `observability-control-plane:6443`).
 
 ```mermaid
 flowchart LR
@@ -77,7 +77,7 @@ flowchart LR
   end
   Argo -->|registered cluster| Platform
   Argo -->|registered cluster| Stack
-  Collect -->|push :30900 :30310 :30417| Stack
+  Collect -->|push NodePorts :30900 :30310 :30417| Stack
   Agent -->|read only tokens: pods, events, Argo CD applications| Platform
   Agent -.->|deploy history| Argo
 ```
