@@ -60,4 +60,6 @@ spec:
       namespace: demo
     - name: platform
       namespace: sre-agent
+    - name: platform
+      namespace: sandbox
   clusterResourceWhitelist: []

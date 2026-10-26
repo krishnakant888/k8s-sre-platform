@@ -1,0 +1,71 @@
+# A namespace for workloads that were never prepared for observability: the proof that a new app is observed with no
+# per-app work. The collectors find its pods, logs and events on their own; the policies below are the only thing a
+# namespace needs (default deny, DNS, traffic from the ingress controller, and scraping by the collector).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox
+  labels:
+    app.kubernetes.io/part-of: platform
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: sandbox
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {cpu: 25m, memory: 32Mi}
+      default: {memory: 128Mi}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress-and-collector
+  namespace: sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: ingress-nginx}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
