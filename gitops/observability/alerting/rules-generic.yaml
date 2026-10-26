@@ -553,7 +553,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster) (increase(argo_workflows_count{status=~\"Failed|Error\"}[10m])) > 0", instant: true}
+                model: {refId: A, expr: "max by (cluster) (increase(argo_workflows_total_count{phase=~\"Failed|Error\"}[10m])) > 0", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
