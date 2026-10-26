@@ -2,6 +2,7 @@
 answers and checks the diagnosis (cause, layer), the priority and that the report validates and reads as a runbook."""
 import time
 
+import httpx
 import pytest
 
 from agent import generic, rca, tools
@@ -263,3 +264,81 @@ def test_log_loss_names_the_store_that_is_down(monkeypatch):
     r = investigate(alert("LogsDropped", cluster="platform", service="alloy"))
     assert r.root_cause.category == "telemetry_gap"
     assert "loki" in r.fault_domain.component and "observability" in r.fault_domain.component
+
+
+def test_a_pending_pod_without_container_statuses_is_still_listed(monkeypatch):
+    def handler(request):
+        if request.url.path.endswith("/pods"):
+            return httpx.Response(200, json={"items": [{"metadata": {"name": "fault-nodeselector-7d9-abcde", "labels": {}}, "spec": {"containers": [{"name": "app"}]},
+                                                        "status": {"phase": "Pending", "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector."}]}}]})
+        return httpx.Response(200, json={"items": []})
+
+    monkeypatch.setattr(tools, "_k8s_transport", httpx.MockTransport(handler))
+    import pathlib, tempfile
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "token").write_text("t")
+    monkeypatch.setattr(tools.config, "SA_DIR", str(d))
+    out = tools.get_pod_status("sandbox", "fault-nodeselector", cluster="observability")
+    assert out["pods"][0]["waiting"] == "Unschedulable" and out["pods"][0]["ready"] is False
+    assert "node affinity" in out["pods"][0]["waiting_message"]
+
+
+def test_job_pod_exit_comes_from_state_not_last_state(monkeypatch):
+    import pathlib, tempfile
+
+    def handler(request):
+        return httpx.Response(200, json={"items": [{"metadata": {"name": "fault-job-fail-z97w6", "labels": {}}, "spec": {"containers": [{"name": "app"}], "nodeName": "n1"},
+                                                    "status": {"phase": "Failed", "containerStatuses": [{"name": "app", "ready": False, "restartCount": 0, "state": {"terminated": {"reason": "Error", "exitCode": 2}}}]}}]})
+
+    monkeypatch.setattr(tools, "_k8s_transport", httpx.MockTransport(handler))
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "token").write_text("t")
+    monkeypatch.setattr(tools.config, "SA_DIR", str(d))
+    out = tools.get_pod_status("sandbox", "fault-job-fail", cluster="observability")
+    assert out["pods"][0]["last_terminated"]["exit_code"] == 2
+
+
+def test_events_are_filtered_by_name_before_the_list_is_cut(monkeypatch):
+    import pathlib, tempfile
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    items = [{"metadata": {"creationTimestamp": now}, "involvedObject": {"name": f"noise-{i}"}, "type": "Warning", "reason": "BackOff", "message": "x", "lastTimestamp": now} for i in range(60)]
+    items.append({"metadata": {"creationTimestamp": now}, "involvedObject": {"name": "fault-badimage-5d5-abcde"}, "type": "Warning", "reason": "Failed", "message": "manifest unknown", "lastTimestamp": "2026-01-01T00:00:00Z" if False else now})
+    monkeypatch.setattr(tools, "_k8s_transport", httpx.MockTransport(lambda r: httpx.Response(200, json={"items": items})))
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "token").write_text("t")
+    monkeypatch.setattr(tools.config, "SA_DIR", str(d))
+    out = tools.get_k8s_events("sandbox", 60, cluster="observability", name_prefix="fault-badimage")
+    assert [e["object"] for e in out["events"]] == ["fault-badimage-5d5-abcde"]
+
+
+def test_pull_error_message_is_taken_from_the_informative_event(monkeypatch):
+    fake(monkeypatch, pods=[pod(waiting="ImagePullBackOff")], events=[
+        event("Failed", "Error: ImagePullBackOff"),
+        event("Failed", 'Failed to pull image "nginx:9.9.9": rpc error: code = NotFound desc = failed to pull and unpack image: manifest unknown')])
+    r = investigate(alert("ContainerWaiting", cluster="platform", namespace="demo", pod="orders-api-7d9f8b5c6d-abcde", reason="ImagePullBackOff"))
+    assert r.fault_domain.layer == "application" and "manifest unknown" in r.what_happened
+
+
+def test_a_liveness_probe_that_kills_a_healthy_process_is_not_called_an_exit_code_zero(monkeypatch):
+    fake(monkeypatch, pods=[pod(waiting="CrashLoopBackOff", restarts=6, term=("Completed", 0), ready=False)], events=[event("Unhealthy", "Liveness probe failed: HTTP probe failed with statuscode: 404")], logs=[("nginx: [notice] signal 3 received, exiting", 2)])
+    r = investigate(alert("PodCrashLooping", cluster="platform", namespace="sandbox", pod="orders-api-7d9f8b5c6d-abcde"))
+    assert r.root_cause.category == "probe_failure"
+
+
+def test_failed_job_pod_is_diagnosed_from_its_exit_and_log(monkeypatch):
+    fake(monkeypatch, pods=[{**pod("fault-job-fail-z97w6", ready=False, term=("Error", 2)), "phase": "Failed"}], logs=[("migration failed: connection refused to db:5432", 1)])
+    r = investigate(alert("JobFailed", cluster="platform", namespace="sandbox", job_name="fault-job-fail"))
+    assert r.root_cause.category == "dependency_unreachable"
+
+
+def test_one_workload_has_one_target_and_a_recent_twin_is_found():
+    from agent import incident
+    a = alert("ContainerWaiting", cluster="platform", namespace="sandbox", pod="fault-crash-b48f849d-dvhtf")
+    b = alert("DeploymentReplicasUnavailable", cluster="platform", namespace="sandbox", deployment="fault-crash")
+    assert incident.target_key(a) == incident.target_key(b) == "platform-sandbox-fault-crash"
+    other = alert("ContainerWaiting", cluster="platform", namespace="sandbox", pod="fault-oom-7cb4d9866c-k9mgf")
+    assert incident.target_key(other) != incident.target_key(a)
+    young = {"metadata": {"name": "incident-x", "creationTimestamp": rca.iso(NOW - 600)}}
+    old = {"metadata": {"name": "incident-y", "creationTimestamp": rca.iso(NOW - 4000)}}
+    assert incident.recent_duplicate([young], NOW) == "incident-x"
+    assert incident.recent_duplicate([old], NOW) is None
