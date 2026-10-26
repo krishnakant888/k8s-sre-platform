@@ -1,20 +1,20 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: observability-config
+  name: prod-observability-config
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "1"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: observability
+  project: prod-observability
   source:
     repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
     targetRevision: main
     path: gitops/observability/config
   destination:
-    server: https://kubernetes.default.svc
+    name: platform   # registered in this Argo CD by bootstrap.py
     namespace: observability
   syncPolicy:
     automated:

@@ -1,14 +1,14 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: alloy
+  name: prod-alloy
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "2"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: observability
+  project: prod-observability
   sources:
     - repoURL: https://grafana.github.io/helm-charts
       chart: alloy
@@ -21,7 +21,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    server: https://kubernetes.default.svc
+    name: platform   # registered in this Argo CD by bootstrap.py
     namespace: observability
   syncPolicy:
     automated:
