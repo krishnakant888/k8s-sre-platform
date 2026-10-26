@@ -23,7 +23,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "increase(kube_pod_container_status_restarts_total[10m])", instant: true}
+                model: {refId: A, expr: "max by (cluster, namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]))", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A > 2"}
@@ -40,7 +40,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: 'increase(kube_pod_container_status_restarts_total[5m]) and on (namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1', instant: true}
+                model: {refId: A, expr: 'max by (cluster, namespace, pod, container) (increase(kube_pod_container_status_restarts_total[5m]) and on (cluster, namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1)', instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A > 0"}
@@ -57,7 +57,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "kube_deployment_status_replicas_unavailable", instant: true}
+                model: {refId: A, expr: "max by (cluster, namespace, deployment) (kube_deployment_status_replicas_unavailable)", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A > 0"}

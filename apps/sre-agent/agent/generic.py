@@ -26,6 +26,8 @@ FAMILIES = {
     "IngressHighErrorRate": "ingress", "IngressSlow": "ingress",
     "ArgoAppOutOfSync": "argocd", "ArgoAppUnhealthy": "argocd", "ArgoSyncFailing": "argocd",
     "ClusterTelemetryMissing": "telemetry", "TelemetryNotDelivered": "telemetry", "LogsDropped": "telemetry",
+    "PodCrashLooping": "container", "PodOOMKilled": "memory", "DeploymentReplicasUnavailable": "rollout",
+    "DatasourceError": "datasource", "DatasourceNoData": "datasource",   # Grafana's own alerts when a rule cannot query its datasource
 }
 
 ERROR_LINES = r"(?i)error|fatal|panic|exception|traceback|refused|denied|timeout|unable|failed|cannot"
@@ -274,6 +276,15 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         node_facts(sorted({p["node"] for p in sig["pods"] if p.get("node")}))
         sig["ongoing"] = (sig["apiserver_error_ratio"] > 0.02 if family == "controlplane" else sig["dns_servfail"] > 0.02) or sig["apiserver_p99"] > 1
 
+    elif family == "datasource":
+        uid = labels.get("datasource_uid") or labels.get("ref_id") or "mimir"
+        backend = uid if uid in ("mimir", "loki", "tempo") else "mimir"
+        cluster, ns, workload = "observability", "observability", backend
+        sig.update({"cluster": cluster, "namespace": ns, "workload": backend, "datasource_backend": backend})
+        pods_and_events(backend, ns)
+        logs_for(f'cluster="observability", namespace="observability", service="grafana"', "Grafana error lines")
+        sig["ongoing"] = any(not p["ready"] for p in sig["pods"]) or not sig["pods"]
+
     elif family == "telemetry":
         target = labels.get("cluster") or cluster
         up = _q(f'max by (job) (up{{cluster="{target}"}})', 15)
@@ -289,6 +300,11 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         pods_and_events("alloy", "observability")
         logs_for(f'cluster="{target}", namespace="observability", service="alloy"', "collector error lines")
         sig["ongoing"] = sig["telemetry_age"] is None or sig["telemetry_age"] > 120 or sig["remote_write_failed"] > 0 or sig["log_dropped"] > 0
+
+    if family == "target":
+        upq = _q(f'min(up{{cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*"}})', 10)
+        sig["target_up_now"] = _num(upq, "last")
+        sig["ongoing"] = sig["target_up_now"] in (None, 0.0) or sig["ongoing"]
 
     # --- generic extras for every family: traces are looked up only when the workload speaks HTTP and is traced
     if workload and family in ("container", "rollout", "ingress"):
@@ -574,6 +590,27 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["remote write failures or dropped log lines"], [f"{_ctl('observability')} -n observability get pods  # Mimir and Loki Running?", f"{_ctl(target)} -n observability logs -l app.kubernetes.io/name=alloy --tail=40"],
                     ["Add a retry queue sized for 15 minutes, and alert on the failure rate (TelemetryNotDelivered)"], ["rate(prometheus_remote_storage_samples_failed_total[5m]) is 0"], f"Data from {target} is lost while writes fail.")
 
+    if family == "datasource":
+        be = sig.get("datasource_backend", "mimir")
+        down = [p for p in pods if not p.get("ready")]
+        recent = [p for p in pods if p.get("restarts", 0) > 0]
+        if not pods or down:
+            return Diag("telemetry_gap", "infrastructure", f"{be} in the observability cluster", "high", f"Grafana cannot query {be}: it is not running.",
+                        f"Grafana's alert rules could not query `{be}` (alert {alertname}) because `{be}` has no ready pod ({', '.join(f'{p['pod']} {p['phase']}' for p in pods[:2]) or 'none found'}). While it is down, no alert that depends on it can fire, so the observability stack is blind.",
+                        [f"{be} pod not ready", "Grafana itself answers"], [f"{_ctl('observability')} -n observability describe pod -l app.kubernetes.io/name={be} | tail -20", f"{_ctl('observability')} -n observability logs -l app.kubernetes.io/name={be} --tail=50"],
+                        ["Give the stores a PodDisruptionBudget and memory headroom (OOM is the usual cause), and alert on their absence from outside the cluster"], [f"{_ctl('observability')} -n observability get pods  # {be} Running"], "Alerting is blind until the datasource is back.")
+        return Diag("telemetry_gap", "infrastructure", f"{be} restarted or was unreachable for a short time", "medium", f"{be} was briefly unreachable for Grafana.",
+                    f"Grafana could not query `{be}` for a short time (alert {alertname}); `{be}` is ready now" + (f" and restarted {sum(p['restarts'] for p in recent)} time(s) recently" if recent else "") + ". Typical causes are a restart of the node or of the pod itself. Alert rules that evaluated in that window reported an error instead of a result.",
+                    [f"{be} is ready now", "a short outage, not an ongoing one"] + ([f"{be} restarted"] if recent else []), [f"{_ctl('observability')} -n observability logs -l app.kubernetes.io/name={be} --previous --tail=30  # why it restarted"],
+                    ["If it repeats, give the store more memory or a PodDisruptionBudget, and keep `noDataState`/`execErrState` on the rules deliberate"], [f"{_ctl('observability')} -n observability get pods  # no new restarts"], "A short gap in alert evaluation.")
+
+    if family == "target" and pods and all(p.get("ready") for p in pods):
+        return Diag("scrape_failure", "infrastructure", f"metrics endpoint of {wl} is not reachable by the collector", "low",
+                    f"{wl} runs and is ready, but the collector cannot scrape its metrics.",
+                    f"The pods of `{ns}/{wl}` ({cluster}) are Running and ready, yet the collector's scrape of them fails" + (" (and still does)" if sig.get("target_up_now") == 0 else " (it works again now)") + ". The process is not what is down: the metrics port, path or protocol is wrong, the endpoint is slow, or a network policy blocks the collector.",
+                    ["pods are ready", "only the scrape fails"], [f"{k} -n {ns} get networkpolicy  # does one allow the collector (namespace observability, alloy) in?", f"{k} -n {ns} describe pod {pod.get('pod', wl)} | grep -i -A3 annotations  # port and path of the scrape"],
+                    ["Name the metrics port `metrics` (the collector then finds it with no annotation) and allow the collector in the namespace's network policy"], [f"up{{cluster=\"{cluster}\",namespace=\"{ns}\"}} == 1"], f"No metrics (and no alerts based on them) for {wl}.")
+
     # ------------------------------------------------------------------ fallback
     return Diag("unknown", "unknown", f"{wl or alertname}", "low", f"{alertname} fired but the collected signals do not point to a single cause.",
                 f"The alert {alertname} fired for `{ns + '/' if ns else ''}{wl}` in the {cluster} cluster. The metrics, logs and events gathered do not isolate a cause; see the evidence below for what was checked.",
@@ -601,6 +638,9 @@ def _priority(alert: dict, ctx: dict, d: Diag) -> Priority:
             why.append(f"{len(ready)} replica(s) still serve, so users see reduced capacity, not an outage")
     else:
         why.append("no direct user traffic depends on it" if family not in ("controlplane", "dns", "telemetry", "argocd") else "it is platform infrastructure")
+        if family in ("container", "memory", "cpu", "rollout", "job", "target", "scheduling", "datasource"):
+            level = max(level, 3)   # a platform component without user impact never outranks next business day
+            why.append("a platform component with no direct user impact is capped at P3")
 
     if family in ("controlplane", "dns") and d.category in ("control_plane_degraded", "dns_failure"):
         level = 1 if (sig.get("apiserver_error_ratio", 0) >= 0.5 or sig.get("dns_servfail", 0) >= 0.5) else min(level, 2)

@@ -25,7 +25,7 @@ data:
     policies:
       - orgId: 1
         receiver: sre-agent
-        group_by: [alertname, namespace, service, pod]
+        group_by: [alertname, cluster, namespace, service, pod, node, ingress, name]
         group_wait: 10s
         group_interval: 1m
         repeat_interval: 4h
