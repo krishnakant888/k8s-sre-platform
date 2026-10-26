@@ -41,6 +41,11 @@ ruler:
   rule_path: /data/ruler
   evaluation_interval: 30s
 limits:
-  max_global_series_per_user: 400000   # three clusters, plus the old series that linger for two hours after pods restart
+  # Per-tenant limits at 4x Mimir's defaults (shown after each). Three clusters push to one tenant, and every pod restart
+  # leaves its old series in the head for about two hours, so the defaults were hit within minutes of a Docker restart.
+  max_global_series_per_user: 600000       # 150000
+  max_global_series_per_metric: 80000      # 20000
+  ingestion_rate: 40000                    # samples/s, 10000
+  ingestion_burst_size: 800000             # 200000
   compactor_blocks_retention_period: 168h
   ruler_max_rules_per_rule_group: 50
