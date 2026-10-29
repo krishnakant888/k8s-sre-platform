@@ -28,9 +28,19 @@ discovery.kubernetes "pods" {
   role = "pod"
 }
 
+// pods that finished or failed have nothing to scrape and nothing new to tail; a tailer per dead pod is memory spent on silence
+discovery.relabel "live_pods" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_pod_phase"]
+    regex         = "Succeeded|Failed"
+    action        = "drop"
+  }
+}
+
 // pods that opt in with annotations (prometheus.io/scrape, port, path)
 discovery.relabel "annotated_pods" {
-  targets = discovery.kubernetes.pods.targets
+  targets = discovery.relabel.live_pods.output
   rule {
     source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
     regex         = "true"
@@ -97,7 +107,7 @@ prometheus.scrape "annotated_pods" {
 // pods that expose a container port named "metrics" are scraped with no annotation at all (Argo CD, ingress-nginx,
 // CoreDNS, and any chart that follows the convention). Pods that carry the annotation are left to the pipeline above.
 discovery.relabel "named_metrics_port" {
-  targets = discovery.kubernetes.pods.targets
+  targets = discovery.relabel.live_pods.output
   rule {
     source_labels = ["__meta_kubernetes_pod_container_port_name"]
     regex         = "(http-)?metrics|prom-metrics"
@@ -257,7 +267,7 @@ loki.write "loki" {
 }
 
 discovery.relabel "pod_logs" {
-  targets = discovery.kubernetes.pods.targets
+  targets = discovery.relabel.live_pods.output
   rule {
     source_labels = ["__meta_kubernetes_namespace"]
     target_label  = "namespace"
