@@ -13,7 +13,7 @@ Kubernetes and Argo CD -> structured RCA (files on a volume, JSON log in Loki, o
 
 ## Quick start
 
-Needs Linux or WSL2 with: Docker, [kind](https://kind.sigs.k8s.io), kubectl, helm, Python 3.9+ (standard library only). About 10 GB of RAM free.
+Needs Linux or WSL2 with: Docker, [kind](https://kind.sigs.k8s.io), kubectl, helm, Python 3.9+ (standard library only). About 16 GB of RAM for Docker (WSL2: `memory=16GB` in `.wslconfig`, see Sizing); the three clusters use about 9 GB idle.
 
 ```bash
 git clone https://github.com/krishnakant888/k8s-sre-platform && cd k8s-sre-platform
@@ -22,7 +22,12 @@ python3 bootstrap/bootstrap.py
 ```
 
 The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `observability` (1 control plane, 1 worker) and `gitops` (1 control plane).
-Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints the logins at the end.
+Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints every URL and login at the end (Argo CD and Grafana `admin` with random passwords, plus the token for the sample API's fault endpoints). The passwords are random per bootstrap, so each person who bootstraps gets their own. Print them again at any time with:
+
+```bash
+python3 bootstrap/bootstrap.py --credentials
+```
+
 Use `--only platform`, `--only observability` or `--only gitops` to create or destroy one of them.
 
 | What | Cluster | URL |
@@ -116,15 +121,21 @@ docs/               secrets, runbooks, RCA samples
 
 ```bash
 scripts/faults.py list                 # every fault, its alert and the expected conclusion
-scripts/faults.py start all            # 25 faults that leave the platform alone, in the sandbox namespace
+scripts/faults.py run-each all disruptive   # one fault at a time: inject, wait for its report, judge it, clean up (about 6 hours for all)
+scripts/faults.py run-each crash oom        # just these
+scripts/faults.py start all            # or inject the 31 non-disruptive faults together, in the sandbox namespace
 scripts/faults.py check                # PASS / WRONG / NO ALERT per fault (wait ~15 minutes after start)
-scripts/faults.py start disruptive     # ingress controller down, collector down, a node down (Argo CD sync of them is paused)
+scripts/faults.py start disruptive     # ingress controller down, collector down, log store down, a partition, a node down (Argo CD sync of them is paused)
 scripts/faults.py clear
 ```
+
+`run-each` also prints which alerts Grafana raised for the fault and how it grouped them (every alert instance is its own notification), and how many investigations started.
 
 `scripts/coverage_audit.py` asks the live Mimir and Loki, for every Deployment, StatefulSet and DaemonSet of the three clusters, whether metrics and logs arrive, and lists what an owner would have to fix (missing labels, memory limits, probes, PodDisruptionBudgets).
 
 Covered: crash loops by cause (missing setting, read-only filesystem, dependency refused, blocked by a network policy, unresolvable name, command that exits 0), image pull errors (missing tag, unreachable registry), missing secret or config map, unschedulable pods (capacity, node selector, unbound volume), memory kill, CPU throttling, failing liveness and readiness probes, failed job, stuck rollout, namespace quota, eviction for ephemeral storage, ingress errors, slow backend and missing backend, Argo CD applications (unrenderable manifests, unhealthy resources, policy rejection), a platform add-on scaled to zero, a collector gone, a node down. The orders-api service has its own SLO drills in `scripts/drill.sh`. Volume-full cannot be tested on kind (host-path volumes report no usage).
+
+**Results, one fault at a time:** 35 of the 36 faults produce a report with the expected alert, cause and layer; 0 are wrong. The first full run found 10 failures (5 wrong reports, 5 without a report); the fixes were in the agent (pending pods under a rollout alert, sibling workloads sharing a name prefix, a scale-to-zero that self-heal already reverted, an ingress controller with no pod rated P4) and in the test harness (root apps undoing the disruptive faults, a drill that took 15 minutes to turn unhealthy). The one fault with no report is `partition`: it cuts off the only node that runs Grafana, the alert path and the agent, so nothing is left to alert or investigate. That is the case for an independent dead man's switch (roadmap). Sample reports: [docs/rca-samples](docs/rca-samples).
 
 ## Observability
 
@@ -156,8 +167,8 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 
 ## The AI SRE agent
 
-- **Read only by construction.** Tools are bounded (time range, row count, output size) and the agent can only read pods and events of the platform cluster and Argo CD applications (read-only tokens created by `bootstrap.py`). It can write one thing: report files on its own volume.
-- **Playbook first.** A fixed set of queries (error ratio, p99, replicas, restarts, top error logs, slow and failing traces, pod state, events, recent Argo CD syncs) produces evidence and a rule based classification: dependency latency, dependency errors, pod crash, resource exhaustion (OOM), deploy regression or unknown.
+- **Read only by construction.** Tools are bounded (time range, row count, output size) and the agent can only read pods and events of the platform and gitops clusters and the Argo CD applications (read-only tokens created by `bootstrap.py`; its own cluster through its service account). It can write one thing: report files on its own volume.
+- **Playbook first.** A fixed set of queries (error ratio, p99, replicas, restarts, top error logs, slow and failing traces, pod state, events, recent Argo CD syncs) produces evidence and a rule based classification of about 30 causes (dependency latency, crash by reason, image pull, scheduling, quota, OOM versus leak, probes, ingress backend, Argo CD sync, node, DNS, control plane, telemetry gap and more). Every report names the layer (application or infrastructure) with its reasoning, the priority with its rationale, the fix as commands, and the observability gaps. See [docs/observability-architecture.md](docs/observability-architecture.md).
 - **LLM on top.** With `ANTHROPIC_API_KEY`, Claude gets the evidence plus the same read only tools and must verify it, then submit a report that validates against a schema (`submit_rca`). If the key is missing or the call fails the rule based report is kept and says `mode: rule_based`.
 - **Honest output.** Reports carry the evidence with the exact query, a confidence level, contributing factors, and say when a fault injection flag is active (a drill).
 - Tool output is treated as data, never as instructions, secrets are redacted from log lines, and the loop has a step limit.
@@ -179,7 +190,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 ## Design decisions and trade-offs
 
 - **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and ingress-nginx is deployed by Argo CD (host ports 8080/8443 map to its NodePorts).
-- **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster with their own Argo CD, so observability survives a production rebuild. Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
+- **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster, so observability survives a production rebuild. A third cluster, `gitops`, runs the one Argo CD that deploys both, so the deployer depends on neither (and holds the only credentials for them). Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
 - **Alerting lives in Grafana.** Alert rules, the contact point and the notification policy are ConfigMaps in Git that the Grafana sidecar loads. Mimir only runs the SLO recording rules. One UI for dashboards, alert state and silences, and no separate Alertmanager to operate or keep alive.
@@ -201,7 +212,7 @@ The Argo CD apps, projects, policies, dashboards, rules and the agent are unchan
 2. Object storage and distributed modes for Mimir, Loki, Tempo.
 3. Progressive delivery (Argo Rollouts) with SLO-based analysis, so a bad deploy is rolled back automatically.
 4. Agent: human approval step (a suspend) in the workflow before any remediation, remediation playbooks (restart, rollback PR), evaluation suite of recorded incidents, cost and token budgets.
-5. Multi-cluster Argo CD with ApplicationSets, per-environment overlays.
+5. A dead man's switch: a second, independent watcher that pages when the alert path or the agent itself stops (the faults that cut the telemetry or the alert path cannot produce a report, see Fault injection). Per-environment overlays with ApplicationSets.
 6. Alert-driven SLO reporting workflow (weekly) and a status page.
 7. Kyverno image signature verification (cosign) and SBOMs.
 
