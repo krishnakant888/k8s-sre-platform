@@ -340,6 +340,7 @@ def _():
 
 def clear():
     save_state({})
+    kubectl(PLATFORM, "delete", "pods", "-A", "--field-selector=status.phase=Failed", check=False)   # evicted pods stay as objects
     for ns in (NS, "demo"):
         kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)

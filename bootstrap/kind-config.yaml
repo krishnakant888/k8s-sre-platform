@@ -6,6 +6,13 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
 # node image pinned: Argo CD 2.12 cannot diff objects from much newer API servers (status fields it does not know)
+# evicted and finished pods stay as objects until this many exist (default 12500); every one costs API server memory
+kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    controllerManager:
+      extraArgs:
+        terminated-pod-gc-threshold: "100"
 nodes:
   - role: control-plane
     image: kindest/node:v1.31.0
