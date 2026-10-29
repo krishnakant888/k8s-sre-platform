@@ -141,7 +141,7 @@ def test_sibling_workload_with_the_same_prefix_is_not_mixed_in(monkeypatch):
     ("0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims.", "infrastructure"),
 ])
 def test_rollout_alert_with_a_pending_pod_is_a_scheduling_failure(monkeypatch, message, layer):
-    pending = {**pod(), "phase": "Pending", "node": None}
+    pending = {**pod(), "phase": "Pending", "node": None, "waiting": "Unschedulable"}   # what get_pod_status reports for a pod the scheduler rejected
     fake(monkeypatch, pods=[pending], events=[event("FailedScheduling", message)])
     r = investigate(alert("DeploymentReplicasUnavailable", cluster="platform", namespace="sandbox", deployment="orders-api"))
     assert r.root_cause.category == "scheduling_failure"

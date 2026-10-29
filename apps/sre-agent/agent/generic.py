@@ -423,7 +423,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         where = f"`{ns}/{wl}` in the {cluster} cluster"
 
         sched = _ev(sig, "FailedScheduling")
-        unplaced = [p for p in pods if p.get("phase") == "Pending" and not p.get("waiting")]
+        unplaced = [p for p in pods if p.get("phase") == "Pending" and p.get("waiting") in (None, "", "Unschedulable")]   # Unschedulable is the scheduler's verdict, not a container's waiting reason
         if family == "scheduling" or (sched and (not pods or unplaced)):
             text = (sched[0]["message"] if sched else "").lower()
             if "insufficient" in text:
