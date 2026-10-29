@@ -149,9 +149,10 @@ type: kubernetes.io/service-account-token
 """
 
 
-def run(*cmd, check=True, capture=False, stdin=None):
-    hide = ("password", "token", "api_key")
-    print("+", " ".join("[hidden]" if any(h in c.lower() for h in hide) else c for c in cmd), flush=True)
+def run(*cmd, check=True, capture=False, stdin=None, quiet=False):
+    hide = ("password", "token", "api_key", "ca.crt")
+    if not quiet:
+        print("+", " ".join("[hidden]" if any(h in c.lower() for h in hide) else c for c in cmd), flush=True)
     return subprocess.run(
         cmd, check=check, text=True, input=stdin,
         stdout=subprocess.PIPE if capture else None,
@@ -243,7 +244,7 @@ def secret_exists(cluster, ns, name):
 
 
 def read_secret(cluster, ns, name, key):
-    out = kubectl(cluster, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False).stdout
+    out = kubectl(cluster, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}", capture=True, check=False, quiet=True).stdout
     return base64.b64decode(out).decode() if out else ""
 
 
@@ -346,20 +347,25 @@ def build(cluster):
 
 
 def argocd_password():
-    return read_secret(HUB, ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(initial secret already removed)"
+    return read_secret(HUB, ARGOCD_NS, "argocd-initial-admin-secret", "password") or "(the initial secret was deleted: the password was changed, or reset it with `argocd admin initial-password` / the argocd-secret)"
 
 
-def summary(clusters):
-    print("\nEverything else is now deployed by the Argo CD of the gitops cluster, into the other two. The first sync takes about 10 minutes.")
-    print("URLs work once ingress-nginx has synced.\n")
+def summary(clusters, first_run=True):
+    if first_run:
+        print("\nEverything else is now deployed by the Argo CD of the gitops cluster, into the other two. The first sync takes about 10 minutes.")
+        print("URLs work once ingress-nginx has synced.")
+    print("\nWhere to log in (the passwords are random per bootstrap; print them again with: python3 bootstrap/bootstrap.py --credentials)\n")
     if HUB in clusters:
         print("Argo CD         http://argocd.localhost:7080               admin / " + argocd_password())
     if "observability" in clusters:
-        print("Grafana         http://grafana.localhost:9080              admin / " + read_secret("observability", "observability", "grafana-admin", "admin-password"))
-        print("Workflows       http://workflows.localhost:9080")
-        print("RCA reports     http://reports.localhost:9080")
+        print("Grafana         http://grafana.localhost:9080              admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
+        print("Workflows       http://workflows.localhost:9080            no login (local cluster)")
+        print("RCA reports     http://reports.localhost:9080              no login (local cluster)")
     if "platform" in clusters:
-        print("Orders          http://orders.localhost:8080/orders")
+        print("Orders          http://orders.localhost:8080/orders        sample API, no login")
+        chaos = read_secret("platform", "demo", "orders-api-chaos", "CHAOS_TOKEN")
+        if chaos:
+            print("Fault token     X-Chaos-Token: " + chaos + "   (header for the sample API's POST /chaos/* endpoints)")
     print(f"\nWatch the deployments:  kubectl --context {context(HUB)} -n {ARGOCD_NS} get applications")
 
 
@@ -367,9 +373,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--destroy", action="store_true")
     ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
+    ap.add_argument("--credentials", action="store_true", help="print the URLs and logins of the clusters that exist, and exit")
     args = ap.parse_args()
 
     clusters = [args.only] if args.only else list(CLUSTERS)
+    if args.credentials:
+        summary([c for c in clusters if cluster_exists(c)], first_run=False)
+        return
 
     preflight()
     if args.destroy:
