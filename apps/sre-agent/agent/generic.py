@@ -65,6 +65,16 @@ def _workload(labels: dict) -> str:
     return labels.get("ingress") or labels.get("name") or labels.get("node") or labels.get("persistentvolumeclaim") or ""
 
 
+def _pod_rx(workload: str) -> str:
+    """Pod names of one workload: `orders-api` must not also match `orders-api-chaos-...` (a Deployment, StatefulSet or DaemonSet pod)."""
+    return f"{workload}(-[a-z0-9]{{8,10}})?-[a-z0-9]{{5}}|{workload}-[0-9]+"
+
+
+def _obj_rx(workload: str) -> str:
+    """Names of events' objects of one workload: the workload itself, its ReplicaSets and its pods."""
+    return f"{workload}(-[a-z0-9]{{8,10}})?(-[a-z0-9]{{5}})?|{workload}-[0-9]+"
+
+
 def _sel(cluster: str, ns: str = "", extra: str = "") -> str:
     parts = [f'cluster="{cluster}"'] + ([f'namespace="{ns}"'] if ns else []) + ([extra] if extra else [])
     return ", ".join(parts)
@@ -113,6 +123,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             sig["pods"] = []
         else:
             sig["pods"] = pods.get("pods", [])
+            own = [p for p in sig["pods"] if re.fullmatch(_pod_rx(prefix), p["pod"])]
+            sig["pods"] = own or sig["pods"]   # the prefix may also match sibling workloads (`app` and `app-worker`)
             add("kubernetes", f"pods {namespace}/{prefix}* in {cluster}",
                 f"{len(sig['pods'])} pods; " + ", ".join(f"{p['pod']}: {p['phase']}{'' if p['ready'] else ' not ready'}, restarts {p['restarts']}"
                                                          + (f", waiting {p['waiting']}" if p.get('waiting') else "")
@@ -120,8 +132,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                                                          for p in sig["pods"][:4]))
         ev = tools.call_tool("get_k8s_events", {"namespace": namespace, "minutes": 120, "cluster": cluster, "name_prefix": prefix})
         raw["events"] = ev
-        names = {p["pod"] for p in sig["pods"]} | {prefix}
-        sig["events"] = [e for e in ev.get("events", []) if any(e["object"].startswith(n) or n.startswith(e["object"]) for n in names)] if "error" not in ev else []
+        names = {p["pod"] for p in sig["pods"]}
+        sig["events"] = [e for e in ev.get("events", []) if e["object"] in names or e["object"].startswith(tuple(names)) or re.fullmatch(_obj_rx(prefix), e["object"])] if "error" not in ev else []
         if "error" in ev:
             sig["tool_errors"].append(f"event lookup in {cluster} failed: {ev['error'][:120]}")
         if sig["events"]:
@@ -173,7 +185,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         pods_and_events(workload or pod_prefix, ns)
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{workload}"}})', 5), "last")
         sig["dns_servfail"] = _num(_q(f'sum(rate(coredns_dns_responses_total{{cluster="{cluster}", rcode="SERVFAIL"}}[5m])) / sum(rate(coredns_dns_responses_total{{cluster="{cluster}"}}[5m]))', 15), "max") or 0.0
-        sel = _sel(cluster, ns, f'pod=~"{workload}-.*|{labels["pod"]}"' if labels.get("pod") else f'pod=~"{workload}-.*"')
+        sel = _sel(cluster, ns, f'pod=~"{_pod_rx(workload)}|{labels["pod"]}"' if labels.get("pod") else f'pod=~"{_pod_rx(workload)}"')
         rst = _q(f'sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{lookback_minutes}m]))', 5)
         sig["restarts"] = _num(rst, "last") or 0.0
         mem = _q(f'sum(container_memory_working_set_bytes{{{sel}, container!=""}})')
@@ -188,7 +200,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + (f"; memory grew {sig['mem_growth']:.1f}x over the window" if sig["mem_growth"] else "")
             + f"; CPU throttled up to {sig['throttle']:.0%}")
         if sig["restarts"] or any(not p["ready"] for p in sig["pods"]) or family != "memory":
-            logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*"', "last log lines of the workload", everything=True)
+            logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}"', "last log lines of the workload", everything=True)
         node_facts(sig.get("nodes", []))
         deploys([f"prod-{workload}", workload])
         sig["ongoing"] = any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
@@ -240,7 +252,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["backend"] = names[0] if names else ing
         pods_and_events(sig["backend"], ns)
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
-        logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{sig["backend"]}-.*"', f"error lines of backend {sig['backend']}")
+        logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(sig["backend"])}"', f"error lines of backend {sig['backend']}")
         node_facts(sig.get("nodes", []))
         deploys([f"prod-{sig['backend']}", sig["backend"]])
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or (family == "ingress" and sig["p95_peak"] > 1 and labels["alertname"] == "IngressSlow")
@@ -320,7 +332,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["ongoing"] = sig["telemetry_age"] is None or sig["telemetry_age"] > 120 or sig["remote_write_failed"] > 0 or sig["log_dropped"] > 0
 
     if family == "target":
-        upq = _q(f'min(up{{cluster="{cluster}", namespace="{ns}", pod=~"{workload}-.*"}})', 10)
+        upq = _q(f'min(up{{cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}"}})', 10)
         sig["target_up_now"] = _num(upq, "last")
         sig["ongoing"] = sig["target_up_now"] in (None, 0.0) or sig["ongoing"]
 
@@ -387,11 +399,18 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["Evicted event from the kubelet", m[:120]],
                     [f"{k} -n {ns} get pods | grep Evicted  # then delete the evicted pod records: {k} -n {ns} delete pod --field-selector=status.phase=Failed", ("Find what fills the disk: " + f"{k} -n {ns} exec <pod> -- du -sh /tmp /var/log" if storage else f"{k} describe node <node> | grep -A10 Conditions")],
                     ["Set an ephemeral-storage request and limit that fits the workload, write logs to stdout and temp data to a sized emptyDir"], [f"{k} -n {ns} get pods  # no new Evicted"], f"{wl} loses pods when they hit the limit.")
-    if family == "rollout" and sig.get("desired") == 0:
+    # a ReplicaSet scaled to 0 with no other one scaled up is a scale-to-zero, also after self-heal has put the replica back
+    # (a rolling update scales a different ReplicaSet up)
+    scaling = [(m.group(1), int(m.group(2)), e) for e in _ev(sig, "ScalingReplicaSet") if (m := re.search(r"replica set (\S+) (?:from \d+ )?to (\d+)", e["message"]))]
+    zeroed = [s for s in scaling if s[1] == 0]
+    rolled = [s for s in scaling if s[1] > 0 and not any(s[0] == z[0] for z in zeroed)]
+    restored = sig.get("desired") not in (0, None) and bool(zeroed) and not rolled
+    if family == "rollout" and (sig.get("desired") == 0 or restored):
         critical = ns in ("kube-system", "ingress-nginx", "argocd", "kyverno", "argo-workflows", "sre-agent", "observability")
-        return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} has 0 desired replicas", "high", f"{wl} was scaled to zero.",
-                    f"`{ns}/{wl}` in the {cluster} cluster has no replicas because its desired count is 0: someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it" + (", and this is a component the cluster depends on" if critical else "") + ".",
-                    ["kube_deployment_spec_replicas is 0", "no pod exists, so there are no logs or restarts to explain it"], [f"{k} -n {ns} scale deploy/{wl} --replicas=<n>   # or revert the change in Git, Argo CD restores it on the next sync if self-heal is on", f"{k} -n {ns} get events --sort-by=.lastTimestamp | tail"],
+        now_state = f"has since been set back to {sig['desired']:.0f} replicas (by Argo CD self-heal or by hand), and its pod is starting again" if restored else "is still 0"
+        return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} was scaled to 0 replicas", "high", f"{wl} was scaled to zero." + (" It has been set back." if restored else ""),
+                    f"`{ns}/{wl}` in the {cluster} cluster was scaled to zero ({zeroed[0][2]['message'][:100] if zeroed else 'its desired count is 0'}): someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it. The desired count {now_state}" + ("; this is a component the cluster depends on" if critical else "") + ".",
+                    ["kube_deployment_spec_replicas is 0" if not restored else "ScalingReplicaSet event scaled the ReplicaSet to 0 and nothing else was rolled out", "while it was at 0 no pod existed, so there are no logs or restarts to explain it"], [f"{k} -n {ns} scale deploy/{wl} --replicas=<n>   # or revert the change in Git, Argo CD restores it on the next sync if self-heal is on", f"{k} -n {ns} get events --sort-by=.lastTimestamp | tail"],
                     ["Keep automated sync with self-heal on for platform components and restrict `scale` rights with RBAC; alert on spec.replicas == 0 for critical add-ons (CriticalAddonDown)"], [f"{k} -n {ns} get deploy {wl}  # READY n/n"], f"Everything that depends on {wl} is affected.")
 
     # ------------------------------------------------------------------ containers that cannot start or keep dying
@@ -404,7 +423,8 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         where = f"`{ns}/{wl}` in the {cluster} cluster"
 
         sched = _ev(sig, "FailedScheduling")
-        if family == "scheduling" or (sched and not pods):
+        unplaced = [p for p in pods if p.get("phase") == "Pending" and not p.get("waiting")]
+        if family == "scheduling" or (sched and (not pods or unplaced)):
             text = (sched[0]["message"] if sched else "").lower()
             if "insufficient" in text:
                 res = "cpu" if "insufficient cpu" in text else "memory"
