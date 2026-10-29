@@ -203,7 +203,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}"', "last log lines of the workload", everything=True)
         node_facts(sig.get("nodes", []))
         deploys([f"prod-{workload}", workload])
-        sig["ongoing"] = any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
+        scaled_down = sig.get("desired") == 0 or (family == "rollout" and not sig["pods"])   # no pod at all is an outage, not a recovery
+        sig["ongoing"] = scaled_down or any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
 
     elif family == "volume":
         pvc = labels.get("persistentvolumeclaim", workload)
@@ -746,9 +747,9 @@ def _priority(alert: dict, ctx: dict, d: Diag) -> Priority:
     level = 2 if severity == "page" else 3
     why = [f"alert severity is '{severity}'"]
     ns, wl, family = sig["namespace"], sig["workload"], sig["family"]
-    user_facing = wl in config.USER_FACING_SERVICES or sig.get("backend") in config.USER_FACING_SERVICES or ns in ("demo",) or any(p.startswith(tuple(config.USER_FACING_SERVICES)) for p in sig.get("user_pods_on_node", []))
+    user_facing = wl in config.USER_FACING_SERVICES or sig.get("backend") in config.USER_FACING_SERVICES or ns in ("demo", "ingress-nginx") or any(p.startswith(tuple(config.USER_FACING_SERVICES)) for p in sig.get("user_pods_on_node", []))
     ready = [p for p in sig.get("pods", []) if p.get("ready")]
-    nothing_serving = bool(sig.get("pods")) and not ready
+    nothing_serving = (bool(sig.get("pods")) and not ready) or (d.category == "scaled_to_zero" and sig.get("desired") == 0)
 
     if user_facing:
         why.append(f"`{wl}` or something on this path serves users")
