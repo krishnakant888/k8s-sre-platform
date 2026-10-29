@@ -5,6 +5,7 @@
     scripts/faults.py start crash badimage      inject some faults (names from `list`)
     scripts/faults.py start all                 inject every fault that does not disturb the platform
     scripts/faults.py start disruptive          node down, ingress controller down, collector down (pauses Argo CD sync of what it breaks)
+    scripts/faults.py run-each [names|all|disruptive]   one fault at a time: inject, wait for its report, judge it, remove it, next
     scripts/faults.py check                     compare the RCA reports with what each fault should produce: PASS / WRONG / NO ALERT
     scripts/faults.py clear                     remove everything created here and undo the disruptive faults
 
@@ -76,8 +77,8 @@ def sh(script):
 def ingress_app(name, host, objs):
     """service + ingress in front of a deployment, so the ingress controller sees the traffic"""
     return objs + [
-        {"apiVersion": "v1", "kind": "Service", "metadata": {"name": name, "namespace": NS}, "spec": {"selector": {"app.kubernetes.io/name": name}, "ports": [{"name": "http", "port": 80, "targetPort": "http"}]}},
-        {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": {"name": name, "namespace": NS},
+        {"apiVersion": "v1", "kind": "Service", "metadata": {"name": name, "namespace": NS, "labels": {"team": "fault-drill"}}, "spec": {"selector": {"app.kubernetes.io/name": name}, "ports": [{"name": "http", "port": 80, "targetPort": "http"}]}},
+        {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": {"name": name, "namespace": NS, "labels": {"team": "fault-drill"}},
          "spec": {"ingressClassName": "nginx", "rules": [{"host": host, "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": name, "port": {"name": "http"}}}}]}}]}}]
 
 
@@ -227,7 +228,7 @@ def _():
 
 @scenario("ingress-5xx", "backend answers 503 to users", ["IngressHighErrorRate"], ["ingress_backend_failure"], ["application"], 8, service="fault-ingress-5xx")
 def _():
-    conf = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "fault-ingress-5xx-nginx", "namespace": NS}, "data": {"default.conf": 'server { listen 8080; location / { return 503 "backend unavailable\\n"; } }\n'}}
+    conf = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "fault-ingress-5xx-nginx", "namespace": NS, "labels": {"team": "fault-drill"}}, "data": {"default.conf": 'server { listen 8080; location / { return 503 "backend unavailable\\n"; } }\n'}}
     vols = [{"name": "conf", "configMap": {"name": "fault-ingress-5xx-nginx"}}, {"name": "tmp", "emptyDir": {}}]
     mounts = [{"name": "conf", "mountPath": "/etc/nginx/conf.d"}, {"name": "tmp", "mountPath": "/tmp"}]
     apply(ingress_app("fault-ingress-5xx", "fault-5xx.localhost", [conf, deployment("fault-ingress-5xx", container(image=NGINX, ports=[{"name": "http", "containerPort": 8080}], mounts=mounts), volumes=vols, uid=101)]))
@@ -248,7 +249,7 @@ def _():
 
 
 def argo_app(name, path, ns=NS):
-    return {"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": name, "namespace": "argocd"},
+    return {"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": name, "namespace": "argocd", "finalizers": ["resources-finalizer.argocd.argoproj.io"]},
             "spec": {"project": "prod-workloads", "source": {"repoURL": "https://github.com/krishnakant888/k8s-sre-platform.git", "targetRevision": "main", "path": path},
                      "destination": {"name": "platform", "namespace": ns}, "syncPolicy": {"automated": {"prune": True, "selfHeal": True}}}}
 
@@ -279,7 +280,7 @@ def _():
     c = container(image=NGINX, ports=[{"name": "http", "containerPort": 8080}], mounts=mounts, probes={"readinessProbe": {"httpGet": {"path": "/nope", "port": "http"}, "periodSeconds": 5}})
     dep = deployment("fault-sts-notready", c, volumes=vols, uid=101)
     sts = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": dep["metadata"], "spec": {**dep["spec"], "serviceName": "fault-sts-notready"}}
-    svc = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "fault-sts-notready", "namespace": NS}, "spec": {"clusterIP": "None", "selector": {"app.kubernetes.io/name": "fault-sts-notready"}, "ports": [{"name": "http", "port": 8080}]}}
+    svc = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "fault-sts-notready", "namespace": NS, "labels": {"team": "fault-drill"}}, "spec": {"clusterIP": "None", "selector": {"app.kubernetes.io/name": "fault-sts-notready"}, "ports": [{"name": "http", "port": 8080}]}}
     apply([svc, sts])
 
 
@@ -340,7 +341,8 @@ def _():
 def clear():
     save_state({})
     kubectl(PLATFORM, "delete", "pods", "-A", "--field-selector=status.phase=Failed", check=False)   # evicted pods stay as objects
-    kubectl(PLATFORM, "-n", NS, "delete", "deploy,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
+    for ns in (NS, "demo"):
+        kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
@@ -381,6 +383,98 @@ def load_state():
 
 def save_state(state):
     json.dump(state, open(STATE, "w"))
+
+
+def judge(name, all_reports, state):
+    """(verdict, report) for one fault: PASS, WRONG, or None while no report about it was written after it was injected"""
+    s = SCENARIOS[name]
+    mine = [r for r in all_reports if (r["service"] == s["service"] or r["service"].startswith(s["service"])) and r["_at"] >= state.get(name, 0)]
+    if not mine:
+        return None, None
+    good = [r for r in mine if r["root_cause"]["category"] in s["categories"] and r["fault_domain"]["layer"] in s["layers"]]
+    return ("PASS" if good else "WRONG"), (good or mine)[-1]
+
+
+def with_times(all_reports):
+    from datetime import datetime
+
+    for r in all_reports:
+        r["_at"] = datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00")).timestamp()
+    return all_reports
+
+
+def grafana_alerts(service):
+    """(alert names, notifications) that Grafana holds for this workload: every instance is its own group (group_by "...")"""
+    import base64
+    import urllib.request
+
+    pw = base64.b64decode(kubectl(OBS, "-n", "observability", "get", "secret", "grafana-admin", "-o", "jsonpath={.data.admin-password}").stdout).decode()
+    # *.localhost does not resolve everywhere (WSL), so connect to the port and name the host in the header
+    req = urllib.request.Request("http://127.0.0.1:9080/api/alertmanager/grafana/api/v2/alerts/groups", headers={"Host": "grafana.localhost"})
+    req.add_header("Authorization", "Basic " + base64.b64encode(f"admin:{pw}".encode()).decode())
+    try:
+        groups = json.load(urllib.request.urlopen(req, timeout=20))
+    except Exception as exc:  # noqa: BLE001
+        return [], f"(Grafana not reachable: {exc})"
+    mine = [a for g in groups for a in g["alerts"] if service in json.dumps(a["labels"])]
+    names = sorted({a["labels"].get("alertname", "?") for a in mine})
+    sizes = sorted({len(g["alerts"]) for g in groups if any(service in json.dumps(a["labels"]) for a in g["alerts"])})
+    return names, f"{len(mine)} alert instances in {sum(1 for g in groups if any(service in json.dumps(a['labels']) for a in g['alerts']))} groups, largest group {max(sizes) if sizes else 0}"
+
+
+def wait_resolved(service, minutes=12):
+    """An alert that is still firing from an earlier run is not notified again for 4 hours, so a repeated fault needs the old alert gone first."""
+    deadline = time.time() + minutes * 60
+    while time.time() < deadline:
+        names, grouping = grafana_alerts(service)
+        if not names:
+            return True
+        print(f"   waiting for the alerts of the previous run to resolve: {', '.join(names)}", flush=True)
+        time.sleep(60)
+    return False
+
+
+def investigations(service):
+    out = kubectl(OBS, "-n", "sre-agent", "get", "workflow", "--no-headers", "-o", "custom-columns=N:.metadata.name,T:.metadata.labels.sre-agent/target", check=False).stdout
+    return sum(1 for line in out.splitlines() if service in line)
+
+
+def run_each(names):
+    """One fault at a time keeps the memory low: each is injected alone, judged on the report of the investigation it caused, then removed."""
+    results = []
+    for n in names:
+        s = SCENARIOS[n]
+        print("\n=== " + n + ": " + s["description"], flush=True)
+        state = load_state()
+        for target in (f"platform-sandbox-{s['service']}", f"gitops-{s['service']}", f"observability-{s['service']}", f"platform-fault-quota-{s['service']}"):
+            kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", f"sre-agent/target={target}", "--ignore-not-found", check=False)
+        wait_resolved(s["service"])
+        t0 = time.time()
+        s["fn"]()
+        state[n] = t0
+        save_state(state)
+        verdict = report = None
+        deadline = t0 + (s["minutes"] + 8) * 60
+        while time.time() < deadline:
+            time.sleep(30)
+            verdict, report = judge(n, with_times(reports()), state)
+            if verdict:
+                break
+        fired, grouping = grafana_alerts(s["service"])
+        print(f"alerts in Grafana for this fault: {', '.join(fired) or 'none'}; {grouping}; investigations started: {investigations(s['service'])}", flush=True)
+        if verdict:
+            extra = "" if verdict == "PASS" else "   expected " + "/".join(s["categories"]) + " at " + "/".join(s["layers"])
+            print(f"{verdict}: {report['alert']} -> {report['root_cause']['category']} at {report['fault_domain']['layer']} level, {report['priority']['level']}{extra}", flush=True)
+            print("   what happened: " + report["what_happened"][:300], flush=True)
+        else:
+            print(f"NO REPORT within {s['minutes'] + 8} minutes (alert {'/'.join(s['alerts'])})", flush=True)
+        results.append((n, verdict or "NO REPORT"))
+        clear()
+        time.sleep(20)
+    print("\nsummary:")
+    for n, v in results:
+        print(f"  {n:<18} {v}")
+    print(f"\n{sum(v == 'PASS' for _, v in results)} right, {sum(v == 'WRONG' for _, v in results)} wrong, {sum(v == 'NO REPORT' for _, v in results)} without a report")
 
 
 def check(names):
@@ -434,6 +528,14 @@ def main(argv):
         print(f"\ninjected {len(names)}; the slowest needs about {max(SCENARIOS[n]['minutes'] for n in names)} minutes to alert. Then: scripts/faults.py check")
     elif cmd == "check":
         sys.exit(1 if check(argv[2:] or list(SCENARIOS)) else 0)
+    elif cmd == "run-each":
+        names = []
+        for w in argv[2:] or ["all", "disruptive"]:
+            if w in ("all", "disruptive"):
+                names += [n for n, s in SCENARIOS.items() if s["group"] == w]
+            else:
+                names.append(w)
+        run_each(names)
     elif cmd == "clear":
         clear()
     else:

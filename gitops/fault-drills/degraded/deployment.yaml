@@ -8,6 +8,7 @@ metadata:
   labels: {app.kubernetes.io/name: drill-degraded, app.kubernetes.io/version: "0.0.1", team: fault-drill}
 spec:
   replicas: 1
+  progressDeadlineSeconds: 60   # Kubernetes marks it failed after 60 s instead of 10 minutes, so the drill alerts within the minutes it expects
   selector: {matchLabels: {app.kubernetes.io/name: drill-degraded}}
   template:
     metadata:

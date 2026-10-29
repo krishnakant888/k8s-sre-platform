@@ -107,6 +107,47 @@ def test_unschedulable_pod_is_a_capacity_problem(monkeypatch):
     assert "memory" in r.fault_domain.component
 
 
+def test_scaled_to_zero_is_still_found_after_self_heal_restored_the_replica(monkeypatch):
+    events = [event("ScalingReplicaSet", "Scaled down replica set ingress-nginx-controller-677d99b6c to 0 from 1", obj="ingress-nginx-controller"),
+              event("ScalingReplicaSet", "Scaled up replica set ingress-nginx-controller-677d99b6c to 1 from 0", obj="ingress-nginx-controller")]
+    fake(monkeypatch, pods=[{**pod("ingress-nginx-controller-677d99b6c-dk95v"), "phase": "Pending", "waiting": "ContainerCreating"}], events=events, prom={"kube_deployment_spec_replicas": 1})
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    assert r.root_cause.category == "scaled_to_zero"
+    assert r.fault_domain.layer == "infrastructure"
+    assert "set back" in r.what_happened or "set back" in r.root_cause.summary
+
+
+def test_rolling_update_is_not_a_scale_to_zero(monkeypatch):
+    events = [event("ScalingReplicaSet", "Scaled up replica set orders-api-5d9c7f6b8d to 1 from 0", obj="orders-api"),
+              event("ScalingReplicaSet", "Scaled down replica set orders-api-7d9f8b5c6d to 0 from 1", obj="orders-api")]
+    fake(monkeypatch, pods=[pod(waiting="ImagePullBackOff")], events=events, prom={"kube_deployment_spec_replicas": 1})
+    r = investigate(alert("DeploymentReplicasUnavailable", cluster="platform", namespace="demo", deployment="orders-api"))
+    assert r.root_cause.category != "scaled_to_zero"
+
+
+def test_sibling_workload_with_the_same_prefix_is_not_mixed_in(monkeypatch):
+    """`fault-crash` must not pick up the pods, events and logs of `fault-crash-perm`."""
+    mine, other = pod("fault-crash-5d9c7f6b8d-abcde", waiting="CrashLoopBackOff", restarts=4, term=("Error", 1)), pod("fault-crash-perm-6c8d9b7f54-xyz12", waiting="CrashLoopBackOff", restarts=4, term=("Error", 1))
+    fake(monkeypatch, pods=[mine, other], events=[event("BackOff", "Back-off restarting failed container", obj="fault-crash-perm-6c8d9b7f54-xyz12")], logs=[("KeyError: DATABASE_URL is not set", 4)])
+    sig = generic.gather(alert("DeploymentReplicasUnavailable", cluster="platform", namespace="sandbox", deployment="fault-crash"))
+    sig = sig["signals"]
+    assert [p["pod"] for p in sig["pods"]] == ["fault-crash-5d9c7f6b8d-abcde"]
+    assert sig["events"] == []
+
+
+@pytest.mark.parametrize("message,layer", [
+    ("0/3 nodes are available: 3 Insufficient memory.", "infrastructure"),
+    ("0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector.", "application"),
+    ("0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims.", "infrastructure"),
+])
+def test_rollout_alert_with_a_pending_pod_is_a_scheduling_failure(monkeypatch, message, layer):
+    pending = {**pod(), "phase": "Pending", "node": None}
+    fake(monkeypatch, pods=[pending], events=[event("FailedScheduling", message)])
+    r = investigate(alert("DeploymentReplicasUnavailable", cluster="platform", namespace="sandbox", deployment="orders-api"))
+    assert r.root_cause.category == "scheduling_failure"
+    assert r.fault_domain.layer == layer
+
+
 @pytest.mark.parametrize("growth,layer", [(1.0, "infrastructure"), (2.5, "application")])
 def test_memory_near_limit_separates_sizing_from_a_leak(monkeypatch, growth, layer):
     mem_points = {"series": [{"labels": {}, "min": 100, "max": 100 * growth, "avg": 100, "last": 100 * growth, "points": [(i, 100 + (100 * growth - 100) * i / 11) for i in range(12)]}]}
