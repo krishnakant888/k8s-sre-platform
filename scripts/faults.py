@@ -302,8 +302,12 @@ def _():
 
 
 # ---- disruptive: they break something the platform depends on, so the Argo CD sync of it is paused first
+ROOT_APPS = ("root-hub", "root-observability", "root-prod")   # they own the child Applications and put a removed `automated` policy back within seconds
+
+
 def pause_sync(app):
-    kubectl(HUB, "-n", "argocd", "patch", "application", app, "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":null}}}')
+    for name in (*ROOT_APPS, app):
+        kubectl(HUB, "-n", "argocd", "patch", "application", name, "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":null}}}', check=False)
 
 
 def resume_sync(app):
@@ -324,7 +328,7 @@ def _():
 
 @scenario("loki-down", "the log store is scaled to zero", ["LogsDropped"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
 def _():
-    kubectl(HUB, "-n", "argocd", "patch", "application", "loki", "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":null}}}')
+    pause_sync("loki")
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=0")
 
 
@@ -347,9 +351,8 @@ def clear():
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
-    resume_sync("prod-ingress-nginx")
-    resume_sync("hub-alloy")
-    kubectl(HUB, "-n", "argocd", "patch", "application", "loki", "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}', check=False)
+    for app in (*ROOT_APPS, "prod-ingress-nginx", "hub-alloy", "loki"):
+        resume_sync(app)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
     kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", "none=none", "--ignore-not-found", check=False)
