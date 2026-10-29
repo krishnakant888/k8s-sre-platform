@@ -399,11 +399,18 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["Evicted event from the kubelet", m[:120]],
                     [f"{k} -n {ns} get pods | grep Evicted  # then delete the evicted pod records: {k} -n {ns} delete pod --field-selector=status.phase=Failed", ("Find what fills the disk: " + f"{k} -n {ns} exec <pod> -- du -sh /tmp /var/log" if storage else f"{k} describe node <node> | grep -A10 Conditions")],
                     ["Set an ephemeral-storage request and limit that fits the workload, write logs to stdout and temp data to a sized emptyDir"], [f"{k} -n {ns} get pods  # no new Evicted"], f"{wl} loses pods when they hit the limit.")
-    if family == "rollout" and sig.get("desired") == 0:
+    # a ReplicaSet scaled to 0 with no other one scaled up is a scale-to-zero, also after self-heal has put the replica back
+    # (a rolling update scales a different ReplicaSet up)
+    scaling = [(m.group(1), int(m.group(2)), e) for e in _ev(sig, "ScalingReplicaSet") if (m := re.search(r"replica set (\S+) (?:from \d+ )?to (\d+)", e["message"]))]
+    zeroed = [s for s in scaling if s[1] == 0]
+    rolled = [s for s in scaling if s[1] > 0 and not any(s[0] == z[0] for z in zeroed)]
+    restored = sig.get("desired") not in (0, None) and bool(zeroed) and not rolled
+    if family == "rollout" and (sig.get("desired") == 0 or restored):
         critical = ns in ("kube-system", "ingress-nginx", "argocd", "kyverno", "argo-workflows", "sre-agent", "observability")
-        return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} has 0 desired replicas", "high", f"{wl} was scaled to zero.",
-                    f"`{ns}/{wl}` in the {cluster} cluster has no replicas because its desired count is 0: someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it" + (", and this is a component the cluster depends on" if critical else "") + ".",
-                    ["kube_deployment_spec_replicas is 0", "no pod exists, so there are no logs or restarts to explain it"], [f"{k} -n {ns} scale deploy/{wl} --replicas=<n>   # or revert the change in Git, Argo CD restores it on the next sync if self-heal is on", f"{k} -n {ns} get events --sort-by=.lastTimestamp | tail"],
+        now_state = f"has since been set back to {sig['desired']:.0f} replicas (by Argo CD self-heal or by hand), and its pod is starting again" if restored else "is still 0"
+        return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} was scaled to 0 replicas", "high", f"{wl} was scaled to zero." + (" It has been set back." if restored else ""),
+                    f"`{ns}/{wl}` in the {cluster} cluster was scaled to zero ({zeroed[0][2]['message'][:100] if zeroed else 'its desired count is 0'}): someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it. The desired count {now_state}" + ("; this is a component the cluster depends on" if critical else "") + ".",
+                    ["kube_deployment_spec_replicas is 0" if not restored else "ScalingReplicaSet event scaled the ReplicaSet to 0 and nothing else was rolled out", "while it was at 0 no pod existed, so there are no logs or restarts to explain it"], [f"{k} -n {ns} scale deploy/{wl} --replicas=<n>   # or revert the change in Git, Argo CD restores it on the next sync if self-heal is on", f"{k} -n {ns} get events --sort-by=.lastTimestamp | tail"],
                     ["Keep automated sync with self-heal on for platform components and restrict `scale` rights with RBAC; alert on spec.replicas == 0 for critical add-ons (CriticalAddonDown)"], [f"{k} -n {ns} get deploy {wl}  # READY n/n"], f"Everything that depends on {wl} is affected.")
 
     # ------------------------------------------------------------------ containers that cannot start or keep dying
