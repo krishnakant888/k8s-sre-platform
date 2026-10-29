@@ -242,6 +242,13 @@ def test_target_down_with_ready_pods_points_at_the_scrape_path(monkeypatch):
     assert any("networkpolicy" in s for s in r.how_to_fix.immediate)
 
 
+def test_ingress_controller_scaled_to_zero_is_p1(monkeypatch):
+    fake(monkeypatch, pods=[], events=[event("ScalingReplicaSet", "Scaled down replica set ingress-nginx-controller-677d99b6c to 0 from 1", obj="ingress-nginx-controller")], prom={"kube_deployment_spec_replicas": 0})
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    assert r.root_cause.category == "scaled_to_zero"
+    assert r.priority.level == "P1" and r.priority.ongoing
+
+
 def test_platform_component_without_user_impact_is_capped_at_p3(monkeypatch):
     fake(monkeypatch, pods=[pod("argocd-application-controller-0", ready=True, term=("OOMKilled", 137), restarts=2, limit="768Mi")], prom={"restarts_total": 2})
     r = investigate(alert("PodOOMKilled", "page", cluster="gitops", namespace="argocd", pod="argocd-application-controller-0"))
