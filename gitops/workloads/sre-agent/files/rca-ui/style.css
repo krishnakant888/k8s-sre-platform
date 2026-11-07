@@ -166,3 +166,7 @@ button, input { font: inherit; color: inherit; }
 @media print { .arch-wrap { overflow: visible; } }
 
 .pills .stamp { align-self: center; font-size: 12.5px; }
+
+.arch-fig { margin: 12px 0 0; }
+.arch-fig figcaption { font-size: 13px; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); margin: 6px 2px; }
+.arch-fig + .arch-fig { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
