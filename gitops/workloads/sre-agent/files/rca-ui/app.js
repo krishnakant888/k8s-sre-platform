@@ -251,16 +251,15 @@
     // resolved: two pictures, the problem as it was and the recovered state now; otherwise the one picture
     const { svg, analysis, nameOf } = RcaDiagram.draw(r, live === "resolved" ? "unknown" : live);
     if (live === "resolved") {
-      const after = RcaDiagram.draw(r, "resolved").svg;
-      const fig = (cap, node) => { const f = el("figure", "arch-fig"); f.append(el("figcaption", "", cap), node); return f; };
-      $("arch").replaceChildren(fig("1 · When it happened: the problem and what it affected", svg), fig("2 · Now: the alert is no longer firing, everything is healthy", after));
+      // calm state: no diagram, one line
+      $("arch").replaceChildren(el("div", "arch-now", "✓ Now: the alert is no longer firing, everything is healthy."));
     } else {
       $("arch").replaceChildren(svg);
     }
     const note = $("arch-note");
     const where = (r.fault_domain && r.fault_domain.component) || (r.root_cause && r.root_cause.description) || nameOf(analysis.root);
     const hit = [...analysis.impacted].map(nameOf);
-    const tail = live === "resolved" ? "The alert is no longer firing, so the first picture shows the problem as it was and the second the recovered state. "
+    const tail = live === "resolved" ? "The alert is no longer firing, so no diagram is needed. "
       : live === "firing" || live === "pending" ? "Live: the alert is " + (live === "firing" ? "still firing" : "pending") + ", so the problem is drawn as the report found it. "
       : "Grafana could not say whether the alert is still firing, so this is the state when the report was written. ";
     note.replaceChildren(el("b", "", "Problem: "), document.createTextNode(`${nameOf(analysis.root)} (${where}). `), el("b", "", live === "resolved" ? "Was affected: " : "Affected: "),
