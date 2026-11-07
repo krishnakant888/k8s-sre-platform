@@ -353,6 +353,41 @@ def _():
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=0")
 
 
+@scenario("mimir-down", "the metrics store is scaled to zero", ["MimirDown"], ["storage_unavailable", "telemetry_gap"], ["infrastructure"], 10, service="mimir", group="disruptive")
+def _():
+    pause_sync("observability-mimir")
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/mimir", "--replicas=0")
+
+
+@scenario("tempo-down", "the trace store is scaled to zero", ["TracesDropped"], ["storage_unavailable", "telemetry_gap"], ["infrastructure"], 8, service="tempo", group="disruptive")
+def _():
+    pause_sync("observability-tempo")
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/tempo", "--replicas=0")
+
+
+@scenario("loki-oom", "Loki is given an impossibly small memory limit and OOMKilled", ["PodOOMKilled", "PodCrashLooping", "LokiDown"], ["resource_exhaustion"], ["infrastructure"], 8, service="loki", group="disruptive")
+def _():
+    """Patch Loki's container memory limit to 32Mi so the kernel OOMKills it on the next write surge."""
+    pause_sync("observability-loki")
+    kubectl(OBS, "-n", "observability", "patch", "statefulset/loki", "--type=json",
+            "-p", '[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"32Mi"}]')
+    # bounce the pod so the new limit takes effect immediately
+    kubectl(OBS, "-n", "observability", "delete", "pod", "-l", "app.kubernetes.io/name=loki", check=False)
+
+
+@scenario("mimir-compaction-stall", "Mimir compactor pod is killed repeatedly to stall block compaction", ["MimirDown", "PodCrashLooping"], ["storage_unavailable"], ["infrastructure"], 10, service="mimir", group="disruptive")
+def _():
+    """Scale mimir to 0 and back to 1 five times quickly so the WAL replays stack up and compaction never catches up."""
+    pause_sync("observability-mimir")
+    for _ in range(5):
+        kubectl(OBS, "-n", "observability", "scale", "statefulset/mimir", "--replicas=0")
+        time.sleep(4)
+        kubectl(OBS, "-n", "observability", "scale", "statefulset/mimir", "--replicas=1")
+        time.sleep(6)
+    # leave it at 0 so the alert fires
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/mimir", "--replicas=0")
+
+
 @scenario("partition", "the node that runs the stores is cut off from the other clusters", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
 def _():
     subprocess.run(["docker", "network", "disconnect", "kind", "observability-worker"], check=True)
@@ -373,9 +408,14 @@ def clear():
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
-    for app in (*root_apps(), "platform-traefik", "gitops-alloy", "observability-loki"):
+    for app in (*root_apps(), "platform-traefik", "gitops-alloy", "observability-loki", "observability-mimir", "observability-tempo"):
         resume_sync(app)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/mimir", "--replicas=1", check=False)
+    kubectl(OBS, "-n", "observability", "scale", "statefulset/tempo", "--replicas=1", check=False)
+    # restore loki memory limit if loki-oom changed it
+    kubectl(OBS, "-n", "observability", "patch", "statefulset/loki", "--type=json",
+            "-p", '[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"512Mi"}]', check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
     kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", "none=none", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "-n", "traefik", "scale", "deploy/traefik", "--replicas=1", check=False)
