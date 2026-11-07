@@ -394,8 +394,7 @@ def wire(clusters_present):
     for name in [HUB, *SPOKES]:
         if name in clusters_present:
             kubectl(HUB, "apply", "-f", str(ROOT_APPS[name]))
-    give_portal_access(clusters_present)
-    give_viewer_access(clusters_present)
+    give_portal_access(clusters_present)   # early, so the portal can start; the Argo CD and Grafana tokens are filled in by wait_for_services
 
 
 @contextlib.contextmanager
@@ -492,6 +491,59 @@ def give_portal_access(present):
     print("portal-secrets written in the gitops cluster (read-only tokens for the portal)")
 
 
+def _available(cluster, ns, deploy):
+    r = kubectl(cluster, "-n", ns, "get", "deploy", deploy, "-o", "jsonpath={.status.availableReplicas}", capture=True, check=False, quiet=True)
+    return r.returncode == 0 and (r.stdout or "").strip() not in ("", "0")
+
+
+def _portal_account_declared():
+    r = kubectl(HUB, "-n", ARGOCD_NS, "get", "cm", "argocd-cm", "-o", "jsonpath={.data.accounts\\.portal}", capture=True, check=False, quiet=True)
+    return r.returncode == 0 and "apiKey" in (r.stdout or "")
+
+
+def _apps_progress():
+    r = kubectl(HUB, "-n", ARGOCD_NS, "get", "applications", "-o", "json", capture=True, check=False, quiet=True)
+    try:
+        items = json.loads(r.stdout or "{}").get("items", [])
+    except ValueError:
+        return ""
+    ok = sum(1 for a in items if a.get("status", {}).get("sync", {}).get("status") == "Synced" and a.get("status", {}).get("health", {}).get("status") == "Healthy")
+    return f"{ok} of {len(items)} Argo CD applications Synced and Healthy" if items else ""
+
+
+def wait_for_services(present, timeout_min=25):
+    """Argo CD deploys Grafana, and applies the portal account of its own configuration, after the bootstrap itself has returned.
+    Wait for them (printing where it stands), then create the tokens that need them: the portal's and the report viewer's.
+    If it takes longer than the timeout, say which commands finish the job later."""
+    waits = {}
+    if "observability" in present:
+        waits["Grafana"] = lambda: _available("observability", "observability", "grafana") and bool(read_secret("observability", "observability", "grafana-admin", "admin-password"))
+    if HUB in present:
+        waits["the Argo CD portal account"] = lambda: _available(HUB, ARGOCD_NS, "argocd-server") and _portal_account_declared()
+    start = time.time()
+    print(f"\nWaiting for Argo CD to deploy {' and '.join(waits)} (usually 10 to 20 minutes, up to {timeout_min}); the access tokens are created when they are ready.", flush=True)
+    while waits and time.time() - start < timeout_min * 60:
+        for name, ready in list(waits.items()):
+            try:
+                ok = ready()
+            except Exception:  # noqa: BLE001
+                ok = False
+            if ok:
+                print(f"[{int(time.time() - start) // 60:02d}:{int(time.time() - start) % 60:02d}] {name} is ready", flush=True)
+                del waits[name]
+        if waits:
+            s = int(time.time() - start)
+            print(f"[{s // 60:02d}:{s % 60:02d}] waiting for {', '.join(waits)} ... {_apps_progress()}", flush=True)
+            time.sleep(30)
+    if waits:
+        print(f"Gave up waiting for {', '.join(waits)} after {timeout_min} minutes. When they are up, run:\n"
+              "  python3 bootstrap/bootstrap.py --portal-access\n  python3 bootstrap/bootstrap.py --viewer-access", flush=True)
+        return False
+    give_portal_access(present)
+    give_viewer_access(present)
+    return True
+
+
 def build(cluster):
     if not cluster_exists(cluster):
         check_ports(cluster)
@@ -548,6 +600,8 @@ def main():
     ap.add_argument("--destroy", action="store_true")
     ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
     ap.add_argument("--credentials", action="store_true", help="print the URLs and logins of the clusters that exist, and exit")
+    ap.add_argument("--no-wait", action="store_true", help="do not wait for Grafana and the Argo CD portal account (and so do not create the access tokens); run --portal-access and --viewer-access later")
+    ap.add_argument("--wait-access", action="store_true", help="only wait for Grafana and Argo CD and create the access tokens, then exit")
     ap.add_argument("--viewer-access", action="store_true", help="(re)create the read-only Grafana token of the RCA report viewer, and exit (run it once Grafana is up)")
     ap.add_argument("--portal-access", action="store_true", help="(re)create the read-only tokens of the developer portal, and exit (run it once Grafana is up)")
     args = ap.parse_args()
@@ -557,6 +611,9 @@ def main():
         summary([c for c in clusters if cluster_exists(c)], first_run=False)
         return
 
+    if args.wait_access:
+        wait_for_services({c for c in CLUSTERS if cluster_exists(c)})
+        return
     if args.viewer_access:
         give_viewer_access({c for c in CLUSTERS if cluster_exists(c)})
         return
@@ -567,7 +624,10 @@ def main():
     preflight()
     if args.destroy:
         for c in clusters:  # the hub last: it is what deploys the others
-            run("kind", "delete", "cluster", "--name", c)
+            if cluster_exists(c):
+                run("kind", "delete", "cluster", "--name", c)
+            else:
+                print(f"cluster {c} does not exist, skipping")
         return
 
     for c in clusters:
@@ -576,6 +636,8 @@ def main():
     # the hub deploys the other clusters, so wire them together once they exist
     if cluster_exists(HUB):
         wire({c for c in CLUSTERS if cluster_exists(c)})
+    if cluster_exists(HUB) and not args.no_wait:
+        wait_for_services({c for c in CLUSTERS if cluster_exists(c)})
     summary(clusters)
 
 
