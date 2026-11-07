@@ -59,6 +59,7 @@ spec:
               valueFrom: {secretKeyRef: {name: orders-api-chaos, key: CHAOS_TOKEN}}
             - {name: TEMP_KEY009, value: "3252352"}
             - {name: PORTAL_CHECK, value: "argo-follow"}
+            - {name: TEST_67895645755, value: "hjvfhfchgfhj"}
           startupProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 2
