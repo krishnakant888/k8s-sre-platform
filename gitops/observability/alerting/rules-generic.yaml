@@ -435,7 +435,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\"}[5m]))) > 1", instant: true}
+                model: {refId: A, expr: "(sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"1|1.0\"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -445,7 +445,7 @@ data:
             labels: {severity: ticket}
             annotations:
               summary: "Route {{ $labels.ingress }} is slow"
-              description: "The 95th percentile of requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) is over one second."
+              description: "Over 5% of the requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) take longer than one second (requests over 10 s are ignored, they are streams)."
       - orgId: 1
         name: gitops
         folder: Alerts
