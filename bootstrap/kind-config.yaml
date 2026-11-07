@@ -17,7 +17,7 @@ nodes:
   - role: control-plane
     image: kindest/node:v1.31.0
     extraPortMappings:
-      # host :8080 -> ingress-nginx http NodePort, host :8443 -> https NodePort
+      # host :8080 -> Traefik http NodePort, host :8443 -> https NodePort (gitops/traefik/values.yaml)
       - {containerPort: 30080, hostPort: 8080, protocol: TCP}
       - {containerPort: 30443, hostPort: 8443, protocol: TCP}
   - role: worker

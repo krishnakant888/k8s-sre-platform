@@ -22,7 +22,7 @@ python3 bootstrap/bootstrap.py
 ```
 
 The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `observability` (1 control plane, 1 worker) and `gitops` (1 control plane).
-Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints every URL and login at the end (Argo CD and Grafana `admin` with random passwords, plus the token for the sample API's fault endpoints). The passwords are random per bootstrap, so each person who bootstraps gets their own. Print them again at any time with:
+Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints every URL (https and http) and login at the end (Argo CD and Grafana `admin` with random passwords, a random gateway login for the Workflows UI and the RCA reports, plus the token for the sample API's fault endpoints). The passwords are random per bootstrap, so each person who bootstraps gets their own. Print them again at any time with:
 
 ```bash
 python3 bootstrap/bootstrap.py --credentials
@@ -30,13 +30,24 @@ python3 bootstrap/bootstrap.py --credentials
 
 Use `--only platform`, `--only observability` or `--only gitops` to create or destroy one of them.
 
-| What | Cluster | URL |
-|---|---|---|
-| Argo CD (deploys the other two) | gitops | http://argocd.localhost:7080 |
-| Grafana | observability | http://grafana.localhost:9080 |
-| Argo Workflows UI | observability | http://workflows.localhost:9080 |
-| RCA reports | observability | http://reports.localhost:9080 |
-| Sample API | platform | http://orders.localhost:8080/orders |
+| What | Cluster | URL (https, self-signed certificate) | Login |
+|---|---|---|---|
+| Argo CD (deploys the other two) | gitops | https://argocd.localhost:7443 | `admin`, own login |
+| Grafana | observability | https://grafana.localhost:9443 | `admin`, own login |
+| Argo Workflows UI | observability | https://workflows.localhost:9443 | gateway basic auth |
+| RCA reports | observability | https://reports.localhost:9443 | gateway basic auth |
+| Sample API | platform | https://orders.localhost:8443/orders | none |
+
+Each URL also works over plain http on the `…080` port of its cluster (7080, 9080, 8080). The HTTPS certificate is issued by cert-manager and self-signed, so browsers warn once. Argo CD and Grafana have their own logins. The Workflows UI and the RCA viewer have none, so the gateway asks for a basic-auth login (user `admin`, a random password created by `bootstrap.py` in the `gateway-basic-auth` Secret and printed at the end): a local stopgap, SSO (OIDC) is the production answer.
+
+Mimir, Loki, Tempo and Alloy are not published on a gateway, because they have no login of their own. Query them in Grafana (Explore, dashboards), or from an operator's machine with a port-forward:
+
+```bash
+kubectl --context kind-observability -n observability port-forward svc/mimir 8081:8080     # http://localhost:8081/prometheus/api/v1/query?query=up (Mimir serves the Prometheus API)
+kubectl --context kind-observability -n observability port-forward svc/loki 3100:3100      # http://localhost:3100/loki/api/v1/labels
+kubectl --context kind-observability -n observability port-forward svc/tempo 3200:3200     # http://localhost:3200/api/search
+kubectl --context kind-observability -n observability port-forward svc/alloy 12345:12345   # http://localhost:12345 (Alloy UI)
+```
 
 `*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy` (add `--only platform` to keep the others running).
 
@@ -50,7 +61,7 @@ scripts/drill.sh latency     # also: errors, oom, kill, reset
 2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
 3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl --context kind-observability -n sre-agent get wf`, or the Argo Workflows UI).
 4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
-   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at http://reports.localhost:9080, or `kubectl --context kind-observability -n sre-agent exec deploy/rca-viewer -- ls /reports`.
+   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at https://reports.localhost:9443 (gateway login), or `kubectl --context kind-observability -n sre-agent exec deploy/rca-viewer -- ls /reports`.
 5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
 
 ## Architecture
@@ -66,7 +77,7 @@ flowchart LR
     Argo[Argo CD, the hub]
   end
   subgraph platform cluster
-    Platform[sealed-secrets, kyverno, ingress-nginx, namespaces + netpols]
+    Platform[sealed-secrets, kyverno, traefik + cert-manager, namespaces + netpols]
     Collect[observability: Alloy, kube-state-metrics]
     Demo[demo: orders-api, frontend]
     Demo -->|metrics, logs, OTLP traces| Collect
@@ -95,8 +106,8 @@ flowchart LR
 | `argo-workflows` | observability | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
 | `sre-agent` | observability | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
 | `demo` | platform | `orders-api` and the frontend |
-| `kyverno`, `ingress-nginx`, `kube-system` | platform | policy engine, ingress controller, sealed-secrets controller |
-| `ingress-nginx` | observability, gitops | ingress controller |
+| `kyverno`, `kube-system` | platform | policy engine, sealed-secrets controller |
+| `traefik`, `cert-manager` | platform, observability, gitops | the gateway of each cluster (Traefik, Gateway API) and the issuer of its TLS certificate |
 
 ## Repo layout
 
@@ -125,7 +136,7 @@ scripts/faults.py run-each all disruptive   # one fault at a time: inject, wait 
 scripts/faults.py run-each crash oom        # just these
 scripts/faults.py start all            # or inject the 31 non-disruptive faults together, in the sandbox namespace
 scripts/faults.py check                # PASS / WRONG / NO ALERT per fault (wait ~15 minutes after start)
-scripts/faults.py start disruptive     # ingress controller down, collector down, log store down, a partition, a node down (Argo CD sync of them is paused)
+scripts/faults.py start disruptive     # gateway (Traefik) down, collector down, log store down, a partition, a node down (Argo CD sync of them is paused)
 scripts/faults.py clear
 ```
 
@@ -144,7 +155,7 @@ Covered: crash loops by cause (missing setting, read-only filesystem, dependency
 ### Sizing
 
 Requests and limits are set for a 32 GB workstation (the three clusters use about 9 GB when idle, so 16 GB is the practical minimum: at 12 GB the WSL service stopped answering twice under 30 broken workloads) with WSL2 given 16 GB (`%UserProfile%\.wslconfig`: `memory=16GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
-Mimir 2 Gi / 6 Gi (600k active series), Loki 1 Gi / 3 Gi, Tempo 1 Gi / 3 Gi, Grafana 512 Mi / 1.5 Gi, collectors 512 Mi to 768 Mi / 1.5 Gi to 2 Gi, Argo CD controller 2 Gi / 4 Gi, Kyverno admission 512 Mi / 1.5 Gi, ingress-nginx 256 Mi / 1 Gi.
+Mimir 2 Gi / 6 Gi (600k active series), Loki 1 Gi / 3 Gi, Tempo 1 Gi / 3 Gi, Grafana 512 Mi / 1.5 Gi, collectors 512 Mi to 768 Mi / 1.5 Gi to 2 Gi, Argo CD controller 2 Gi / 4 Gi, Kyverno admission 512 Mi / 1.5 Gi, Traefik 128 Mi / 256 Mi (not measured yet).
 The limits add up to more than the machine has on purpose (they are caps, not reservations); real use with the three clusters idle is about 8 GB. The per-tenant limits of Mimir and Loki are 4x their defaults.
 
 - **Metrics** Alloy scrapes annotated pods, kube-state-metrics and cAdvisor (read from the kubelet) and remote-writes to Mimir. Tempo's metrics generator adds span metrics and a service graph.
@@ -189,7 +200,8 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 
 ## Design decisions and trade-offs
 
-- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no ingress controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and ingress-nginx is deployed by Argo CD (host ports 8080/8443 map to its NodePorts).
+- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no Gateway API controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik (as a Gateway API controller) is deployed by Argo CD in every cluster (the host ports 8080/8443, 9080/9443 and 7080/7443 map to its NodePorts 30080 and 30443).
+- **Gateway API, not Ingress.** Routes are `HTTPRoute` objects on one `Gateway` per cluster, so another controller can replace Traefik without touching them. ingress-nginx was dropped: its Helm admission-webhook hook jobs collided with Argo CD syncs. The Traefik and cert-manager charts have no Helm hooks (cert-manager's startup check Job is turned off), which was verified by rendering them.
 - **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster, so observability survives a production rebuild. A third cluster, `gitops`, runs the one Argo CD that deploys both, so the deployer depends on neither (and holds the only credentials for them). Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
 - **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
@@ -203,7 +215,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 
 ## Moving to EKS or AKS
 
-Only environment specifics change: storage classes (`gp3` / `managed-csi`), the ingress controller and TLS (ALB or App Gateway plus cert-manager), Sealed Secrets or bootstrap seeding replaced by External Secrets, replicas and PVC sizes, and optionally object storage for the LGTM backends.
+Only environment specifics change: storage classes (`gp3` / `managed-csi`), the gateway controller and TLS (ALB or App Gateway plus cert-manager), Sealed Secrets or bootstrap seeding replaced by External Secrets, replicas and PVC sizes, and optionally object storage for the LGTM backends.
 The Argo CD apps, projects, policies, dashboards, rules and the agent are unchanged.
 
 ## Roadmap

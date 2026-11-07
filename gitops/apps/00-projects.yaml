@@ -8,13 +8,15 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Platform cluster add-ons and operators (argo-workflows, sealed-secrets, kyverno, ingress-nginx)
+  description: Platform cluster add-ons and operators (sealed-secrets, kyverno, gateway with traefik and cert-manager)
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://argoproj.github.io/argo-helm
     - https://bitnami.github.io/sealed-secrets
     - https://kyverno.github.io/kyverno
-    - https://kubernetes.github.io/ingress-nginx
+    - https://traefik.github.io/charts
+    - https://charts.jetstack.io
+    - https://github.com/kubernetes-sigs/gateway-api.git
   destinations:
     - name: platform
       namespace: "*"

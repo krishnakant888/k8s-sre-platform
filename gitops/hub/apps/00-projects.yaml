@@ -1,4 +1,4 @@
-# The Argo CD cluster deploys itself (argocd) and its ingress controller here; everything else it deploys is in the
+# The Argo CD cluster deploys itself (argocd) and its gateway (Traefik) here; everything else it deploys is in the
 # projects of the platform and observability clusters.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -8,11 +8,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: The gitops cluster itself (Argo CD, ingress-nginx, the collector)
+  description: The gitops cluster itself (Argo CD, its gateway, the collector)
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
     - https://argoproj.github.io/argo-helm
-    - https://kubernetes.github.io/ingress-nginx
+    - https://traefik.github.io/charts
+    - https://charts.jetstack.io
+    - https://github.com/kubernetes-sigs/gateway-api.git
     - https://grafana.github.io/helm-charts
     - https://prometheus-community.github.io/helm-charts
   destinations:

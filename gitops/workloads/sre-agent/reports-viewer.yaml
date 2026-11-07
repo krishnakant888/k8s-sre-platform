@@ -95,21 +95,3 @@ spec:
   selector: {app.kubernetes.io/name: rca-viewer}
   ports:
     - {name: http, port: 80, targetPort: http}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rca-viewer
-  namespace: sre-agent
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: reports.localhost
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: rca-viewer
-                port: {name: http}

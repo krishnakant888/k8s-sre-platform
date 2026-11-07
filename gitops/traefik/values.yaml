@@ -1,0 +1,73 @@
+# Traefik as the Gateway API controller of every cluster (replaces ingress-nginx). The chart has no Helm hooks and no
+# admission webhook, which is what broke Argo CD syncs with ingress-nginx.
+#
+# Same NodePorts in every cluster; kind maps them to different host ports (bootstrap/kind-config*.yaml):
+#   platform 8080/8443, observability 9080/9443, gitops 7080/7443.
+# Per-cluster values-<cluster>.yaml only lists the namespaces whose routes the Gateway accepts.
+providers:
+  kubernetesGateway:
+    enabled: true
+    # kind has no load balancer, so the NodePort Service has no address to copy. Publishing one on the Gateway lets it
+    # report an address, which is what makes Argo CD show it Healthy (the same trick publish-status-address was for
+    # ingress-nginx).
+    statusAddress:
+      ip: 127.0.0.1
+      service:
+        enabled: false
+  kubernetesIngress:
+    enabled: false   # no Ingress objects any more, everything is an HTTPRoute
+  kubernetesCRD:
+    enabled: true   # needed for the basic-auth Middleware that an HTTPRoute references (ExtensionRef)
+
+gatewayClass:
+  enabled: true   # class "traefik"
+
+gateway:
+  enabled: true
+  name: platform
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned   # cert-manager issues the Secret named in certificateRefs below
+  listeners:
+    web:
+      port: 8000   # container port of the "web" entrypoint, published as service port 80
+      protocol: HTTP
+    websecure:
+      port: 8443   # container port of the "websecure" entrypoint, published as service port 443
+      protocol: HTTPS
+      hostname: "*.localhost"
+      mode: Terminate
+      certificateRefs:
+        - {kind: Secret, name: platform-tls}
+
+ports:
+  web:
+    nodePort: 30080
+  websecure:
+    nodePort: 30443
+
+service:
+  spec:
+    type: NodePort   # kind has no load balancer
+
+api:
+  dashboard: false   # no dashboard route is published
+
+deployment:
+  replicas: 1
+
+# Prometheus metrics (container port "metrics", found by Alloy without any annotation). Request metrics are per service
+# and per status code; the buckets reach down to 5 ms and up to 10 s so p50 and p95 mean something for a fast API.
+metrics:
+  prometheus:
+    buckets: "0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10"
+
+# One JSON line per request on stdout, so Alloy ships it to Loki like every other log (dashboard obs-ingress, access log panel).
+log:
+  format: json
+accessLog:
+  enabled: true
+  format: json
+
+resources:   # not measured yet, see docs/RESOURCES.md
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {memory: 256Mi}

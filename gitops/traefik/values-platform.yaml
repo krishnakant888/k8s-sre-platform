@@ -1,0 +1,11 @@
+# platform cluster: the sample API, the frontend and the dummy shop
+gateway:
+  listeners:
+    web:
+      namespacePolicy: &routes
+        from: Selector   # only the namespaces that publish a route
+        selector:
+          matchExpressions:
+            - {key: kubernetes.io/metadata.name, operator: In, values: [demo, sandbox]}
+    websecure:
+      namespacePolicy: *routes

@@ -239,17 +239,18 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     elif family == "ingress":
         ing = labels.get("ingress", workload)
         sel = f'cluster="{cluster}", namespace="{ns}", ingress="{ing}"'
-        err = _q(f'sum(rate(nginx_ingress_controller_requests{{{sel}, status=~"5.."}}[2m])) / sum(rate(nginx_ingress_controller_requests{{{sel}}}[2m]))')
-        p95 = _q(f'histogram_quantile(0.95, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{{{sel}}}[2m])))')
-        by_status = _q(f'sum by (status) (rate(nginx_ingress_controller_requests{{{sel}}}[5m]))', 10)
-        rps = _q(f'sum(rate(nginx_ingress_controller_requests{{{sel}}}[2m]))')
+        err = _q(f'sum(rate(traefik_service_requests_total{{{sel}, code=~"5.."}}[2m])) / sum(rate(traefik_service_requests_total{{{sel}}}[2m]))')
+        p95 = _q(f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{sel}}}[2m])))')
+        by_status = _q(f'sum by (code) (rate(traefik_service_requests_total{{{sel}}}[5m]))', 10)
+        rps = _q(f'sum(rate(traefik_service_requests_total{{{sel}}}[2m]))')
         sig["error_ratio_peak"], sig["error_ratio_last"] = _num(err, "max") or 0.0, _num(err, "last") or 0.0
         sig["p95_peak"] = _num(p95, "max") or 0.0
         sig["rps"] = _num(rps, "last") or 0.0
-        sig["statuses"] = {s["labels"].get("status"): round(s["last"], 3) for s in by_status.get("series", [])}
-        add("mimir", f"nginx_ingress_controller_requests {ing}", f"{sig['rps']:.2f} req/s, 5xx ratio peaked at {sig['error_ratio_peak']:.0%} (now {sig['error_ratio_last']:.0%}), p95 up to {sig['p95_peak'] * 1000:.0f} ms; by status {sig['statuses']}")
-        backend = _q(f'max by (service_name) (kube_ingress_path{{{sel}}})', 5)
-        names = _label_values(backend, "service_name")
+        sig["statuses"] = {s["labels"].get("code"): round(s["last"], 3) for s in by_status.get("series", [])}
+        add("mimir", f"traefik_service_requests_total {ing}", f"{sig['rps']:.2f} req/s, 5xx ratio peaked at {sig['error_ratio_peak']:.0%} (now {sig['error_ratio_last']:.0%}), p95 up to {sig['p95_peak'] * 1000:.0f} ms; by status {sig['statuses']}")
+        # the backend Service is a label of the gateway's request series (set in Alloy from the route's service name)
+        backend = _q(f'count by (backend) (traefik_service_requests_total{{{sel}}})', 5)
+        names = _label_values(backend, "backend")
         sig["backend"] = names[0] if names else ing
         pods_and_events(sig["backend"], ns)
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
@@ -407,7 +408,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
     rolled = [s for s in scaling if s[1] > 0 and not any(s[0] == z[0] for z in zeroed)]
     restored = sig.get("desired") not in (0, None) and bool(zeroed) and not rolled
     if family == "rollout" and (sig.get("desired") == 0 or restored):
-        critical = ns in ("kube-system", "ingress-nginx", "argocd", "kyverno", "argo-workflows", "sre-agent", "observability")
+        critical = ns in ("kube-system", "traefik", "cert-manager", "argocd", "kyverno", "argo-workflows", "sre-agent", "observability")
         now_state = f"has since been set back to {sig['desired']:.0f} replicas (by Argo CD self-heal or by hand), and its pod is starting again" if restored else "is still 0"
         return Diag("scaled_to_zero", "infrastructure" if critical else "application", f"{wl} was scaled to 0 replicas", "high", f"{wl} was scaled to zero." + (" It has been set back." if restored else ""),
                     f"`{ns}/{wl}` in the {cluster} cluster was scaled to zero ({zeroed[0][2]['message'][:100] if zeroed else 'its desired count is 0'}): someone ran `kubectl scale`, a HorizontalPodAutoscaler or a Git change set it. The desired count {now_state}" + ("; this is a component the cluster depends on" if critical else "") + ".",
@@ -603,12 +604,12 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         if not pods:
             gone = "scaled to zero" if sig.get("desired") == 0 else "missing"
             return Diag("ingress_backend_failure", "application", f"service {backend} has no pods ({gone})", "high", f"Users get errors because {backend} has no pods.",
-                        f"{shape}. The backend `{ns}/{backend}` has no pods ({gone}), so the ingress controller answers 503 for every request to `{ing}`.",
+                        f"{shape}. The backend `{ns}/{backend}` has no pods ({gone}), so the gateway answers 503 for every request to `{ing}`.",
                         ["ingress errors started when the backend disappeared", "no pod found for the backend"], [f"{k} -n {ns} get deploy {backend}", f"{k} -n {ns} scale deploy/{backend} --replicas=<n>   # if it was scaled down, or revert the change in Git"],
                         ["Alert on a Service without endpoints, and keep self-heal on so a manual scale-down is reverted"], [f"{k} -n {ns} get endpoints {backend}  # has addresses", "5xx ratio on the ingress below 1%"], f"Users of {ing} get errors until {backend} runs again.")
         if pods and not ready:
             return Diag("ingress_backend_failure", "application" if not sig.get("node_not_ready") else "infrastructure", f"no ready pod behind service {backend}", "high", f"Users get errors because no pod of {backend} is ready.",
-                        f"{shape}. The backend `{ns}/{backend}` has no ready pod, so the ingress controller has nothing to send traffic to (502/503). The pods' state: " + ", ".join(f"{p['pod']} {p['phase']}{' ' + p['waiting'] if p.get('waiting') else ''}" for p in pods[:3]) + ".",
+                        f"{shape}. The backend `{ns}/{backend}` has no ready pod, so the gateway has nothing to send traffic to (502/503). The pods' state: " + ", ".join(f"{p['pod']} {p['phase']}{' ' + p['waiting'] if p.get('waiting') else ''}" for p in pods[:3]) + ".",
                         ["ingress error rate matches the time the backend became unready", "backend pods not ready"], [f"{k} -n {ns} get pods -l app.kubernetes.io/name={backend}", f"{k} -n {ns} describe pod <pod> | tail -20", "Follow the playbook of the backend's own alert (crash loop, image pull, scheduling)"],
                         ["Run 2+ replicas with a PodDisruptionBudget and readiness probes that reflect real readiness"], [f"{k} -n {ns} get endpoints {backend}  # has addresses", "5xx ratio on the ingress below 1%"], f"Users of {ing} see errors until {backend} has a ready pod.")
         if sig.get("error_ratio_peak", 0) > 0.05:
@@ -618,7 +619,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                         [f"{k} -n {ns} logs -l app.kubernetes.io/name={backend} --tail=50", ("Roll back the last deploy: revert the commit that changed " + manifest) if sig.get("recent_deploy") else f"Check the dependencies named in the backend's error lines"],
                         ["Give the backend its own SLO alert (RED metrics) so this is caught before the ingress sees it"], ["5xx ratio on the ingress below 1%"], f"Users of {ing} get errors.")
         return Diag("ingress_backend_failure", "application", f"latency of service {backend}", "medium", f"Requests through {ing} are slow.",
-                    f"{shape}. The ingress controller itself is healthy; the time is spent in the backend `{ns}/{backend}`.", ["ingress p95 high while errors are low"], [f"{k} -n {ns} top pods -l app.kubernetes.io/name={backend}", "Look at the backend's traces for the slowest span"],
+                    f"{shape}. The gateway itself is healthy; the time is spent in the backend `{ns}/{backend}`.", ["ingress p95 high while errors are low"], [f"{k} -n {ns} top pods -l app.kubernetes.io/name={backend}", "Look at the backend's traces for the slowest span"],
                     ["Add RED metrics and tracing to the backend"], ["p95 on the ingress below 500 ms"], f"Users of {ing} wait longer than usual.")
 
     # ------------------------------------------------------------------ Argo CD
@@ -747,7 +748,7 @@ def _priority(alert: dict, ctx: dict, d: Diag) -> Priority:
     level = 2 if severity == "page" else 3
     why = [f"alert severity is '{severity}'"]
     ns, wl, family = sig["namespace"], sig["workload"], sig["family"]
-    user_facing = wl in config.USER_FACING_SERVICES or sig.get("backend") in config.USER_FACING_SERVICES or ns in ("demo", "ingress-nginx") or any(p.startswith(tuple(config.USER_FACING_SERVICES)) for p in sig.get("user_pods_on_node", []))
+    user_facing = wl in config.USER_FACING_SERVICES or sig.get("backend") in config.USER_FACING_SERVICES or ns in ("demo", "traefik") or any(p.startswith(tuple(config.USER_FACING_SERVICES)) for p in sig.get("user_pods_on_node", []))
     ready = [p for p in sig.get("pods", []) if p.get("ready")]
     nothing_serving = (bool(sig.get("pods")) and not ready) or (d.category == "scaled_to_zero" and sig.get("desired") == 0)
 
@@ -801,7 +802,7 @@ def _gaps(ctx: dict, d: Diag) -> list[str]:
         if sig.get("mem_ratio") is None and sig["family"] in ("memory", "container"):
             gaps.append(f"No memory limit found for `{wl}`: set resources.limits.memory (Kyverno require-limits would enforce it) so OOM and near-limit alerts have a reference")
     if sig["family"] == "ingress" and not sig.get("rps"):
-        gaps.append("The ingress controller reports no request rate: check that ingress-nginx metrics are scraped (container port named `metrics`)")
+        gaps.append("The gateway reports no request rate for this route: check that Traefik's metrics are scraped (container port named `metrics`) and that the series carry the `ingress` label (gateway_routes in gitops/observability/alloy/config.alloy)")
     if sig["family"] == "argocd" and not sig.get("app"):
         gaps.append("The agent could not read the Argo CD application: grant the gitops-reader token access to Applications")
     if sig.get("tool_errors"):

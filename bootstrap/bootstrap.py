@@ -23,6 +23,7 @@ External Secrets.
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -40,6 +41,10 @@ CALICO_MANIFEST = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.
 HUB = "gitops"  # the cluster that runs Argo CD
 SPOKES = ["platform", "observability"]  # registered in the hub under these names, Applications target them with destination.name
 AGENT = "observability"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
+# basic-auth login the gateway puts in front of the UIs that have none (Argo Workflows, the RCA report viewer). A stopgap
+# for local use: production puts SSO (OIDC) in front of them. Mimir, Loki, Tempo and Alloy are not published at all.
+GATEWAY_AUTH_SECRET = "gateway-basic-auth"
+GATEWAY_AUTH_NAMESPACES = ["argo-workflows", "sre-agent"]  # in the observability cluster
 
 # Order matters: the spokes' API servers have to exist before the hub's Argo CD can register them.
 CLUSTERS = {
@@ -52,7 +57,7 @@ CLUSTERS = {
     "observability": {
         "kind_config": ROOT / "bootstrap" / "kind-config-observability.yaml",
         "host_ports": [9080, 9443],
-        "seed_namespaces": ["observability", "sre-agent"],
+        "seed_namespaces": ["observability", "sre-agent", "argo-workflows"],
     },
     "gitops": {
         "kind_config": ROOT / "bootstrap" / "kind-config-gitops.yaml",
@@ -271,6 +276,13 @@ def seed_secrets(cluster):
     if cluster == "observability":
         if not secret_exists(cluster, "observability", "grafana-admin"):
             create_secret(cluster, "observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
+        # one random password for the gateway login; the users file holds a {SHA} htpasswd entry (the one format available
+        # without extra packages), fine for a random 24 character password
+        gateway_pw = next((pw for ns in GATEWAY_AUTH_NAMESPACES if (pw := read_secret(cluster, ns, GATEWAY_AUTH_SECRET, "password"))), "") or secrets.token_urlsafe(18)
+        users = "admin:{SHA}" + base64.b64encode(hashlib.sha1(gateway_pw.encode()).digest()).decode()
+        for ns in GATEWAY_AUTH_NAMESPACES:
+            if not secret_exists(cluster, ns, GATEWAY_AUTH_SECRET):
+                create_secret(cluster, ns, GATEWAY_AUTH_SECRET, users=users, password=gateway_pw)
         key = os.environ.get("ANTHROPIC_API_KEY", "")  # the SRE agent runs in this cluster
         if key:
             kubectl(cluster, "-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
@@ -353,19 +365,37 @@ def argocd_password():
 def summary(clusters, first_run=True):
     if first_run:
         print("\nEverything else is now deployed by the Argo CD of the gitops cluster, into the other two. The first sync takes about 10 minutes.")
-        print("URLs work once ingress-nginx has synced.")
-    print("\nWhere to log in (the passwords are random per bootstrap; print them again with: python3 bootstrap/bootstrap.py --credentials)\n")
+        print("URLs work once traefik, cert-manager and gateway have synced in each cluster. The certificate is self-signed (browser warning).")
+    print("\nWhere to log in (the passwords are random per bootstrap; print them again with: python3 bootstrap/bootstrap.py --credentials)")
+
+    def show(name, host, ports, creds, path=""):
+        https, http = ports
+        print(f"\n{name}")
+        print(f"  https  https://{host}:{https}{path}")
+        print(f"  http   http://{host}:{http}{path}")
+        print(f"  login  {creds}")
+
     if HUB in clusters:
-        print("Argo CD         http://argocd.localhost:7080               admin / " + argocd_password())
+        show("Argo CD", "argocd.localhost", (7443, 7080), "admin / " + argocd_password())
     if "observability" in clusters:
-        print("Grafana         http://grafana.localhost:9080              admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
-        print("Workflows       http://workflows.localhost:9080            no login (local cluster)")
-        print("RCA reports     http://reports.localhost:9080              no login (local cluster)")
+        gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_AUTH_SECRET, "password") or "(secret not found)"
+        gateway_login = f"admin / {gateway_pw}   (gateway basic auth)"
+        show("Grafana", "grafana.localhost", (9443, 9080), "admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
+        show("Argo Workflows", "workflows.localhost", (9443, 9080), gateway_login)
+        show("RCA reports", "reports.localhost", (9443, 9080), gateway_login)
     if "platform" in clusters:
-        print("Orders          http://orders.localhost:8080/orders        sample API, no login")
+        show("Orders API", "orders.localhost", (8443, 8080), "sample API, no login", "/orders")
         chaos = read_secret("platform", "demo", "orders-api-chaos", "CHAOS_TOKEN")
         if chaos:
-            print("Fault token     X-Chaos-Token: " + chaos + "   (header for the sample API's POST /chaos/* endpoints)")
+            print("  fault  X-Chaos-Token: " + chaos + "   (header for the sample API's POST /chaos/* endpoints)")
+    if "observability" in clusters:
+        # no login of their own, so they are not published: people use Grafana, an operator uses a port-forward
+        pf = f"kubectl --context {context('observability')} -n observability port-forward"
+        print("\nMimir, Loki, Tempo and Alloy are not published on a gateway. Query them in Grafana, or use a port-forward:")
+        print(f"  Mimir  {pf} svc/mimir 8081:8080    ->  http://localhost:8081/prometheus/api/v1/query?query=up")
+        print(f"  Loki   {pf} svc/loki 3100:3100     ->  http://localhost:3100/loki/api/v1/labels")
+        print(f"  Tempo  {pf} svc/tempo 3200:3200    ->  http://localhost:3200/api/search")
+        print(f"  Alloy  {pf} svc/alloy 12345:12345  ->  http://localhost:12345")
     print(f"\nWatch the deployments:  kubectl --context {context(HUB)} -n {ARGOCD_NS} get applications")
 
 

@@ -1,0 +1,26 @@
+# Gateway API CRDs (standard channel, upstream). Separate from the controller so they exist before anything uses them,
+# and so no Helm hooks are involved. Version = the one Traefik 3.7 builds against.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prod-gateway-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  project: prod-platform
+  source:
+    repoURL: https://github.com/kubernetes-sigs/gateway-api.git
+    targetRevision: v1.6.3
+    path: config/crd/standard
+    directory:
+      exclude: "*vap_safeupgrades*"   # optional guard policy, not needed here
+  destination:
+    name: platform   # registered in this Argo CD by bootstrap.py
+    namespace: default   # the CRDs are cluster scoped
+  syncPolicy:
+    automated:
+      prune: false   # never delete the CRDs (and every route with them) on a bad commit
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true   # the CRDs are larger than the client-side apply annotation limit

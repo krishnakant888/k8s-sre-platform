@@ -53,7 +53,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: viewer-ingress-from-ingress-nginx
+  name: viewer-ingress-from-gateway
   namespace: sre-agent
 spec:
   podSelector:
@@ -62,8 +62,8 @@ spec:
   ingress:
     - from:
         - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+            matchLabels: {kubernetes.io/metadata.name: traefik}
           podSelector:
-            matchLabels: {app.kubernetes.io/name: ingress-nginx}
+            matchLabels: {app.kubernetes.io/name: traefik}
       ports:
         - {port: 8080, protocol: TCP}

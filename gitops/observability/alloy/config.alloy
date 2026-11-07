@@ -101,10 +101,10 @@ prometheus.scrape "annotated_pods" {
   scrape_interval = "30s"
   honor_labels    = true   // series that name their own namespace / pod (kube-state-metrics, Argo CD) keep them
   targets         = discovery.relabel.annotated_pods.output
-  forward_to      = [prometheus.remote_write.mimir.receiver]
+  forward_to      = [prometheus.relabel.gateway_routes.receiver]
 }
 
-// pods that expose a container port named "metrics" are scraped with no annotation at all (Argo CD, ingress-nginx,
+// pods that expose a container port named "metrics" are scraped with no annotation at all (Argo CD, Traefik,
 // CoreDNS, and any chart that follows the convention). Pods that carry the annotation are left to the pipeline above.
 discovery.relabel "named_metrics_port" {
   targets = discovery.relabel.live_pods.output
@@ -161,7 +161,37 @@ prometheus.scrape "named_metrics_port" {
   scrape_interval = "30s"
   honor_labels    = true
   targets         = discovery.relabel.named_metrics_port.output
-  forward_to      = [prometheus.remote_write.mimir.receiver]
+  forward_to      = [prometheus.relabel.gateway_routes.receiver]
+}
+
+// The gateway (Traefik) names the service of a Gateway API route
+//   httproute-<route namespace>-<route name>-gw-<gateway namespace>-<gateway name>-ep-<entrypoint>-<rule>-<hash>-svc-<backend namespace>-<backend>-<n>
+// Namespaces and names can contain dashes, so the namespace is matched against the namespaces that publish routes
+// (the Gateways accept routes from these only, see gitops/traefik/values-*.yaml). Add a namespace here when a route
+// is published from a new one. The series then carry the labels the dashboards, alerts and the SRE agent use:
+//   namespace  the route's namespace (replaces the controller's own)
+//   ingress    the HTTPRoute name (the name of what users reach)
+//   backend    the Service that answers
+prometheus.relabel "gateway_routes" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+  rule {
+    source_labels = ["__name__", "service"]
+    regex         = "traefik_service_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*-svc-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+)-[0-9]+@.*"
+    target_label  = "namespace"
+    replacement   = "$1"
+  }
+  rule {
+    source_labels = ["__name__", "service"]
+    regex         = "traefik_service_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*-svc-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+)-[0-9]+@.*"
+    target_label  = "ingress"
+    replacement   = "$2"
+  }
+  rule {
+    source_labels = ["__name__", "service"]
+    regex         = "traefik_service_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*-svc-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+)-[0-9]+@.*"
+    target_label  = "backend"
+    replacement   = "$4"
+  }
 }
 
 // the collector itself
