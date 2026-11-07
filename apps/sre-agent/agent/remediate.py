@@ -12,6 +12,11 @@ OOM path  (OOMKill evidence):
 Scale-out path  (CPU throttling, no OOM evidence):
   New replicas = ceil(current × 1.5), capped at MAX_REPLICAS (default 10).
   Falls back to current + 1 when Mimir has no CPU data.
+
+CPU vertical scale-up  (CPU throttling, already at MAX_REPLICAS):
+  Escalates from horizontal to vertical when replica cap is reached.
+  New CPU limit = P95 cpu_usage × 1.5, rounded to nearest 50/100/500m milestone.
+  Falls back to 1.5× the current limit when Mimir has no data.
 """
 
 import base64
@@ -95,6 +100,50 @@ def _bump_memory_formula(limit: str) -> str | None:
     if new <= val:
         new += 128
     return f"{new}Mi"
+
+
+# ── CPU vertical scale-up helpers ────────────────────────────────────────────
+
+def _query_cpu_p95_cores(ns: str, wl: str) -> float | None:
+    """Return 6h P95 CPU usage in cores for the workload, or None."""
+    query = (
+        f'quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{{'
+        f'namespace="{ns}",pod=~"{wl}-[a-z0-9]+-[a-z0-9]+"}}[5m])[6h:1m])'
+    )
+    try:
+        r = httpx.get(f"{config.MIMIR_URL}/api/v1/query", params={"query": query}, timeout=10)
+        r.raise_for_status()
+        results = r.json().get("data", {}).get("result", [])
+        if results:
+            return float(results[0]["value"][1])
+    except Exception as exc:
+        log.debug("remediate: cpu p95 query failed: %s", exc)
+    return None
+
+
+def _cores_to_cpu_limit(p95_cores: float, headroom: float = 1.5) -> str:
+    """Convert P95 cores → CPU limit string with headroom, rounded to nearest milestone."""
+    target_m = int(p95_cores * 1000 * headroom)
+    if target_m <= 100:
+        return f"{math.ceil(target_m / 50) * 50}m"
+    if target_m <= 500:
+        return f"{math.ceil(target_m / 100) * 100}m"
+    if target_m <= 2000:
+        return f"{math.ceil(target_m / 500) * 500}m"
+    return f"{math.ceil(target_m / 1000) * 1000}m"
+
+
+def _bump_cpu_formula(limit: str) -> str | None:
+    """Fallback: 1.5× the current CPU limit string when Mimir has no data."""
+    m = re.fullmatch(r"(\d+)(m?)", limit)
+    if not m:
+        return None
+    val, unit = int(m.group(1)), m.group(2)
+    val_m = val if unit == "m" else val * 1000
+    new_m = int(val_m * 1.5 / 50 + 0.999) * 50
+    if new_m <= val_m:
+        new_m += 50
+    return f"{new_m}m"
 
 
 # ── scale-out helpers ─────────────────────────────────────────────────────────
@@ -299,8 +348,8 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
     throttle = _query_cpu_throttle_ratio(ns, wl)
     new_replicas = _new_replicas(old_replicas, throttle)
     if new_replicas <= old_replicas:
-        log.info("remediate: scale-out already at max (%d) for %s", MAX_REPLICAS, wl)
-        return None
+        log.info("remediate: replica cap (%d) reached for %s; escalating to CPU vertical scale-up", MAX_REPLICAS, wl)
+        return _remediate_cpu_scaleup(ctx, report, repo, default_branch, head_sha)
 
     throttle_pct = f"{throttle * 100:.0f}%" if throttle else "unknown"
     sizing_note = (
@@ -325,6 +374,7 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
         f"Sizing: {sizing_note}\n"
     )
     pr_title = f"fix(ops): scale {wl} {old_replicas} → {new_replicas} replicas ({ns})"
+    capped_note = f"\n\n**Cap:** `MAX_REPLICAS={MAX_REPLICAS}`. If throttling persists at cap, the agent will escalate to CPU vertical scale-up." if new_replicas == MAX_REPLICAS else ""
     pr_body = (
         f"## Automated remediation — CPU saturation\n\n"
         f"**RCA:** `{report.id}`  \n"
@@ -332,9 +382,7 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
         f"**Change:** `{file_path}` — `replicas` `{old_replicas}` → `{new_replicas}`\n\n"
         f"**Sizing:** {sizing_note}\n\n"
         f"The agent diagnosed CPU throttling (not an OOM). Merge to let Argo CD scale the deployment.\n\n"
-        f"**Verify:** `container_cpu_cfs_throttled_seconds_total` rate drops after the rollout. "
-        f"If throttling persists, also raise `resources.limits.cpu`.\n\n"
-        f"**Cap:** `MAX_REPLICAS={MAX_REPLICAS}`. If this is insufficient, raise the cap or add CPU limits."
+        f"**Verify:** `container_cpu_cfs_throttled_seconds_total` rate drops after the rollout.{capped_note}"
     )
 
     try:
@@ -353,6 +401,100 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
         "old_replicas": old_replicas,
         "new_replicas": new_replicas,
         "throttle_pct": throttle_pct,
+        "file": file_path,
+        "branch": branch,
+        "status": "merged" if pr.get("_merged") else "pr_opened",
+    }
+
+
+# ── CPU vertical scale-up remediation ────────────────────────────────────────
+
+def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, head_sha: str) -> dict | None:
+    """Raise limits.cpu when horizontal scaling is exhausted (replica cap reached)."""
+    sig = ctx["signals"]
+    wl, ns = sig["workload"], sig["namespace"]
+    source_files = sig.get("source_files") or []
+    if not source_files:
+        return None
+
+    result = _find_resource_file(
+        repo, source_files[0], default_branch,
+        r"limits[:\s{][^\n]*cpu:|limits:\s*\{[^}]*cpu:",
+    )
+    if not result:
+        log.info("remediate: no YAML with limits.cpu found in %s", source_files[0])
+        return None
+    file_path, content, blob_sha = result
+
+    m = re.search(
+        r"limits[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*(\d+m?)"
+        r"|limits:\s*\{[^}]*cpu:\s*(\d+m?)",
+        content,
+    )
+    if not m:
+        return None
+    old_cpu = m.group(1) or m.group(2)
+
+    p95_cores = _query_cpu_p95_cores(ns, wl)
+    if p95_cores and p95_cores > 0:
+        new_cpu = _cores_to_cpu_limit(p95_cores)
+        sizing_note = f"Observed 6h P95 CPU: {p95_cores * 1000:.0f}m × 1.5 headroom = {new_cpu}."
+        sizing_method = "observed_p95"
+    else:
+        new_cpu = _bump_cpu_formula(old_cpu)
+        sizing_note = f"No Mimir data; used 1.5× formula on current limit {old_cpu}."
+        sizing_method = "formula_1.5x"
+    if not new_cpu:
+        return None
+
+    patched, count = re.subn(
+        r"(limits\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*)" + re.escape(old_cpu),
+        lambda mo: mo.group(1) + new_cpu, content, count=1, flags=re.MULTILINE,
+    )
+    if not count:
+        patched, count = re.subn(
+            r"(limits:\s*\{[^}]*cpu:\s*)" + re.escape(old_cpu),
+            lambda mo: mo.group(1) + new_cpu, content, count=1,
+        )
+    if not count or patched == content:
+        log.warning("remediate: cpu scale-up patch produced no change for %s", file_path)
+        return None
+
+    branch = f"remediate/cpu-scaleup-{wl}-{ns}-{int(time.time())}"
+    commit_msg = (
+        f"fix(ops): raise CPU limit of {wl} in {ns} from {old_cpu} to {new_cpu}\n\n"
+        f"Automated remediation triggered by RCA {report.id}.\n"
+        f"Trigger: replica cap ({MAX_REPLICAS}) reached; horizontal scaling exhausted.\n"
+        f"Sizing: {sizing_note}\n"
+    )
+    pr_title = f"fix(ops): raise {wl} CPU limit {old_cpu} → {new_cpu} ({ns})"
+    pr_body = (
+        f"## Automated remediation — CPU vertical scale-up\n\n"
+        f"**RCA:** `{report.id}`  \n"
+        f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
+        f"**Change:** `{file_path}` — `limits.cpu` `{old_cpu}` → `{new_cpu}`\n\n"
+        f"**Trigger:** Replica cap (`MAX_REPLICAS={MAX_REPLICAS}`) already reached; "
+        f"horizontal scaling exhausted. Raising CPU limit instead.\n\n"
+        f"**Sizing:** {sizing_note}\n\n"
+        f"**Verify:** CPU throttle ratio drops after the rollout."
+    )
+
+    try:
+        pr = _open_and_merge_pr(
+            repo, default_branch, head_sha, branch, file_path, blob_sha, patched,
+            commit_msg, pr_title, pr_body,
+        )
+    except Exception as exc:
+        log.warning("remediate: cpu scale-up PR failed: %s", exc)
+        return None
+
+    return {
+        "type": "cpu_scaleup",
+        "pr_url": pr["html_url"],
+        "pr_number": pr["number"],
+        "old_cpu_limit": old_cpu,
+        "new_cpu_limit": new_cpu,
+        "sizing_method": sizing_method,
         "file": file_path,
         "branch": branch,
         "status": "merged" if pr.get("_merged") else "pr_opened",

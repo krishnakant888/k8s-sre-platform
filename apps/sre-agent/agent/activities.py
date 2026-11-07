@@ -38,11 +38,14 @@ def analyze(alert: dict, ctx: dict) -> dict:
         pr = remediate.maybe_open_pr(ctx, report)
         if pr:
             report.remediation = pr
-            log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct")})
+            log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct"), "old_cpu_limit": pr.get("old_cpu_limit"), "new_cpu_limit": pr.get("new_cpu_limit")})
             status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
             if pr.get("type") == "scaleout":
                 change_desc = f"replicas {pr['old_replicas']} → {pr['new_replicas']}"
                 sync_msg = "Remediation already applied — wait for Argo CD to scale the deployment"
+            elif pr.get("type") == "cpu_scaleup":
+                change_desc = f"CPU limit {pr.get('old_cpu_limit')} → {pr.get('new_cpu_limit')}"
+                sync_msg = "Remediation already applied — wait for Argo CD to sync the new CPU limit"
             else:
                 change_desc = f"memory limit {pr.get('old_limit')} → {pr.get('new_limit')}"
                 sync_msg = "Remediation already applied — wait for Argo CD to sync the new limit"
@@ -81,6 +84,9 @@ def _remediation_section(pr: dict) -> str:
     if pr.get("type") == "scaleout":
         change = f"`{pr['file']}` — `replicas` raised from `{pr['old_replicas']}` to `{pr['new_replicas']}`"
         action = "Argo CD will scale the deployment once the PR is synced. Monitor CPU throttle ratio after rollout."
+    elif pr.get("type") == "cpu_scaleup":
+        change = f"`{pr['file']}` — `limits.cpu` raised from `{pr.get('old_cpu_limit')}` to `{pr.get('new_cpu_limit')}` (replica cap reached)"
+        action = "Argo CD will apply the new CPU limit once synced. Monitor CPU throttle ratio after rollout."
     else:
         change = f"`{pr['file']}` — `limits.memory` raised from `{pr.get('old_limit')}` to `{pr.get('new_limit')}`"
         action = "Argo CD will apply the new limit once synced. Monitor `container_memory_working_set_bytes` after rollout."

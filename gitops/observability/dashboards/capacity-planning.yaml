@@ -208,7 +208,7 @@ data:
           "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
           "transformations": [
             {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true}, "renameByName": {"remediation_type": "Type", "workload": "Workload", "pr_status": "Status", "pr_number": "PR #", "pr_url": "PR URL", "file": "File changed", "old_limit": "Old limit", "new_limit": "New limit", "peak_mib": "Peak MiB", "old_replicas": "Old replicas", "new_replicas": "New replicas", "throttle_pct": "Throttle %"}}}
+            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true, "detected_level": true, "level_extracted": true, "pod_extracted": true, "service_extracted": true, "version_extracted": true, "service_name": true}, "renameByName": {"remediation_type": "Type", "workload": "Workload", "pr_status": "Status", "pr_number": "PR #", "pr_url": "PR URL", "file": "File changed", "old_limit": "Old limit", "new_limit": "New limit", "peak_mib": "Peak MiB", "old_replicas": "Old replicas", "new_replicas": "New replicas", "throttle_pct": "Throttle %", "workflow": "Investigation"}}}
           ],
           "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"remediation taken\"", "refId": "A"}]
         },
