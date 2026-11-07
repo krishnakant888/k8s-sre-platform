@@ -38,7 +38,13 @@ data:
         location = /_status/rules {
           limit_except GET { deny all; }
           set $grafana http://grafana.observability.svc.cluster.local;
-          include /secrets/*.conf;   # proxy_set_header Authorization "Bearer <token>";
+          set $grafana_auth "";
+          include /secrets/*.conf;   # set $grafana_auth "Bearer <token>";
+          # never forward what the browser sent (the gateway login would reach Grafana), only the token of the Viewer service account, when there is one
+          proxy_set_header Authorization $grafana_auth;
+          proxy_set_header Cookie "";
+          # Grafana answers 401 with WWW-Authenticate when it has no token: hidden, so the browser does not show a login box for it
+          proxy_hide_header WWW-Authenticate;
           proxy_pass $grafana/api/prometheus/grafana/api/v1/rules;
           proxy_read_timeout 10s;
           add_header Cache-Control no-store;
