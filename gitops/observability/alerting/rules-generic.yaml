@@ -685,7 +685,7 @@ data:
                 model: {refId: C, type: math, expression: "$A > 1"}
             noDataState: OK
             execErrState: Alerting
-            for: 2m
+            for: 0s
             labels: {severity: page, service: mimir}
             annotations:
               summary: "Mimir is unreachable: all metrics queries are failing"
