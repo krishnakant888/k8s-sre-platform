@@ -123,11 +123,14 @@ RULES = [
          "5m", "page", {},
          "{{ $labels.ingress }} returns errors to users",
          "Over 5% of requests through the gateway route {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) end in 5xx."),
+        # More than 5% of the requests that finish within 10 s take over 1 s (the 95th percentile of those is over one second).
+        # Requests longer than 10 s are left out on purpose: they are streams (the live views of Argo CD, Grafana and the
+        # Workflows UI keep a connection open for minutes), and the gateway records a stream's whole life as one request.
         ("generic-ingress-slow", "IngressSlow",
-         'histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_service_request_duration_seconds_bucket{ingress!=""}[5m]))) > 1',
+         '(sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"1|1.0"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05',
          "5m", "ticket", {},
          "Route {{ $labels.ingress }} is slow",
-         "The 95th percentile of requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) is over one second."),
+         "Over 5% of the requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) take longer than one second (requests over 10 s are ignored, they are streams)."),
     ]),
     ("gitops", [
         ("generic-argocd-out-of-sync", "ArgoAppOutOfSync",
