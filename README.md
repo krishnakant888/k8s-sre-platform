@@ -38,7 +38,7 @@ Use `--only platform`, `--only observability` or `--only gitops` to create or de
 | RCA reports | observability | https://reports.localhost:9443 | gateway basic auth |
 | Sample API | platform | https://orders.localhost:8443/orders | none |
 
-Each URL also works over plain http on the `…080` port of its cluster (7080, 9080, 8080). The HTTPS certificate is issued by cert-manager and self-signed, so browsers warn once. Argo CD and Grafana have their own logins. The Workflows UI and the RCA viewer have none, so the gateway asks for a basic-auth login (user `admin`, a random password created by `bootstrap.py` in the `gateway-basic-auth` Secret and printed at the end): a local stopgap, SSO (OIDC) is the production answer.
+Each URL also works over plain http on the `…080` port of its cluster (7080, 9080, 8080). The HTTPS certificate is issued by cert-manager and self-signed, so browsers warn once. Argo CD and Grafana have their own logins. The Workflows UI and the RCA viewer have none, so the gateway asks for a basic-auth login (user `admin`, a random password created by `bootstrap.py` in the `gateway-login` Secret, hashed into `gateway-basic-auth` for Traefik and printed at the end): a local stopgap, SSO (OIDC) is the production answer.
 
 Mimir, Loki, Tempo and Alloy are not published on a gateway, because they have no login of their own. Query them in Grafana (Explore, dashboards), or from an operator's machine with a port-forward:
 

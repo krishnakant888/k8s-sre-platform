@@ -43,8 +43,9 @@ SPOKES = ["platform", "observability"]  # registered in the hub under these name
 AGENT = "observability"  # the cluster the SRE agent runs in; it gets read-only tokens for the others
 # basic-auth login the gateway puts in front of the UIs that have none (Argo Workflows, the RCA report viewer). A stopgap
 # for local use: production puts SSO (OIDC) in front of them. Mimir, Loki, Tempo and Alloy are not published at all.
-GATEWAY_AUTH_SECRET = "gateway-basic-auth"
-GATEWAY_AUTH_NAMESPACES = ["argo-workflows", "sre-agent"]  # in the observability cluster
+GATEWAY_AUTH_SECRET = "gateway-basic-auth"  # what Traefik reads: it must hold exactly one key, `users` (htpasswd lines)
+GATEWAY_LOGIN_SECRET = "gateway-login"  # the plain password, kept apart so --credentials can print it
+GATEWAY_AUTH_NAMESPACES = ["argo-workflows", "sre-agent"]  # in the observability cluster; the login Secret is in the first
 
 # Order matters: the spokes' API servers have to exist before the hub's Argo CD can register them.
 CLUSTERS = {
@@ -276,13 +277,7 @@ def seed_secrets(cluster):
     if cluster == "observability":
         if not secret_exists(cluster, "observability", "grafana-admin"):
             create_secret(cluster, "observability", "grafana-admin", **{"admin-user": "admin", "admin-password": secrets.token_urlsafe(18)})
-        # one random password for the gateway login; the users file holds a {SHA} htpasswd entry (the one format available
-        # without extra packages), fine for a random 24 character password
-        gateway_pw = next((pw for ns in GATEWAY_AUTH_NAMESPACES if (pw := read_secret(cluster, ns, GATEWAY_AUTH_SECRET, "password"))), "") or secrets.token_urlsafe(18)
-        users = "admin:{SHA}" + base64.b64encode(hashlib.sha1(gateway_pw.encode()).digest()).decode()
-        for ns in GATEWAY_AUTH_NAMESPACES:
-            if not secret_exists(cluster, ns, GATEWAY_AUTH_SECRET):
-                create_secret(cluster, ns, GATEWAY_AUTH_SECRET, users=users, password=gateway_pw)
+        seed_gateway_login(cluster)
         key = os.environ.get("ANTHROPIC_API_KEY", "")  # the SRE agent runs in this cluster
         if key:
             kubectl(cluster, "-n", "sre-agent", "delete", "secret", "anthropic-api-key", "--ignore-not-found")
@@ -293,6 +288,23 @@ def seed_secrets(cluster):
     elif cluster == "platform":
         if not secret_exists(cluster, "demo", "orders-api-chaos"):
             create_secret(cluster, "demo", "orders-api-chaos", CHAOS_TOKEN=secrets.token_urlsafe(18))
+
+
+def seed_gateway_login(cluster):
+    """One random password for the gateway login. Traefik reads the users file from a Secret that must hold exactly one
+    key, so the plain password is kept in a second Secret. The users file holds a {SHA} htpasswd entry (the one format
+    available without extra packages), fine for a random 24 character password. Safe to run again: the password is
+    kept, and an older Secret that also held the password is rewritten."""
+    login_ns = GATEWAY_AUTH_NAMESPACES[0]
+    pw = read_secret(cluster, login_ns, GATEWAY_LOGIN_SECRET, "password")
+    if not pw:
+        pw = next((p for ns in GATEWAY_AUTH_NAMESPACES if (p := read_secret(cluster, ns, GATEWAY_AUTH_SECRET, "password"))), "") or secrets.token_urlsafe(18)
+        kubectl(cluster, "-n", login_ns, "delete", "secret", GATEWAY_LOGIN_SECRET, "--ignore-not-found")
+        create_secret(cluster, login_ns, GATEWAY_LOGIN_SECRET, password=pw)
+    users = "admin:{SHA}" + base64.b64encode(hashlib.sha1(pw.encode()).digest()).decode()
+    for ns in GATEWAY_AUTH_NAMESPACES:
+        kubectl(cluster, "-n", ns, "delete", "secret", GATEWAY_AUTH_SECRET, "--ignore-not-found")
+        create_secret(cluster, ns, GATEWAY_AUTH_SECRET, users=users)
 
 
 def wait_token(cluster, ns, name):
@@ -378,7 +390,7 @@ def summary(clusters, first_run=True):
     if HUB in clusters:
         show("Argo CD", "argocd.localhost", (7443, 7080), "admin / " + argocd_password())
     if "observability" in clusters:
-        gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_AUTH_SECRET, "password") or "(secret not found)"
+        gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_LOGIN_SECRET, "password") or "(secret not found)"
         gateway_login = f"admin / {gateway_pw}   (gateway basic auth)"
         show("Grafana", "grafana.localhost", (9443, 9080), "admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
         show("Argo Workflows", "workflows.localhost", (9443, 9080), gateway_login)
