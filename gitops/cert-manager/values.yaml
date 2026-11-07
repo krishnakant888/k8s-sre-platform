@@ -1,0 +1,27 @@
+# Issues the TLS certificate of each cluster's Gateway. Same values in every cluster.
+crds:
+  enabled: true
+  keep: false   # Argo CD owns the CRDs
+
+# turn the Gateway annotation (cert-manager.io/cluster-issuer) into Certificates
+config:
+  apiVersion: controller.config.cert-manager.io/v1alpha1
+  kind: ControllerConfiguration
+  enableGatewayAPI: true
+
+# a post-install Helm hook Job: the kind of hook that fights Argo CD syncs
+startupapicheck:
+  enabled: false
+
+# not measured yet, see docs/RESOURCES.md
+resources:
+  requests: {cpu: 25m, memory: 64Mi}
+  limits: {memory: 256Mi}
+webhook:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+cainjector:
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {memory: 256Mi}

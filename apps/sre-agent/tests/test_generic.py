@@ -108,10 +108,10 @@ def test_unschedulable_pod_is_a_capacity_problem(monkeypatch):
 
 
 def test_scaled_to_zero_is_still_found_after_self_heal_restored_the_replica(monkeypatch):
-    events = [event("ScalingReplicaSet", "Scaled down replica set ingress-nginx-controller-677d99b6c to 0 from 1", obj="ingress-nginx-controller"),
-              event("ScalingReplicaSet", "Scaled up replica set ingress-nginx-controller-677d99b6c to 1 from 0", obj="ingress-nginx-controller")]
-    fake(monkeypatch, pods=[{**pod("ingress-nginx-controller-677d99b6c-dk95v"), "phase": "Pending", "waiting": "ContainerCreating"}], events=events, prom={"kube_deployment_spec_replicas": 1})
-    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    events = [event("ScalingReplicaSet", "Scaled down replica set traefik-7bb9cb9d6c to 0 from 1", obj="traefik"),
+              event("ScalingReplicaSet", "Scaled up replica set traefik-7bb9cb9d6c to 1 from 0", obj="traefik")]
+    fake(monkeypatch, pods=[{**pod("traefik-7bb9cb9d6c-66kcp"), "phase": "Pending", "waiting": "ContainerCreating"}], events=events, prom={"kube_deployment_spec_replicas": 1})
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="traefik", deployment="traefik"))
     assert r.root_cause.category == "scaled_to_zero"
     assert r.fault_domain.layer == "infrastructure"
     assert "set back" in r.what_happened or "set back" in r.root_cause.summary
@@ -170,8 +170,8 @@ def test_node_not_ready_is_infrastructure_and_p1_when_users_run_there(monkeypatc
 
 def test_ingress_errors_with_no_ready_backend(monkeypatch):
     fake(monkeypatch, pods=[pod(ready=False, waiting="CrashLoopBackOff")], prom={
-        'status=~"5.."}[2m])) /': 0.9, "request_duration_seconds_bucket": 0.2, "sum by (status)": 0.5, "sum(rate(nginx_ingress_controller_requests{cluster": 4.0,
-        "kube_ingress_path": {"series": [{"labels": {"service_name": "orders-api"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
+        'code=~"5.."}[2m])) /': 0.9, "request_duration_seconds_bucket": 0.2, "sum by (code)": 0.5, "sum(rate(traefik_service_requests_total{cluster": 4.0,
+        "count by (backend)": {"series": [{"labels": {"backend": "orders-api"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
     r = investigate(alert("IngressHighErrorRate", "page", cluster="platform", namespace="demo", ingress="orders-api", host="orders.localhost"))
     assert r.root_cause.category == "ingress_backend_failure"
     assert "no ready pod" in r.fault_domain.component
@@ -243,8 +243,8 @@ def test_target_down_with_ready_pods_points_at_the_scrape_path(monkeypatch):
 
 
 def test_ingress_controller_scaled_to_zero_is_p1(monkeypatch):
-    fake(monkeypatch, pods=[], events=[event("ScalingReplicaSet", "Scaled down replica set ingress-nginx-controller-677d99b6c to 0 from 1", obj="ingress-nginx-controller")], prom={"kube_deployment_spec_replicas": 0})
-    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    fake(monkeypatch, pods=[], events=[event("ScalingReplicaSet", "Scaled down replica set traefik-7bb9cb9d6c to 0 from 1", obj="traefik")], prom={"kube_deployment_spec_replicas": 0})
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="traefik", deployment="traefik"))
     assert r.root_cause.category == "scaled_to_zero"
     assert r.priority.level == "P1" and r.priority.ongoing
 
@@ -271,7 +271,7 @@ def test_eviction_for_ephemeral_storage_is_reported(monkeypatch):
 
 def test_scaled_to_zero_platform_addon_is_infrastructure(monkeypatch):
     fake(monkeypatch, pods=[], prom={"kube_deployment_spec_replicas": 0.0})
-    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="ingress-nginx", deployment="ingress-nginx-controller"))
+    r = investigate(alert("CriticalAddonDown", "page", cluster="platform", namespace="traefik", deployment="traefik"))
     assert r.root_cause.category == "scaled_to_zero" and r.fault_domain.layer == "infrastructure"
 
 
@@ -288,8 +288,8 @@ def test_unresolvable_name_with_healthy_coredns_is_the_applications(monkeypatch)
 
 
 def test_ingress_errors_with_no_backend_pods(monkeypatch):
-    fake(monkeypatch, pods=[], prom={'status=~"5.."}[2m])) /': 0.95, "request_duration_seconds_bucket": 0.1, "sum by (status)": 0.3, "kube_deployment_spec_replicas": 0.0,
-                                     "kube_ingress_path": {"series": [{"labels": {"service_name": "shop"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
+    fake(monkeypatch, pods=[], prom={'code=~"5.."}[2m])) /': 0.95, "request_duration_seconds_bucket": 0.1, "sum by (status)": 0.3, "kube_deployment_spec_replicas": 0.0,
+                                     "count by (backend)": {"series": [{"labels": {"backend": "shop"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
     r = investigate(alert("IngressHighErrorRate", "page", cluster="platform", namespace="sandbox", ingress="shop", host="shop.localhost"))
     assert "scaled to zero" in r.fault_domain.component
 

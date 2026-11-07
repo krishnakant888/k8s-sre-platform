@@ -51,8 +51,8 @@ def main():
         gaps_total = 0
         rows = 0
         for cluster in CLUSTERS:
-            ingresses = kjson(cluster, "get", "ingress", "-A")["items"]
-            backends = {(i["metadata"]["namespace"], p["backend"]["service"]["name"]) for i in ingresses for rule in i["spec"].get("rules", []) for p in rule["http"]["paths"]}
+            routes = kjson(cluster, "get", "httproute", "-A")["items"]
+            backends = {(r["metadata"]["namespace"], ref["name"]) for r in routes for rule in r["spec"].get("rules", []) for ref in rule.get("backendRefs", [])}
             pdbs = kjson(cluster, "get", "pdb", "-A")["items"]
             print(f"\n=== {cluster}")
             print(f"{'workload':<52} {'metrics':<8} {'logs':<6} {'gaps'}")
@@ -73,9 +73,9 @@ def main():
                         gaps.append("no log lines in 30 min (idle, or not writing to stdout)")
                     app = prom(f'count(up{{cluster="{cluster}", namespace="{ns}", pod=~"{pod_rx}"}})')
                     if (ns, name) in backends:
-                        ing = prom(f'count(nginx_ingress_controller_requests{{cluster="{cluster}", namespace="{ns}"}})')
+                        ing = prom(f'count(traefik_service_requests_total{{cluster="{cluster}", namespace="{ns}"}})')
                         if not ing:
-                            gaps.append("has an Ingress but no traffic metrics yet (no request has passed)")
+                            gaps.append("has an HTTPRoute but no traffic metrics yet (no request has passed)")
                     if not labels.get("app.kubernetes.io/name"):
                         gaps.append("no app.kubernetes.io/name label")
                     if not labels.get("app.kubernetes.io/version") and ns in ("demo", "sandbox", "sre-agent"):

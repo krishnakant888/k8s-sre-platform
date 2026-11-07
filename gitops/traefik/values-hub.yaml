@@ -1,0 +1,11 @@
+# gitops cluster: only Argo CD publishes a route
+gateway:
+  listeners:
+    web:
+      namespacePolicy: &routes
+        from: Selector   # only the namespaces that publish a route
+        selector:
+          matchExpressions:
+            - {key: kubernetes.io/metadata.name, operator: In, values: [argocd]}
+    websecure:
+      namespacePolicy: *routes

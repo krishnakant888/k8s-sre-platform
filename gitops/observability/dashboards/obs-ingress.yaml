@@ -13,7 +13,7 @@ data:
     {
       "uid": "obs-ingress",
       "title": "Ingress traffic",
-      "description": "Golden signals of everything behind an Ingress, with no per-app work",
+      "description": "Golden signals of everything behind the gateway (Traefik, one HTTPRoute per app), with no per-app work",
       "tags": [
         "obs",
         "ingress",
@@ -40,10 +40,10 @@ data:
               "uid": "mimir"
             },
             "query": {
-              "query": "label_values(nginx_ingress_controller_requests, cluster)",
+              "query": "label_values(traefik_service_requests_total, cluster)",
               "refId": "v_cluster"
             },
-            "definition": "label_values(nginx_ingress_controller_requests, cluster)",
+            "definition": "label_values(traefik_service_requests_total, cluster)",
             "includeAll": true,
             "multi": true,
             "allValue": ".+",
@@ -58,17 +58,17 @@ data:
           },
           {
             "name": "ingress",
-            "label": "Ingress",
+            "label": "Route (HTTPRoute)",
             "type": "query",
             "datasource": {
               "type": "prometheus",
               "uid": "mimir"
             },
             "query": {
-              "query": "label_values(nginx_ingress_controller_requests{cluster=~\"$cluster\"}, ingress)",
+              "query": "label_values(traefik_service_requests_total{cluster=~\"$cluster\"}, ingress)",
               "refId": "v_ingress"
             },
-            "definition": "label_values(nginx_ingress_controller_requests{cluster=~\"$cluster\"}, ingress)",
+            "definition": "label_values(traefik_service_requests_total{cluster=~\"$cluster\"}, ingress)",
             "includeAll": true,
             "multi": true,
             "allValue": ".+",
@@ -108,7 +108,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum(rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -163,7 +163,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\", status=~\"5..\"}[5m])) / sum(rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum(rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\", code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -225,7 +225,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\", status=~\"4..\"}[5m])) / sum(rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum(rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\", code=~\"4..\"}[5m])) / sum(rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -287,7 +287,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -349,7 +349,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -402,7 +402,7 @@ data:
         },
         {
           "type": "stat",
-          "title": "Config reload failures",
+          "title": "Config reload failures (1h)",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -411,7 +411,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(nginx_ingress_controller_config_last_reload_successful{cluster=~\"$cluster\"} == bool 0) or vector(0)",
+              "expr": "sum(increase(traefik_config_reloads_failure_total{cluster=~\"$cluster\"}[1h])) or vector(0)",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -460,7 +460,7 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "Requests / s by ingress",
+          "title": "Requests / s by route",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -469,7 +469,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum by (cluster, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "{{cluster}} {{ingress}}",
               "datasource": {
                 "type": "prometheus",
@@ -523,8 +523,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (status) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
-              "legendFormat": "{{status}}",
+              "expr": "sum by (code) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "legendFormat": "{{code}}",
               "datasource": {
                 "type": "prometheus",
                 "uid": "mimir"
@@ -568,7 +568,7 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "Error ratio by ingress",
+          "title": "Error ratio by route",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -577,7 +577,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\", status=~\"5..\"}[5m])) / sum by (cluster, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum by (cluster, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\", code=~\"5..\"}[5m])) / sum by (cluster, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "{{cluster}} {{ingress}}",
               "datasource": {
                 "type": "prometheus",
@@ -647,7 +647,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "p50",
               "datasource": {
                 "type": "prometheus",
@@ -656,7 +656,7 @@ data:
             },
             {
               "refId": "B",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "p95",
               "datasource": {
                 "type": "prometheus",
@@ -665,7 +665,7 @@ data:
             },
             {
               "refId": "C",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "p99",
               "datasource": {
                 "type": "prometheus",
@@ -711,7 +711,7 @@ data:
         {
           "id": 12,
           "type": "row",
-          "title": "Per ingress",
+          "title": "Per route",
           "collapsed": false,
           "panels": [],
           "gridPos": {
@@ -723,7 +723,7 @@ data:
         },
         {
           "type": "table",
-          "title": "Ingresses",
+          "title": "Routes",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -732,7 +732,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, namespace, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -743,7 +743,7 @@ data:
             },
             {
               "refId": "B",
-              "expr": "sum by (cluster, namespace, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\", status=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress) (rate(nginx_ingress_controller_requests{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\", code=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -754,7 +754,7 @@ data:
             },
             {
               "refId": "C",
-              "expr": "histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_service_request_duration_seconds_bucket{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m])))",
               "legendFormat": "",
               "datasource": {
                 "type": "prometheus",
@@ -932,7 +932,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(nginx_ingress_controller_request_size_sum{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum(rate(traefik_service_requests_bytes_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "request",
               "datasource": {
                 "type": "prometheus",
@@ -941,7 +941,7 @@ data:
             },
             {
               "refId": "B",
-              "expr": "sum(rate(nginx_ingress_controller_response_size_sum{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
+              "expr": "sum(rate(traefik_service_responses_bytes_total{cluster=~\"$cluster\", ingress=~\"$ingress\"}[5m]))",
               "legendFormat": "response",
               "datasource": {
                 "type": "prometheus",
@@ -995,8 +995,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, state) (nginx_ingress_controller_nginx_process_connections{cluster=~\"$cluster\"})",
-              "legendFormat": "{{cluster}} {{state}}",
+              "expr": "sum by (cluster, entrypoint) (traefik_open_connections{cluster=~\"$cluster\"})",
+              "legendFormat": "{{cluster}} {{entrypoint}}",
               "datasource": {
                 "type": "prometheus",
                 "uid": "mimir"
@@ -1049,7 +1049,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, pod) (container_memory_working_set_bytes{cluster=~\"$cluster\", namespace=\"ingress-nginx\", container=\"controller\"})",
+              "expr": "sum by (cluster, pod) (container_memory_working_set_bytes{cluster=~\"$cluster\", namespace=\"traefik\", container=\"traefik\"})",
               "legendFormat": "{{cluster}} {{pod}}",
               "datasource": {
                 "type": "prometheus",
@@ -1095,7 +1095,7 @@ data:
         {
           "type": "logs",
           "title": "Access log: errors",
-          "description": "ingress-nginx writes one JSON line per request",
+          "description": "Traefik writes one JSON line per request (access log)",
           "datasource": {
             "type": "loki",
             "uid": "loki"
@@ -1103,7 +1103,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "{cluster=~\"$cluster\", namespace=\"ingress-nginx\"} | json | status >= 500",
+              "expr": "{cluster=~\"$cluster\", namespace=\"traefik\"} | json | DownstreamStatus >= 500",
               "datasource": {
                 "type": "loki",
                 "uid": "loki"

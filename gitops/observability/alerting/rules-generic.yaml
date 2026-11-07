@@ -240,7 +240,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster, namespace, deployment) (kube_deployment_status_replicas_available{namespace=~\"kube-system|ingress-nginx|argocd|kyverno|argo-workflows|sre-agent\"}) == 0", instant: true}
+                model: {refId: A, expr: "max by (cluster, namespace, deployment) (kube_deployment_status_replicas_available{namespace=~\"kube-system|traefik|cert-manager|argocd|kyverno|argo-workflows|sre-agent\"}) == 0", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -417,7 +417,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "sum by (cluster, namespace, ingress, host) (rate(nginx_ingress_controller_requests{status=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress, host) (rate(nginx_ingress_controller_requests[5m])) > 0.05 and sum by (cluster, namespace, ingress, host) (rate(nginx_ingress_controller_requests[5m])) > 0.05", instant: true}
+                model: {refId: A, expr: "sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\", code=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\"}[5m])) > 0.05", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -426,8 +426,8 @@ data:
             for: 5m
             labels: {severity: page}
             annotations:
-              summary: "{{ $labels.host }} returns errors to users"
-              description: "Over 5% of requests for {{ $labels.host }} (ingress {{ $labels.namespace }}/{{ $labels.ingress }}, {{ $labels.cluster }}) end in 5xx."
+              summary: "{{ $labels.ingress }} returns errors to users"
+              description: "Over 5% of requests through the gateway route {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) end in 5xx."
           - uid: generic-ingress-slow
             title: IngressSlow
             condition: C
@@ -435,7 +435,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(nginx_ingress_controller_request_duration_seconds_bucket[5m]))) > 1", instant: true}
+                model: {refId: A, expr: "histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\"}[5m]))) > 1", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -444,7 +444,7 @@ data:
             for: 5m
             labels: {severity: ticket}
             annotations:
-              summary: "Ingress {{ $labels.ingress }} is slow"
+              summary: "Route {{ $labels.ingress }} is slow"
               description: "The 95th percentile of requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) is over one second."
       - orgId: 1
         name: gitops

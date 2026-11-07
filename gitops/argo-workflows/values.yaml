@@ -61,14 +61,9 @@ workflow:
 server:
   enabled: true
   authModes: [server]   # local demo only: the UI acts with the server's own permissions, no login
+  # no Ingress: the route, with a basic-auth login in front of it, is in gitops/gateway/observability/routes.yaml
   podAnnotations:
     prometheus.io/scrape: "false"
   resources:
     requests: {cpu: 50m, memory: 256Mi}
     limits: {memory: 512Mi}
-  ingress:
-    enabled: true
-    ingressClassName: nginx
-    hosts: [workflows.localhost]
-    paths: [/]
-    pathType: Prefix

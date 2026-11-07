@@ -1,0 +1,11 @@
+# observability cluster: Grafana, the Argo Workflows UI and the RCA report viewer
+gateway:
+  listeners:
+    web:
+      namespacePolicy: &routes
+        from: Selector   # only the namespaces that publish a route
+        selector:
+          matchExpressions:
+            - {key: kubernetes.io/metadata.name, operator: In, values: [observability, argo-workflows, sre-agent]}
+    websecure:
+      namespacePolicy: *routes
