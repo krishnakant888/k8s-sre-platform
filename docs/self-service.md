@@ -41,6 +41,10 @@ On a component's page: **Resources** (CPU and memory against request and limit, 
 - **Re-run an investigation from the portal**: the SRE agent only starts investigations from an alert; a manual one needs an endpoint on the agent and a decision on what it concludes when nothing is wrong.
 - **Real sign-in** (GitHub or OIDC instead of guest): needs a GitHub OAuth app (client id and secret) that only an owner can create, the `auth-backend-module-github-provider` in the image, and a sign-in page with the provider. Until then every request is made as `guest`.
 
+## Merging
+
+Every request made through the `selfservice` workflow is merged by the workflow itself once the `lint` checks on its pull request pass (the checks are started by the workflow, because a pull request opened with the built-in token does not start them). If a check fails the pull request stays open for a person. The workflow stops at nothing else: there is no review step, so the lint result and the checks inside `scripts/selfservice.py` (secrets, `latest` tags, a memory request above the limit, unknown services) are the guard. *New service on the platform* does not go through the workflow: its pull request is opened by the portal and waits for a review.
+
 ## Setup (once)
 
 1. In the repo: Settings > Actions > General > **Allow GitHub Actions to create and approve pull requests**.

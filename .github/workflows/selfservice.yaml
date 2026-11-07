@@ -3,7 +3,7 @@ name: selfservice
 # Runs the changes asked for in the developer portal (scripts/selfservice.py) and opens a pull request with the result. The portal starts it with
 # the `github:actions:dispatch` scaffolder action; the schedule removes sandboxes, access and drills whose time is up.
 # Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests", and Settings > General > "Allow auto-merge".
-# Low-risk requests (drill, sandbox, expire) are merged by the workflow itself once the lint checks pass; everything else waits for a person to review and merge.
+# Every request is merged by the workflow itself once the lint checks pass; a request whose checks fail stays open as a pull request.
 
 run-name: "selfservice: ${{ inputs.action || 'expire' }} (requested by ${{ inputs.requested_by || 'the schedule' }})"
 
@@ -78,8 +78,7 @@ jobs:
           import json, os, subprocess
           r = json.load(open(os.environ["RUNNER_TEMP"] + "/result.json"))
           run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-          auto = os.environ["ACTION"] in ("drill", "sandbox", "expire")
-          closing = "This kind of request is merged automatically once the checks pass." if auto else "Review the diff, then merge: Argo CD applies it."
+          closing = "It is merged automatically once the checks pass, and Argo CD applies it; a failed check leaves it open."
           body = f"{r['body']}\n\n---\nRequested by {os.environ['REQUESTED_BY']} through the `selfservice` workflow ([run]({run_url})). {closing}"
           def sh(*a): subprocess.run(a, check=True)
           if os.environ.get("ACTION") == "expire" or r["title"].startswith("remove expired"):
@@ -116,8 +115,8 @@ jobs:
           [ -n "$id" ] || { echo "::error title=Checks did not start::the lint workflow did not start on $BRANCH"; exit 1; }
           echo "lint run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
           gh run watch "$id" --exit-status
-      - name: Merge the pull request (drill, sandbox, expire)
-        if: steps.checks.outcome == 'success' && contains(fromJSON('["drill","sandbox","expire"]'), inputs.action || 'expire')
+      - name: Merge the pull request
+        if: steps.checks.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.url }}
