@@ -38,6 +38,7 @@ def analyze(alert: dict, ctx: dict) -> dict:
         pr = remediate.maybe_open_pr(ctx, report)
         if pr:
             report.remediation = pr
+            log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct")})
             status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
             if pr.get("type") == "scaleout":
                 change_desc = f"replicas {pr['old_replicas']} → {pr['new_replicas']}"

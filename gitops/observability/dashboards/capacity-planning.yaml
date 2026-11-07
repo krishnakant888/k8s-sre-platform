@@ -94,50 +94,52 @@ data:
           "gridPos": {"h": 1, "w": 24, "x": 0, "y": 4}
         },
         {
-          "id": 6, "type": "timeseries", "title": "Memory working set vs limit",
-          "description": "Solid lines = working set (actual use); dashed lines = memory limit. OOMKill fires when working set touches the limit.",
+          "id": 6, "type": "timeseries", "title": "Memory utilization % (used / limit)",
+          "description": "How full each container's memory limit is. 100% = OOMKill imminent. After a memory-raise remediation PR merges the line drops.",
           "gridPos": {"h": 10, "w": 16, "x": 0, "y": 5},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
-            "defaults": {"unit": "bytes", "custom": {"lineWidth": 2, "fillOpacity": 5}},
-            "overrides": [
-              {"matcher": {"id": "byFrameRefID", "options": "B"}, "properties": [{"id": "custom.lineStyle", "value": {"dash": [6, 4], "fill": "dash"}}, {"id": "custom.fillOpacity", "value": 0}]}
-            ]
+            "defaults": {"unit": "percentunit", "min": 0, "custom": {"lineWidth": 2, "fillOpacity": 8},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.8}]}
+            }
           },
-          "options": {"tooltip": {"mode": "multi"}},
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}},
           "targets": [
-            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} used", "refId": "A"},
-            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} limit", "refId": "B"}
+            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}) / on(namespace, container) min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}}", "refId": "A"}
           ]
         },
         {
           "id": 7, "type": "table", "title": "Memory headroom",
-          "description": "Current memory use, limit, and headroom per container. Red = over 80%. Click a row to filter the timeseries.",
+          "description": "Current memory use, limit, 6h peak and utilisation per container. Red = over 80%.",
           "gridPos": {"h": 10, "w": 8, "x": 16, "y": 5},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
-            "defaults": {"custom": {"displayMode": "auto"}},
+            "defaults": {},
             "overrides": [
-              {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "bytes"}]},
-              {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "bytes"}]},
-              {"matcher": {"id": "byName", "options": "Peak 6h"}, "properties": [{"id": "unit", "value": "bytes"}]},
+              {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "Peak 6h"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
               {"matcher": {"id": "byName", "options": "Used %"}, "properties": [
                 {"id": "unit", "value": "percentunit"},
                 {"id": "custom.displayMode", "value": "color-background"},
-                {"id": "thresholds", "value": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.8}]}}
+                {"id": "custom.width", "value": 80},
+                {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.8}]}}
               ]}
             ]
           },
           "options": {"sortBy": [{"displayName": "Used %", "desc": true}]},
           "transformations": [
             {"id": "merge", "options": {}},
-            {"id": "organize", "options": {"includeByName": {"namespace": true, "container": true, "Value #A": true, "Value #B": true, "Value #C": true, "Value #D": true}, "renameByName": {"Value #A": "Used", "Value #B": "Limit", "Value #C": "Peak 6h", "Value #D": "Used %"}}}
+            {"id": "renameByRegex", "options": {"regex": "Value #A", "renamePattern": "Used"}},
+            {"id": "renameByRegex", "options": {"regex": "Value #B", "renamePattern": "Limit"}},
+            {"id": "renameByRegex", "options": {"regex": "Value #C", "renamePattern": "Peak 6h"}},
+            {"id": "calculateField", "options": {"alias": "Used %", "mode": "reduceRow", "binary": {"left": "Used", "operator": "/", "right": "Limit"}}},
+            {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "cluster": true, "job": true, "instance": true}}}
           ],
           "targets": [
             {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
             {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "B", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
-            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "refId": "C", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
-            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}) / on(namespace, container) min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "D", "instant": true, "legendFormat": "{{namespace}} {{container}}"}
+            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "refId": "C", "instant": true, "legendFormat": "{{namespace}} {{container}}"}
           ]
         },
 
@@ -182,26 +184,33 @@ data:
           "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
         },
         {
-          "id": 12, "type": "table", "title": "Resource exhaustion investigations",
-          "description": "RCA reports where the root cause was resource_exhaustion. The remediation column shows what the agent changed.",
+          "id": 12, "type": "table", "title": "Automated remediations",
+          "description": "Every remediation the SRE agent applied automatically. Each row is one merged PR. Workloads that keep appearing are outliers needing a permanent fix.",
           "gridPos": {"h": 12, "w": 24, "x": 0, "y": 25},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {
             "defaults": {},
             "overrides": [
               {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.width", "value": 180}]},
-              {"matcher": {"id": "byName", "options": "target_service"}, "properties": [{"id": "custom.width", "value": 200}]},
-              {"matcher": {"id": "byName", "options": "priority"}, "properties": [{"id": "custom.width", "value": 80}]},
-              {"matcher": {"id": "byName", "options": "confidence"}, "properties": [{"id": "custom.width", "value": 100}]},
-              {"matcher": {"id": "byName", "options": "investigation_took"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.width", "value": 120}]}
+              {"matcher": {"id": "byName", "options": "workload"}, "properties": [{"id": "custom.width", "value": 220}]},
+              {"matcher": {"id": "byName", "options": "remediation_type"}, "properties": [{"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "pr_status"}, "properties": [{"id": "custom.width", "value": 80}]},
+              {"matcher": {"id": "byName", "options": "old_limit"}, "properties": [{"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "new_limit"}, "properties": [{"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "peak_mib"}, "properties": [{"id": "unit", "value": "decmbytes"}, {"id": "custom.width", "value": 80}]},
+              {"matcher": {"id": "byName", "options": "old_replicas"}, "properties": [{"id": "custom.width", "value": 80}]},
+              {"matcher": {"id": "byName", "options": "new_replicas"}, "properties": [{"id": "custom.width", "value": 80}]},
+              {"matcher": {"id": "byName", "options": "throttle_pct"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "pr_url"}, "properties": [{"id": "links", "value": [{"title": "Open PR", "url": "${__value.text}"}]}, {"id": "custom.width", "value": 300}]},
+              {"matcher": {"id": "byName", "options": "file"}, "properties": [{"id": "custom.width", "value": 260}]}
             ]
           },
           "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
           "transformations": [
             {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-            {"id": "organize", "options": {"includeByName": {"Time": true, "target_service": true, "priority": true, "root_cause": true, "confidence": true, "mode": true, "investigation_took": true, "report_id": true}, "renameByName": {"target_service": "Workload", "priority": "P", "root_cause": "Root cause", "confidence": "Confidence", "mode": "Mode", "investigation_took": "Duration (s)", "report_id": "ID"}}}
+            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true}, "renameByName": {"remediation_type": "Type", "workload": "Workload", "pr_status": "Status", "pr_number": "PR #", "pr_url": "PR URL", "file": "File changed", "old_limit": "Old limit", "new_limit": "New limit", "peak_mib": "Peak MiB", "old_replicas": "Old replicas", "new_replicas": "New replicas", "throttle_pct": "Throttle %"}}}
           ],
-          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\" | root_cause=\"resource_exhaustion\"", "refId": "A"}]
+          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"remediation taken\"", "refId": "A"}]
         },
 
         {
@@ -232,7 +241,7 @@ data:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 47},
           "datasource": {"type": "loki", "uid": "loki"},
           "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none"},
-          "targets": [{"expr": "{namespace=\"sre-agent\"} |= \"resource_exhaustion\" or {namespace=\"sre-agent\"} |= \"remediat\"", "refId": "A"}]
+          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=~\"remediation taken|rca report\" | root_cause=~\"resource_exhaustion|\"", "refId": "A"}]
         }
       ]
     }
