@@ -99,6 +99,7 @@ datasources:
         access: proxy
         url: http://loki:3100
         jsonData:
+          manageAlerts: false   # alerting is done by Grafana, Loki's ruler is not used (the Alerting page would show errors from it)
           maxLines: 1000
           derivedFields:
             - name: trace_id
