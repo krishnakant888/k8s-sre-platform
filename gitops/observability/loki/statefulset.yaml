@@ -26,7 +26,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: loki
-          image: grafana/loki:3.5.0
+          image: grafana/loki:3.5.12
           args:
             - -config.file=/etc/loki/loki.yaml
             - -target=all
