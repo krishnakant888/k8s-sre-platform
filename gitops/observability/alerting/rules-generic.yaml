@@ -156,7 +156,7 @@ data:
                 model: {refId: C, type: math, expression: "$A >= 0"}
             noDataState: OK
             execErrState: Error
-            for: 5m
+            for: 1m
             labels: {severity: ticket}
             annotations:
               summary: "{{ $labels.pod }} is using over 90% of its memory limit"
@@ -174,7 +174,7 @@ data:
                 model: {refId: C, type: math, expression: "$A >= 0"}
             noDataState: OK
             execErrState: Error
-            for: 10m
+            for: 1m
             labels: {severity: ticket}
             annotations:
               summary: "{{ $labels.pod }} is CPU throttled more than half the time"
