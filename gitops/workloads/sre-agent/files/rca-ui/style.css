@@ -177,3 +177,15 @@ button, input { font: inherit; color: inherit; }
 .item.resolved .item-sub { color: var(--ok); }
 
 .arch-now { margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: var(--ok-bg); color: var(--ok); font-weight: 700; }
+
+/* the problem and its impact move: the blamed component pulses, the links to what it affects flow, the affected components breathe */
+@keyframes arch-flow { to { stroke-dashoffset: -20; } }
+@keyframes arch-alarm { 0%, 100% { stroke-width: 3; filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0)); } 50% { stroke-width: 5; filter: drop-shadow(0 0 9px rgba(220, 38, 38, 0.85)); } }
+@keyframes arch-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
+@keyframes arch-ring { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.12); opacity: 0; } }
+.arch .edge.bad, .arch .edge.warn { stroke-dasharray: 6 4; animation: arch-flow 0.7s linear infinite; }
+.arch .edge.bad { animation-duration: 0.45s; }
+.arch .node.bad .box { animation: arch-alarm 1.2s ease-in-out infinite; }
+.arch .node.bad .label, .arch .node.bad .sub { animation: arch-breathe 1.2s ease-in-out infinite; }
+.arch .node.warn .box { animation: arch-breathe 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .arch * { animation: none !important; } }
