@@ -48,12 +48,15 @@ jobs:
           PARAMS: ${{ inputs.params || '{}' }}
         run: |
           set +e
-          python3 scripts/selfservice.py "$ACTION" "$PARAMS" > "$RUNNER_TEMP/result.json"
+          python3 scripts/selfservice.py "$ACTION" "$PARAMS" > "$RUNNER_TEMP/result.json" 2> "$RUNNER_TEMP/err.txt"
           code=$?
           set -e
+          cat "$RUNNER_TEMP/err.txt" >&2
           if [ "$code" -ne 0 ]; then
             if [ "$ACTION" = expire ] && [ "$code" -eq 2 ]; then echo "nothing has expired"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-            exit "$code"   # the reason is in the log above
+            # an annotation: the portal reads it to tell the person why the request was refused
+            echo "::error title=Request refused::$(tr '\n' ' ' < "$RUNNER_TEMP/err.txt" | cut -c1-400)"
+            exit "$code"
           fi
           cat "$RUNNER_TEMP/result.json"
       - name: Check the files
