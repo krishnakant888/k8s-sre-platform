@@ -1,0 +1,48 @@
+# Self-service
+
+What a developer can ask for from the portal (Create > ...), and how it reaches the clusters. Nothing in the portal writes to a cluster: each request becomes a **pull request** that Argo CD applies after the merge, so every change is reviewed, in Git and revertable.
+
+```
+portal template  ->  GitHub Actions workflow `selfservice`  ->  scripts/selfservice.py edits the files  ->  pull request  ->  merge  ->  Argo CD applies
+```
+
+The portal starts the workflow with the `github:actions:dispatch` action. The workflow checks the inputs, makes the change with `scripts/selfservice.py`, runs yamllint on the files it touched and opens the pull request. A request the script cannot do safely fails with the reason in the run log.
+
+## What can be asked for
+
+| Request (`action`) | Parameters | Result |
+|---|---|---|
+| `scale` | service, replicas (1 to 10) | `spec.replicas` of the Deployment |
+| `resources` | service, memory limit, memory request, CPU request | container resources (the request cannot exceed the limit) |
+| `env` | service, name, value | a plain environment variable. Names that look like secrets are refused: use a SealedSecret (`docs/secrets.md`) |
+| `image` | service, tag | the image tag (`latest` is refused, as Kyverno does) |
+| `rollback` | service | the image of the previous change to the Deployment file |
+| `route` | service, host | one more `*.localhost` host name on the HTTPRoute (the gateway listener's wildcard certificate covers it) |
+| `promote` | service | moves a service from `sandbox` to `demo` |
+| `alert` | service, kind (error-rate, latency, availability, restarts, memory), threshold, severity | a Grafana alert rule in `gitops/observability/alerting/request-<service>-<kind>.yaml` |
+| `dashboard` | service, extra panels (title and PromQL) | a Grafana dashboard `service-<service>.yaml` in the folder Services |
+| `sandbox` | name, owner, days (1 to 14), CPU, memory | namespace `sbx-<name>` with quota, limit range and network policies (the same as `sandbox`), removed when the time is up |
+| `access` | user, namespace, days (1 to 30) | a RoleBinding of the built-in `view` role (read-only, no Secrets) for a Kubernetes user; authorization only, the user still needs a credential for the cluster |
+| `drill` | scenario (bad-image, bad-probe, crashloop, oom, pending), minutes | a deliberately broken workload in the `scenarios` namespace, so the alerts and the SRE agent can be seen working (report at https://reports.localhost:9443) |
+| `expire` | none | removes sandboxes, access and drills whose `# sre-platform/expires:` time has passed. Runs every 30 minutes on a schedule and opens a pull request |
+
+The script edits the YAML as text so comments and the flow style of the repo stay as written, then parses the file before and after and refuses the change if anything other than the asked-for field moved. `scripts/test_selfservice.py` runs every action on a copy of the real manifests.
+
+## Setup (once)
+
+1. In the repo: Settings > Actions > General > **Allow GitHub Actions to create and approve pull requests**.
+2. A token for the portal that may start the workflow: a fine-grained personal access token (or a GitHub App) limited to this repository with **Actions: read and write**, and **Contents** and **Pull requests: read and write** if the New service template should open the pull request itself. Add it to the portal's Secret as `GITHUB_TOKEN`:
+
+   ```bash
+   kubectl --context kind-gitops -n portal patch secret portal-secrets --type merge -p '{"stringData":{"GITHUB_TOKEN":"<token>"}}'
+   kubectl --context kind-gitops -n portal rollout restart deploy/portal
+   ```
+
+   Without the token the portal still works; the templates that need it show the failure of the GitHub step.
+
+## Run it by hand
+
+```bash
+python3 scripts/selfservice.py scale '{"service": "frontend", "replicas": 3}'
+git diff
+```

@@ -64,4 +64,8 @@ spec:
       namespace: sre-agent
     - name: platform
       namespace: sandbox
+    - name: platform
+      namespace: scenarios   # failure drills asked for in the portal (gitops/fault-drills/active)
+    - name: platform
+      namespace: "sbx-*"      # sandboxes asked for in the portal (gitops/platform/base/sandbox-*.yaml)
   clusterResourceWhitelist: []
