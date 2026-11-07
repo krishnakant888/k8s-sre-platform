@@ -611,6 +611,7 @@ def summary(clusters, first_run=True):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--destroy", action="store_true")
+    ap.add_argument("--yes", "-y", action="store_true", help="skip the destroy confirmation prompt")
     ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
     ap.add_argument("--credentials", action="store_true", help="print the URLs and logins of the clusters that exist, and exit")
     ap.add_argument("--no-wait", action="store_true", help="do not wait for Grafana and the Argo CD portal account (and so do not create the access tokens); run --portal-access and --viewer-access later")
@@ -636,6 +637,12 @@ def main():
 
     preflight()
     if args.destroy:
+        names = ", ".join(clusters)
+        if not args.yes:
+            answer = input(f"Delete cluster(s) {names} and all their data (PVCs included)? [y/N] ")
+            if answer.strip().lower() != "y":
+                print("Aborted.")
+                return
         for c in clusters:  # the hub last: it is what deploys the others
             if cluster_exists(c):
                 run("kind", "delete", "cluster", "--name", c)
