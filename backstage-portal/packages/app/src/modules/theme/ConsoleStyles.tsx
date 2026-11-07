@@ -133,29 +133,29 @@ form.rjsf .MuiFormHelperText-root { margin-top: 5px; font-size: 12.5px; }
 [data-pc-route='/create/tasks'] table td:first-child a { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
 
 /* the catalog (/catalog): the filters in a row on top, the table across the whole page, a wide search bar */
-[data-pc-route='/catalog'] .MuiGrid-container { flex-direction: column; flex-wrap: nowrap; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item { flex-basis: auto !important; max-width: 100% !important; width: 100% !important; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) { display: flex !important; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > * { flex: 0 1 220px; min-width: 160px; margin: 0 !important; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > .MuiPaper-root { flex: 0 0 240px; align-self: stretch; }
-[data-pc-route='/catalog'] .MuiGrid-item:has(table) > *, [data-pc-route='/catalog'] .MuiGrid-item:has(table) .MuiPaper-root { width: 100% !important; max-width: 100% !important; }
-[data-pc-route='/catalog'] .MuiToolbar-root .MuiFormControl-root { flex: 1 1 auto; }
-[data-pc-route='/catalog'] .MuiToolbar-root .MuiInputBase-root { height: 44px; padding: 0 14px; border: 1px solid var(--pc-border-2); border-radius: 10px; background: var(--pc-surface); }
-[data-pc-route='/catalog'] .MuiToolbar-root .MuiInputBase-root::before, [data-pc-route='/catalog'] .MuiToolbar-root .MuiInputBase-root::after { display: none; }
-[data-pc-route='/catalog'] .MuiToolbar-root .MuiInputBase-root:focus-within { border-color: var(--pc-accent-solid); box-shadow: 0 0 0 3px var(--pc-accent-soft); }
-[data-pc-route='/catalog'] table td, [data-pc-route='/catalog'] table th { white-space: nowrap; padding: 12px 16px; }
-[data-pc-route='/catalog'] table td:nth-child(6) { white-space: normal; max-width: 360px; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container { flex-direction: column; flex-wrap: nowrap; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item { flex-basis: auto !important; max-width: 100% !important; width: 100% !important; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) { display: flex !important; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) > * { flex: 0 1 220px; min-width: 160px; margin: 0 !important; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) > .MuiPaper-root { flex: 0 0 240px; align-self: stretch; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:has(table) > *, :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:has(table) .MuiPaper-root { width: 100% !important; max-width: 100% !important; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiToolbar-root .MuiFormControl-root { flex: 1 1 auto; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiToolbar-root .MuiInputBase-root { height: 44px; padding: 0 14px; border: 1px solid var(--pc-border-2); border-radius: 10px; background: var(--pc-surface); }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiToolbar-root .MuiInputBase-root::before, :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiToolbar-root .MuiInputBase-root::after { display: none; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiToolbar-root .MuiInputBase-root:focus-within { border-color: var(--pc-accent-solid); box-shadow: 0 0 0 3px var(--pc-accent-soft); }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) table td, :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) table th { white-space: nowrap; padding: 12px 16px; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) table td:nth-child(6) { white-space: normal; max-width: 360px; }
 
 /* catalog, tidier: the filters on an even grid, the personal filter as one compact bar, the table on the whole width */
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px 14px; align-items: end; padding-bottom: 8px !important; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > * { flex: none; min-width: 0; width: auto; }
-[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > .MuiPaper-root { grid-column: 1 / -1; order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 14px; }
-[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiList-root { display: flex; flex-direction: row; gap: 6px; padding: 0; }
-[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root { display: inline-flex; flex-wrap: nowrap !important; align-items: center; width: auto; gap: 12px; padding: 5px 12px; border-radius: 8px; }
-[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root > * { position: static !important; transform: none !important; flex: none; margin: 0; }
-[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemText-root { margin: 0; flex: none; }
-[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemSecondaryAction-root { position: static; transform: none; margin-left: 4px; }
-[data-pc-route='/catalog'] .MuiGrid-item:has(table) > .MuiBox-root { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px 14px; align-items: end; padding-bottom: 8px !important; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) > * { flex: none; min-width: 0; width: auto; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-container > .MuiGrid-item:not(:has(table)) > .MuiPaper-root { grid-column: 1 / -1; order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 14px; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiList-root { display: flex; flex-direction: row; gap: 6px; padding: 0; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root { display: inline-flex; flex-wrap: nowrap !important; align-items: center; width: auto; gap: 12px; padding: 5px 12px; border-radius: 8px; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root > * { position: static !important; transform: none !important; flex: none; margin: 0; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemText-root { margin: 0; flex: none; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemSecondaryAction-root { position: static; transform: none; margin-left: 4px; }
+:is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:has(table) > .MuiBox-root { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
 `;
 
 export const ConsoleStyles = () => <style>{CSS}</style>;
