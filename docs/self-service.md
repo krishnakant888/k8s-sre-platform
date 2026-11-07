@@ -48,7 +48,7 @@ On a component's page: **Resources** (CPU and memory against request and limit, 
 
    ```bash
    kubectl --context kind-gitops -n portal patch secret portal-secrets --type merge -p '{"stringData":{"GITHUB_TOKEN":"<token>"}}'
-   kubectl --context kind-gitops -n portal rollout restart deploy/portal
+   kubectl --context kind-gitops -n portal delete pod -l app.kubernetes.io/name=portal   # a rollout restart would be reverted by Argo CD
    ```
 
    Without the token the portal still works; the templates that need it show the failure of the GitHub step.
