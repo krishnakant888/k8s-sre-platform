@@ -139,7 +139,8 @@
   }
 
   // live: "firing", "pending", "resolved" or "unknown" (from Grafana); a resolved alert turns everything green, the rest draws what the report found
-  function draw(r, live) {
+  // past: the alert has resolved, the picture is what it was, so the words are in the past tense
+  function draw(r, live, past) {
     const a = analyze(r);
     const recovered = live === "resolved";
     const state = (id) => (recovered ? "ok" : id === a.root ? "bad" : a.impacted.has(id) ? "warn" : "ok");
@@ -180,12 +181,12 @@
     for (const [id, [title, sub, x, y, w, h]] of Object.entries(NODES)) {
       const st = state(id);
       const g = s("g", { class: "node " + st });
-      g.append(s("title", {}, `${nameOf(id)}: ${st === "bad" ? "the problem is here" : st === "warn" ? "affected" : recovered ? "recovered, the alert is no longer firing" : "no problem found in this report"}`));
+      g.append(s("title", {}, `${nameOf(id)}: ${st === "bad" ? (past ? "the problem was here" : "the problem is here") : st === "warn" ? (past ? "was affected" : "affected") : recovered ? "recovered, the alert is no longer firing" : "no problem found in this report"}`));
       g.append(s("rect", { x, y, width: w, height: h, rx: 12, class: "box" }));
       g.append(s("circle", { cx: x + 16, cy: y + h / 2, r: 6, class: "dot" }));
       const label = id === "svc" ? clip(nameOf(id), 28) : title;
       g.append(s("text", { x: x + 32, y: y + (sub ? h / 2 - 3 : h / 2 + 5), class: "label" }, label));
-      if (sub) g.append(s("text", { x: x + 32, y: y + h / 2 + 15, class: "sub" }, st === "bad" ? "problem here" : st === "warn" ? "affected" : recovered && id === a.root ? "recovered" : sub));
+      if (sub) g.append(s("text", { x: x + 32, y: y + h / 2 + 15, class: "sub" }, st === "bad" ? (past ? "problem was here" : "problem here") : st === "warn" ? (past ? "was affected" : "affected") : recovered && id === a.root ? "recovered" : sub));
       svg.append(g);
     }
     return { svg, analysis: a, nameOf };

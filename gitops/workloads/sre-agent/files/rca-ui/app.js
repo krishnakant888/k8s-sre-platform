@@ -249,7 +249,7 @@
 
   function drawArchitecture(r, live) {
     // resolved: two pictures, the problem as it was and the recovered state now; otherwise the one picture
-    const { svg, analysis, nameOf } = RcaDiagram.draw(r, live === "resolved" ? "unknown" : live);
+    const { svg, analysis, nameOf } = RcaDiagram.draw(r, live === "resolved" ? "unknown" : live, live === "resolved");
     if (live === "resolved") {
       // the problem picture stays (animated, as it was); the recovered state is one green line under it, no second diagram
       const fig = el("figure", "arch-fig"); fig.append(el("figcaption", "", "When it happened: the problem and what it affected"), svg);
@@ -263,7 +263,7 @@
     const tail = live === "resolved" ? "The alert is no longer firing, so the picture shows the problem as it was. "
       : live === "firing" || live === "pending" ? "Live: the alert is " + (live === "firing" ? "still firing" : "pending") + ", so the problem is drawn as the report found it. "
       : "Grafana could not say whether the alert is still firing, so this is the state when the report was written. ";
-    note.replaceChildren(el("b", "", "Problem: "), document.createTextNode(`${nameOf(analysis.root)} (${where}). `), el("b", "", live === "resolved" ? "Was affected: " : "Affected: "),
+    note.replaceChildren(el("b", "", live === "resolved" ? "The problem was: " : "Problem: "), document.createTextNode(`${nameOf(analysis.root)} (${where}). `), el("b", "", live === "resolved" ? "Was affected: " : "Affected: "),
       document.createTextNode(hit.length ? hit.join(", ") + ". " : "nothing else. "),
       document.createTextNode(tail + "The diagram is drawn from the alert, service and root cause of the report; green on a firing alert means the report found no problem there."));
   }
