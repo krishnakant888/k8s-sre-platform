@@ -68,4 +68,5 @@ class RcaReport(BaseModel):
     observability_gaps: list[str] = Field(description="signals that were missing or too weak for this investigation, each with the exact metric, log field, trace attribute or alert to add")
     rca_markdown: str
     incident: dict = Field(default_factory=dict, description="the investigation that produced this report: workflow name, start, duration (set by the agent, not by the model)")
+    insights: dict = Field(default_factory=dict, description="rule based insights: blast radius, change, confidence, competing causes, related alerts, recurrence, dependency chain, trend (set by the agent)")
     alert_details: dict = Field(default_factory=dict, description="the alert that started the investigation: labels, annotations, times, status (set by the agent, not by the model)")
