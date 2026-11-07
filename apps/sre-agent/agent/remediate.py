@@ -149,10 +149,6 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
         return None
 
     sig = ctx["signals"]
-    # Skip if memory is growing (leak/unbounded cache) — raising the limit only delays the kill
-    if sig.get("mem_growth") and sig["mem_growth"] > 1.3:
-        return None
-
     source_files = sig.get("source_files") or []
     if not source_files:
         return None
