@@ -145,6 +145,17 @@ form.rjsf .MuiFormHelperText-root { margin-top: 5px; font-size: 12.5px; }
 [data-pc-route='/catalog'] .MuiToolbar-root .MuiInputBase-root:focus-within { border-color: var(--pc-accent-solid); box-shadow: 0 0 0 3px var(--pc-accent-soft); }
 [data-pc-route='/catalog'] table td, [data-pc-route='/catalog'] table th { white-space: nowrap; padding: 12px 16px; }
 [data-pc-route='/catalog'] table td:nth-child(6) { white-space: normal; max-width: 360px; }
+
+/* catalog, tidier: the filters on an even grid, the personal filter as one compact bar, the table on the whole width */
+[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px 14px; align-items: end; padding-bottom: 8px !important; }
+[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > * { flex: none; min-width: 0; width: auto; }
+[data-pc-route='/catalog'] .MuiGrid-container > .MuiGrid-item:not(:has(table)) > .MuiPaper-root { grid-column: 1 / -1; order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 14px; }
+[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiList-root { display: flex; flex-direction: row; gap: 6px; padding: 0; }
+[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root { display: inline-flex; flex-wrap: nowrap !important; align-items: center; width: auto; gap: 12px; padding: 5px 12px; border-radius: 8px; }
+[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItem-root > * { position: static !important; transform: none !important; flex: none; margin: 0; }
+[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemText-root { margin: 0; flex: none; }
+[data-pc-route='/catalog'] .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemSecondaryAction-root { position: static; transform: none; margin-left: 4px; }
+[data-pc-route='/catalog'] .MuiGrid-item:has(table) > .MuiBox-root { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
 `;
 
 export const ConsoleStyles = () => <style>{CSS}</style>;
