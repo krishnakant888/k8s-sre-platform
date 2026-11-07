@@ -1,0 +1,22 @@
+# The manifests of the sre-agent app, plus the page of the RCA report viewer. The page is five files (files/rca-ui) that become a ConfigMap;
+# its name carries a hash of the content, so changing a file restarts the viewer with the new page.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - network-policies.yaml
+  - reports.yaml
+  - reports-viewer.yaml
+  - agent.yaml
+  - workflow-template.yaml
+configMapGenerator:
+  - name: rca-viewer-ui
+    namespace: sre-agent
+    files:
+      - files/rca-ui/index.html
+      - files/rca-ui/style.css
+      - files/rca-ui/app.js
+      - files/rca-ui/diagram.js
+      - files/rca-ui/marked.umd.js
+      - files/rca-ui/purify.min.js
+      - files/rca-ui/LICENSES.txt
