@@ -109,6 +109,10 @@ export function TerminalEffects() {
       frame += 1;
       const route = location.pathname.replace(/\/+$/, '');
       if (document.body.dataset.pcRoute !== route) document.body.dataset.pcRoute = route;
+      // the catalog graph draws nothing until it has a starting entity: start from the platform's domain
+      if (route === '/catalog-graph' && !location.search.includes('rootEntityRefs')) {
+        location.replace('/catalog-graph?rootEntityRefs%5B%5D=domain%3Adefault%2Fsre-platform&maxDepth=3&selectedKinds%5B%5D=domain&selectedKinds%5B%5D=system&selectedKinds%5B%5D=component&selectedKinds%5B%5D=api&selectedKinds%5B%5D=resource&unidirectional=true&mergeRelations=true&direction=LR&showFilters=true&curve=curveMonotoneX');
+      }
       if (location.pathname.includes('/create/tasks/')) banner();
     }, 110);
 
