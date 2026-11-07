@@ -189,3 +189,11 @@ button, input { font: inherit; color: inherit; }
 .arch .node.bad .label, .arch .node.bad .sub { animation: arch-breathe 1.2s ease-in-out infinite; }
 .arch .node.warn .box { animation: arch-breathe 1.8s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .arch * { animation: none !important; } }
+
+.alert-card { margin-top: 18px; border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 14px 18px; }
+.alert-card h3 { margin: 0 0 8px; font-size: 15px; }
+.alert-ann { margin: 8px 0 0; }
+.alert-card details { margin-top: 10px; }
+.alert-card summary { cursor: pointer; font-weight: 600; }
+.alert-labels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.alert-labels .chip { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }

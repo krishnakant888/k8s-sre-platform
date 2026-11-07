@@ -105,7 +105,9 @@
     if (!id) id = "svc";
     if (!impacted) impacted = new Set(IMPACT[id] || []);
     impacted.delete(id);
-    if (id === "svc" && !label) label = service || "Workload";
+    // the namespace the alert reported, so the workload is named as it is in the cluster
+    const ns = (r.alert_details && r.alert_details.namespace) || "";
+    if (id === "svc" && !label) label = (ns && service ? ns + "/" : "") + (service || "Workload");
     return { root: id, impacted, label, service };
   }
 
