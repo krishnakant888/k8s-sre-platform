@@ -54,7 +54,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-from-ingress-and-collector
+  name: allow-from-gateway-and-collector
   namespace: sandbox
 spec:
   podSelector: {}
@@ -62,9 +62,9 @@ spec:
   ingress:
     - from:
         - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+            matchLabels: {kubernetes.io/metadata.name: traefik}
           podSelector:
-            matchLabels: {app.kubernetes.io/name: ingress-nginx}
+            matchLabels: {app.kubernetes.io/name: traefik}
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:

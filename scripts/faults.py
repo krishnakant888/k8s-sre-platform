@@ -4,7 +4,7 @@
     scripts/faults.py list                      what can be injected, which alert it should raise and what the report should conclude
     scripts/faults.py start crash badimage      inject some faults (names from `list`)
     scripts/faults.py start all                 inject every fault that does not disturb the platform
-    scripts/faults.py start disruptive          node down, ingress controller down, collector down (pauses Argo CD sync of what it breaks)
+    scripts/faults.py start disruptive          node down, gateway (Traefik) down, collector down (pauses Argo CD sync of what it breaks)
     scripts/faults.py run-each [names|all|disruptive]   one fault at a time: inject, wait for its report, judge it, remove it, next
     scripts/faults.py check                     compare the RCA reports with what each fault should produce: PASS / WRONG / NO ALERT
     scripts/faults.py clear                     remove everything created here and undo the disruptive faults
@@ -75,11 +75,11 @@ def sh(script):
 
 
 def ingress_app(name, host, objs):
-    """service + ingress in front of a deployment, so the ingress controller sees the traffic"""
+    """service + HTTPRoute in front of a deployment, so the gateway (Traefik) sees the traffic"""
     return objs + [
         {"apiVersion": "v1", "kind": "Service", "metadata": {"name": name, "namespace": NS, "labels": {"team": "fault-drill"}}, "spec": {"selector": {"app.kubernetes.io/name": name}, "ports": [{"name": "http", "port": 80, "targetPort": "http"}]}},
-        {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": {"name": name, "namespace": NS, "labels": {"team": "fault-drill"}},
-         "spec": {"ingressClassName": "nginx", "rules": [{"host": host, "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": name, "port": {"name": "http"}}}}]}}]}}]
+        {"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": {"name": name, "namespace": NS, "labels": {"team": "fault-drill"}},
+         "spec": {"parentRefs": [{"name": "platform", "namespace": "traefik"}], "hostnames": [host], "rules": [{"backendRefs": [{"name": name, "port": 80}]}]}}]
 
 
 def tmp_mount():
@@ -240,7 +240,7 @@ def _():
     apply(ingress_app("fault-ingress-slow", "fault-slow.localhost", [deployment("fault-ingress-slow", container(image=PYTHON, command=["python", "-c", code], ports=[{"name": "http", "containerPort": 8080}], resources={"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "96Mi"}}))]))
 
 
-@scenario("ingress-nobackend", "service behind the ingress scaled to zero", ["IngressHighErrorRate"], ["ingress_backend_failure"], ["application"], 8, service="fault-ingress-nobackend")
+@scenario("ingress-nobackend", "service behind the gateway route scaled to zero", ["IngressHighErrorRate"], ["ingress_backend_failure"], ["application"], 8, service="fault-ingress-nobackend")
 def _():
     vols, mounts = tmp_mount()
     apply(ingress_app("fault-ingress-nobackend", "fault-nobackend.localhost", [deployment("fault-ingress-nobackend", container(image=NGINX, ports=[{"name": "http", "containerPort": 8080}], mounts=mounts), volumes=vols, uid=101)]))
@@ -314,10 +314,10 @@ def resume_sync(app):
     kubectl(HUB, "-n", "argocd", "patch", "application", app, "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}', check=False)
 
 
-@scenario("addon-down", "ingress controller of the platform cluster scaled to zero", ["CriticalAddonDown"], ["scaled_to_zero"], ["infrastructure"], 5, service="ingress-nginx-controller", group="disruptive")
+@scenario("addon-down", "gateway (Traefik) of the platform cluster scaled to zero", ["CriticalAddonDown"], ["scaled_to_zero"], ["infrastructure"], 5, service="traefik", group="disruptive")
 def _():
-    pause_sync("prod-ingress-nginx")
-    kubectl(PLATFORM, "-n", "ingress-nginx", "scale", "deploy/ingress-nginx-controller", "--replicas=0")
+    pause_sync("prod-traefik")
+    kubectl(PLATFORM, "-n", "traefik", "scale", "deploy/traefik", "--replicas=0")
 
 
 @scenario("collector-down", "collector of the gitops cluster scaled to zero", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
@@ -346,17 +346,17 @@ def clear():
     save_state({})
     kubectl(PLATFORM, "delete", "pods", "-A", "--field-selector=status.phase=Failed", check=False)   # evicted pods stay as objects
     for ns in (NS, "demo"):
-        kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,ingress,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
+        kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,httproute,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
-    for app in (*ROOT_APPS, "prod-ingress-nginx", "hub-alloy", "loki"):
+    for app in (*ROOT_APPS, "prod-traefik", "hub-alloy", "loki"):
         resume_sync(app)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
     kubectl(OBS, "-n", "sre-agent", "delete", "workflow", "-l", "none=none", "--ignore-not-found", check=False)
-    kubectl(PLATFORM, "-n", "ingress-nginx", "scale", "deploy/ingress-nginx-controller", "--replicas=1", check=False)
+    kubectl(PLATFORM, "-n", "traefik", "scale", "deploy/traefik", "--replicas=1", check=False)
     kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=1", check=False)
     print("cleared")
 

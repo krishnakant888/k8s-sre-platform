@@ -1,0 +1,38 @@
+# Gateway API controller of the hub cluster (replaces ingress-nginx). The chart has no Helm hooks and no admission webhook.
+# It also creates the GatewayClass "traefik" and the Gateway "platform" (see gitops/traefik/values.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hub-traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: hub
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      targetRevision: 42.3.1
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/gitops/traefik/values.yaml   # same NodePorts in every cluster; kind maps them to different host ports
+          - $values/gitops/traefik/values-hub.yaml   # the namespaces whose routes this Gateway accepts
+    - repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:   # the Traefik NodePorts may still be held by the controller this replaces (ingress-nginx) for a moment
+      limit: 5
+      backoff: {duration: 30s, factor: 2, maxDuration: 5m}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # Traefik's own CRDs are large

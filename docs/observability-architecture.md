@@ -5,7 +5,7 @@ fault catalogue (`scripts/faults.py`); the last section lists what is not built.
 
 ## Principles
 
-1. **Alert on what users feel, explain with what the platform knows.** Symptom alerts (error budget burn, ingress 5xx and latency) page. Cause alerts (crash loop, image pull, scheduling, node, volume) open tickets and give the agent its starting point.
+1. **Alert on what users feel, explain with what the platform knows.** Symptom alerts (error budget burn, gateway 5xx and latency) page. Cause alerts (crash loop, image pull, scheduling, node, volume) open tickets and give the agent its starting point.
 2. **One identity for every signal.** Metrics, logs, events and traces carry the same labels: `cluster`, `namespace`, `pod`, `node`, `service`, `version`. One dashboard, one alert rule and one investigation work for any workload in any cluster.
 3. **Nothing per application.** A new workload is observed because the collector discovers it, not because someone configured it. The only contract is the standard labels (`app.kubernetes.io/name`, `version`, `team`) and resource limits, both checked by Kyverno.
 4. **Each problem is delivered exactly once.** A fault raises several alerts; they become one notification each (nothing grouped away, nothing dropped) and one investigation per workload.
@@ -65,7 +65,7 @@ Lessons that cost time and are now guarded:
 | Layer | Examples | Severity | Purpose |
 |---|---|---|---|
 | Service level | error budget fast burn (14.4x over 1 h and 5 m) and slow burn (6x over 6 h and 30 m), no replicas, p99 latency | page / ticket | user impact of a service that has an SLO |
-| Ingress | 5xx ratio above 5%, p95 above 1 s | page / ticket | user impact of anything behind an Ingress, with no per-app work |
+| Ingress (gateway routes) | 5xx ratio above 5%, p95 above 1 s | page / ticket | user impact of anything behind an HTTPRoute of the gateway (Traefik), with no per-app work |
 | Workload | container waiting (crash loop, image pull, config error), pod stuck pending or unschedulable, rollout stuck, StatefulSet / DaemonSet not ready, job failed, pod failed, memory near limit, CPU throttled, scrape target down | ticket | the cause side; starts the investigation |
 | Platform | node not ready or under pressure, node CPU / memory saturated, API server errors and latency, CoreDNS errors, a critical add-on with no replica (including scaled to zero), volume filling up | page / ticket | what many workloads share |
 | GitOps | application out of sync, unhealthy, sync failing | ticket | deployments that do not land |
@@ -89,7 +89,7 @@ alert -> settle (20 s) -> collect evidence -> analyze -> store report -> notify
           Argo Workflow steps, each retried with backoff and a deadline
 ```
 
-**Collect.** From the alert labels the agent knows the cluster and the object. It reads, with bounded read-only tools: pod and container state and the scheduler's reason, the events about that workload only (filtered before truncation), the last log lines of the workload (unfiltered for crashing workloads, because the message that matters rarely contains the word "error"), metrics (restarts, memory against limit, throttling, node pressure, DNS and API server health), traces, the ingress backend, the Argo CD application and its sync message, and the recent deploy history.
+**Collect.** From the alert labels the agent knows the cluster and the object. It reads, with bounded read-only tools: pod and container state and the scheduler's reason, the events about that workload only (filtered before truncation), the last log lines of the workload (unfiltered for crashing workloads, because the message that matters rarely contains the word "error"), metrics (restarts, memory against limit, throttling, node pressure, DNS and API server health), traces, the backend of the gateway route, the Argo CD application and its sync message, and the recent deploy history.
 
 **Decide the cause.** A rule table maps the evidence to a cause, e.g. waiting reason `ImagePullBackOff` plus a `NotFound` pull error is a missing tag; exit 137 with memory at the limit is an undersized limit, while memory growing without levelling off is a leak; a liveness-probe event with exit 0 is the probe killing a healthy process; `FailedCreate` with "exceeded quota" is the namespace quota.
 
@@ -114,7 +114,7 @@ It goes down one level when the signals have recovered.
 
 ## What is not built
 
-- Continuous profiling, eBPF auto-instrumentation and synthetic probes. Request metrics come from the ingress controller and the app's own histogram; traces need OpenTelemetry in the app.
+- Continuous profiling, eBPF auto-instrumentation and synthetic probes. Request metrics come from the gateway (Traefik) and the app's own histogram; traces need OpenTelemetry in the app.
 - Volume-full alerts cannot be exercised on kind (host-path volumes report no usage); the rules are in place for real disks.
 - High availability: one Grafana, one Mimir, one Loki, one Tempo, filesystem storage on a volume. In a cloud: object storage, microservices mode or a managed service, Grafana in HA with a shared database.
 - An external pager. All alerts go to the agent, which writes the report and can post to a Slack-compatible webhook; paging a human needs an on-call tool behind that webhook, and a second, independent watcher of the whole stack (a dead man's switch).

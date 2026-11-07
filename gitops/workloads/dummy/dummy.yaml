@@ -67,23 +67,18 @@ spec:
   ports:
     - {name: http, port: 80, targetPort: http}
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: dummy-shop
   namespace: sandbox
 spec:
-  ingressClassName: nginx
+  parentRefs:
+    - {name: platform, namespace: traefik}
+  hostnames: [dummy.localhost]
   rules:
-    - host: dummy.localhost
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: dummy-shop
-                port: {name: http}
+    - backendRefs:
+        - {name: dummy-shop, port: 80}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

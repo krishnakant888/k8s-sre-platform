@@ -1,0 +1,75 @@
+# Routes of the observability cluster's UIs.
+#
+# Grafana has its own login. The Argo Workflows UI and the RCA report viewer have none, so the gateway asks for a
+# basic-auth login in front of them: a stopgap for local use (production: SSO with OIDC). The Secret (user "admin",
+# random password) is created by bootstrap/bootstrap.py in each of the two namespaces, never stored in Git.
+# removeHeader keeps the Authorization header away from the backend.
+#
+# Mimir, Loki, Tempo and Alloy are deliberately not routed: Grafana is the way in for people, and a port-forward
+# for an operator (see the README).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  parentRefs:
+    - {name: platform, namespace: traefik}
+  hostnames: [grafana.localhost]
+  rules:
+    - backendRefs:
+        - {name: grafana, port: 80}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: basic-auth
+  namespace: argo-workflows
+spec:
+  basicAuth:
+    secret: gateway-basic-auth
+    realm: platform
+    removeHeader: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argo-workflows
+  namespace: argo-workflows
+spec:
+  parentRefs:
+    - {name: platform, namespace: traefik}
+  hostnames: [workflows.localhost]
+  rules:
+    - filters:
+        - type: ExtensionRef
+          extensionRef: {group: traefik.io, kind: Middleware, name: basic-auth}   # the UI itself has no login (authModes: server)
+      backendRefs:
+        - {name: argo-workflows-server, port: 2746}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: basic-auth
+  namespace: sre-agent
+spec:
+  basicAuth:
+    secret: gateway-basic-auth
+    realm: platform
+    removeHeader: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rca-viewer
+  namespace: sre-agent
+spec:
+  parentRefs:
+    - {name: platform, namespace: traefik}
+  hostnames: [reports.localhost]
+  rules:
+    - filters:
+        - type: ExtensionRef
+          extensionRef: {group: traefik.io, kind: Middleware, name: basic-auth}
+      backendRefs:
+        - {name: rca-viewer, port: 80}

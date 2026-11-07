@@ -1,0 +1,29 @@
+# The cluster issuer for the Gateway certificate and the HTTPRoutes of this cluster (gitops/gateway/hub).
+# Needs cert-manager and its CRDs from the earlier wave.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hub-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: hub
+  source:
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+    targetRevision: main
+    path: gitops/gateway/hub
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:   # the CRDs it needs may still be arriving
+      limit: 5
+      backoff: {duration: 30s, factor: 2, maxDuration: 5m}
+    syncOptions:
+      - SkipDryRunOnMissingResource=true

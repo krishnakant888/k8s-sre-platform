@@ -13,11 +13,7 @@ podAnnotations:
   prometheus.io/port: "3000"
   prometheus.io/path: /metrics
 
-ingress:
-  enabled: true
-  ingressClassName: nginx
-  hosts: [grafana.localhost]
-  path: /
+# no Ingress: the route is an HTTPRoute in gitops/gateway/observability/routes.yaml
 
 persistence:
   enabled: true

@@ -13,7 +13,7 @@ global:
 
 configs:
   params:
-    server.insecure: true   # TLS ends at the ingress controller
+    server.insecure: true   # TLS ends at the gateway (Traefik)
   cm:
     admin.enabled: true
     exec.enabled: false
@@ -36,9 +36,7 @@ repoServer:
 
 # the UI and API
 server:
-  ingress:
-    enabled: true
-    ingressClassName: nginx
+  # no Ingress: the route is an HTTPRoute in gitops/gateway/hub/routes.yaml
   resources:
     requests: {cpu: 200m, memory: 512Mi}
     limits: {cpu: "2", memory: 1Gi}
