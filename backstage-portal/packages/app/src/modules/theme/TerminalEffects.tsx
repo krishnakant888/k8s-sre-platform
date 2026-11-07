@@ -109,6 +109,12 @@ export function TerminalEffects() {
       frame += 1;
       const route = location.pathname.replace(/\/+$/, '');
       if (document.body.dataset.pcRoute !== route) document.body.dataset.pcRoute = route;
+      // tag the diagram of the catalog graph (the svg with the most elements), so its size can be set without touching the icons
+      if (route === '/catalog-graph') {
+        const svgs = [...document.querySelectorAll('svg')].filter(s => !s.closest('nav')) as SVGElement[];
+        const big = svgs.sort((a, b) => b.querySelectorAll('*').length - a.querySelectorAll('*').length)[0];
+        if (big && big.querySelectorAll('*').length > 20 && !big.hasAttribute('data-pc-graph')) big.setAttribute('data-pc-graph', '1');
+      }
       // the catalog graph draws nothing until it has a starting entity: start from the platform's domain
       if (route === '/catalog-graph' && !location.search.includes('rootEntityRefs')) {
         location.replace('/catalog-graph?rootEntityRefs%5B%5D=domain%3Adefault%2Fsre-platform&maxDepth=3&selectedKinds%5B%5D=domain&selectedKinds%5B%5D=system&selectedKinds%5B%5D=component&selectedKinds%5B%5D=api&selectedKinds%5B%5D=resource&unidirectional=true&mergeRelations=true&direction=LR&showFilters=true&curve=curveMonotoneX');
