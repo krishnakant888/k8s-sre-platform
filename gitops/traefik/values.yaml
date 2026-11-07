@@ -37,7 +37,7 @@ gateway:
       hostname: "*.localhost"
       mode: Terminate
       certificateRefs:
-        - {kind: Secret, name: platform-tls}
+        - {group: "", kind: Secret, name: platform-tls}   # group is defaulted by the API server; without it Argo CD shows the Gateway OutOfSync forever
 
 ports:
   web:
