@@ -8,13 +8,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
-from agent import config, incident
+from agent import config, generic, incident
 from agent.logging_setup import setup_logging
 
 setup_logging("alert-webhook")
 log = logging.getLogger("alert-webhook")
 STARTED = Counter("investigations_started_total", "Investigation workflows started", ["alertname"])
 DEDUPLICATED = Counter("investigations_deduplicated_total", "Alerts that joined a running or recent investigation of the same workload", ["alertname"])
+
+# A counter label that first appears with value 1 has no earlier sample, so increase() reports 0 for that first investigation (the dashboards showed zeros).
+# Start every alert the agent knows at 0 so the first increment is counted too.
+for _name in [*generic.FAMILIES, "OrdersApiErrorBudgetFastBurn", "OrdersApiErrorBudgetSlowBurn", "OrdersApiHighLatencyP99"]:
+    STARTED.labels(_name)
+    DEDUPLICATED.labels(_name)
 
 app = FastAPI(title="alert-webhook")
 WORKFLOWS_URL = f"{config.K8S_URL}/apis/argoproj.io/v1alpha1/namespaces/{config.WORKFLOW_NAMESPACE}/workflows"

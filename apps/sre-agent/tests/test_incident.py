@@ -52,3 +52,11 @@ def test_fit_evidence_drops_items_until_it_fits_and_says_so():
     assert len(json.dumps(out)) <= 10_000 + 40
     assert 0 < len(out["evidence"]) < 50
     assert out["truncated_evidence_items"] == 50 - len(out["evidence"])
+
+
+def test_webhook_counters_start_at_zero_for_known_alerts():
+    from agent import generic, webhook
+    from prometheus_client import generate_latest
+    text = generate_latest().decode()
+    for name in list(generic.FAMILIES)[:3] + ["OrdersApiErrorBudgetFastBurn"]:
+        assert f'investigations_started_total{{alertname="{name}"}} 0.0' in text
