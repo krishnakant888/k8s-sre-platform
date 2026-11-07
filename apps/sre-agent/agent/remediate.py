@@ -33,7 +33,8 @@ from agent import config
 log = logging.getLogger("sre-agent")
 
 _API = "https://api.github.com"
-MAX_REPLICAS = int(getattr(config, "MAX_REPLICAS", 10))
+MAX_REPLICAS = int(getattr(config, "MAX_REPLICAS", 5))
+MAX_CPU_LIMIT_M = int(getattr(config, "MAX_CPU_LIMIT_M", 2000))
 
 
 def _headers() -> dict[str, str]:
@@ -447,6 +448,15 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
     if not new_cpu:
         return None
 
+    # Enforce ceiling: parse new_cpu millicores and cap at MAX_CPU_LIMIT_M
+    _m = re.fullmatch(r"(\d+)(m?)", new_cpu)
+    new_cpu_m = int(_m.group(1)) if _m and _m.group(2) == "m" else int(_m.group(1)) * 1000 if _m else 0
+    at_cpu_cap = new_cpu_m >= MAX_CPU_LIMIT_M
+    if at_cpu_cap:
+        new_cpu = f"{MAX_CPU_LIMIT_M}m"
+        new_cpu_m = MAX_CPU_LIMIT_M
+        sizing_note += f" Capped at MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m — human review recommended."
+
     patched, count = re.subn(
         r"(limits\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*)" + re.escape(old_cpu),
         lambda mo: mo.group(1) + new_cpu, content, count=1, flags=re.MULTILINE,
@@ -468,6 +478,11 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         f"Sizing: {sizing_note}\n"
     )
     pr_title = f"fix(ops): raise {wl} CPU limit {old_cpu} → {new_cpu} ({ns})"
+    cap_warning = (
+        f"\n\n> **Warning:** CPU ceiling `MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m` reached. "
+        f"This workload may need architectural changes (async processing, caching, sharding). "
+        f"Human review required."
+    ) if at_cpu_cap else ""
     pr_body = (
         f"## Automated remediation — CPU vertical scale-up\n\n"
         f"**RCA:** `{report.id}`  \n"
@@ -476,7 +491,7 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         f"**Trigger:** Replica cap (`MAX_REPLICAS={MAX_REPLICAS}`) already reached; "
         f"horizontal scaling exhausted. Raising CPU limit instead.\n\n"
         f"**Sizing:** {sizing_note}\n\n"
-        f"**Verify:** CPU throttle ratio drops after the rollout."
+        f"**Verify:** CPU throttle ratio drops after the rollout.{cap_warning}"
     )
 
     try:
