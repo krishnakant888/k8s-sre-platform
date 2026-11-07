@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: prod-kyverno
+  name: platform-kyverno
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-3"

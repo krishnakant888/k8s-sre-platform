@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: prod-frontend
+  name: platform-frontend
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"

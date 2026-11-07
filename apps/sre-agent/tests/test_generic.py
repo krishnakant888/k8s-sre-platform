@@ -179,18 +179,18 @@ def test_ingress_errors_with_no_ready_backend(monkeypatch):
 
 
 def test_argocd_manifest_error_is_application_level(monkeypatch):
-    fake(monkeypatch, argocd={"name": "prod-orders-api", "sync_status": "Unknown", "health_status": "Healthy", "destination": "platform", "destination_namespace": "demo",
+    fake(monkeypatch, argocd={"name": "platform-orders-api", "sync_status": "Unknown", "health_status": "Healthy", "destination": "platform", "destination_namespace": "demo",
                               "conditions": ["ComparisonError: kustomize build failed: accumulating resources: missing file"], "operation": None, "unhealthy": [], "paths": ["gitops/workloads/orders-api"]})
-    r = investigate(alert("ArgoAppOutOfSync", name="prod-orders-api", dest_name="platform"))
+    r = investigate(alert("ArgoAppOutOfSync", name="platform-orders-api", dest_name="platform"))
     assert r.root_cause.category == "gitops_sync_failure"
     assert r.fault_domain.layer == "application"
     assert "Git" in r.fault_domain.component
 
 
 def test_argocd_connection_error_is_infrastructure(monkeypatch):
-    fake(monkeypatch, argocd={"name": "prod-orders-api", "sync_status": "Unknown", "health_status": "Unknown", "destination": "platform", "destination_namespace": "demo",
+    fake(monkeypatch, argocd={"name": "platform-orders-api", "sync_status": "Unknown", "health_status": "Unknown", "destination": "platform", "destination_namespace": "demo",
                               "conditions": ["ComparisonError: dial tcp 172.18.0.2:6443: connect: connection refused"], "operation": None, "unhealthy": [], "paths": []})
-    r = investigate(alert("ArgoAppOutOfSync", name="prod-orders-api", dest_name="platform"))
+    r = investigate(alert("ArgoAppOutOfSync", name="platform-orders-api", dest_name="platform"))
     assert r.fault_domain.layer == "infrastructure"
     assert "bootstrap.py --only" in " ".join(r.how_to_fix.immediate)
 
@@ -395,7 +395,7 @@ def test_failed_job_pod_is_diagnosed_from_its_exit_and_log(monkeypatch):
 def test_argo_applications_are_separate_targets():
     from agent import incident
     a = alert("ArgoAppUnhealthy", cluster="observability", name="fault-argo-degraded", service="argocd")
-    b = alert("ArgoAppUnhealthy", cluster="observability", name="prod-orders-api", service="argocd")
+    b = alert("ArgoAppUnhealthy", cluster="observability", name="platform-orders-api", service="argocd")
     assert incident.target_key(a) != incident.target_key(b)
     assert generic._workload(a["labels"]) == "fault-argo-degraded"
 

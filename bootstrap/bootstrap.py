@@ -68,7 +68,7 @@ CLUSTERS = {
     },
 }
 ROOT_APPS = {
-    "gitops": ROOT / "gitops" / "root" / "root-app-hub.yaml",              # Argo CD itself and its ingress
+    "gitops": ROOT / "gitops" / "root" / "root-app-gitops.yaml",              # Argo CD itself and its ingress
     "observability": ROOT / "gitops" / "root" / "root-app-observability.yaml",   # the observability cluster's apps
     "platform": ROOT / "gitops" / "root" / "root-app-platform.yaml",       # the platform cluster's apps
 }
