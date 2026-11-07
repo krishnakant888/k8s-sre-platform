@@ -236,7 +236,7 @@ def test_pods_and_deploys_are_read_from_their_own_clusters_with_their_own_tokens
     tools.get_pod_status("demo", "orders-api")
     tools.get_recent_deploys("orders-api")
     assert seen[0] == ("https://platform-control-plane:6443/api/v1/namespaces/demo/pods", "Bearer remote-token")
-    assert seen[1][0].startswith("https://gitops-control-plane:6443/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/prod-orders-api")
+    assert seen[1][0].startswith("https://gitops-control-plane:6443/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/platform-orders-api")
     assert seen[1][1] == "Bearer gitops-token"
 
 
