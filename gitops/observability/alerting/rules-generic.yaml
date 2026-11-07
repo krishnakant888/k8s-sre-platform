@@ -406,7 +406,7 @@ data:
               summary: "DNS lookups fail in {{ $labels.cluster }}"
               description: "Over 5% of DNS answers are SERVFAIL in {{ $labels.cluster }}: services cannot find each other."
       - orgId: 1
-        name: ingress
+        name: gateway
         folder: Alerts
         interval: 1m
         rules:
@@ -417,7 +417,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\", code=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=\"\"}[5m])) > 0.05", instant: true}
+                model: {refId: A, expr: "sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!=\"\", code=~\"5..\"}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!=\"\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!=\"\"}[5m])) > 0.05", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -435,7 +435,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "(sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"1|1.0\"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05", instant: true}
+                model: {refId: A, expr: "(sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!=\"\", le=~\"1|1.0\"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!=\"\", le=~\"10|10.0\"}[5m])) > 0.05", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}
@@ -446,6 +446,78 @@ data:
             annotations:
               summary: "Route {{ $labels.ingress }} is slow"
               description: "Over 5% of the requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) take longer than one second (requests over 10 s are ignored, they are streams)."
+          - uid: generic-gateway-server-errors
+            title: GatewayServerErrors
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total{code=~\"5..\"}[5m])) / sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total[5m])) > 0.05 and sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total[5m])) > 0.1", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 5m
+            labels: {severity: page, service: traefik, namespace: traefik}
+            annotations:
+              summary: "The gateway of {{ $labels.cluster }} returns errors on {{ $labels.entrypoint }}"
+              description: "Over 5% of the requests the gateway of {{ $labels.cluster }} answers on the {{ $labels.entrypoint }} entrypoint end in 5xx, counting the errors it produces itself (a route with no backend)."
+          - uid: generic-gateway-config-reload
+            title: GatewayConfigReloadFailing
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "sum by (cluster) (increase(traefik_config_reloads_failure_total[10m])) > 0", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 1m
+            labels: {severity: ticket, service: traefik, namespace: traefik}
+            annotations:
+              summary: "The gateway of {{ $labels.cluster }} cannot load its configuration"
+              description: "Traefik failed to apply a new configuration in the last 10 minutes: a route, a middleware or the Gateway it was given is invalid, so changes to routes are not live."
+          - uid: generic-gateway-cert-not-ready
+            title: GatewayCertificateNotReady
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "max by (cluster, namespace, name, issuer_name) (certmanager_certificate_ready_status{condition!=\"True\"}) == 1", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 10m
+            labels: {severity: ticket}
+            annotations:
+              summary: "Certificate {{ $labels.name }} is not ready"
+              description: "cert-manager has not issued {{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}, issuer {{ $labels.issuer_name }}): the gateway cannot serve or renew TLS with it."
+          - uid: generic-gateway-cert-expiring
+            title: GatewayCertificateExpiring
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 10m
+            labels: {severity: ticket}
+            annotations:
+              summary: "Certificate {{ $labels.name }} expires within 14 days"
+              description: "{{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}) expires within 14 days and has not been renewed: cert-manager is not renewing it, or its lifetime is very short."
       - orgId: 1
         name: gitops
         folder: Alerts

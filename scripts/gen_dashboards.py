@@ -295,12 +295,12 @@ d.ts("Filesystem writes", [(f'sum by (pod) (rate(container_fs_writes_bytes_total
 d.ts("Restarts", [(f'sum by (pod) (increase(kube_pod_container_status_restarts_total{{{CW}}}[5m]))', "{{pod}}")], w=8)
 d.row("Traffic through the gateway (any workload with an HTTPRoute)")
 ING = 'cluster="$cluster", namespace="$namespace", ingress=~"$workload.*"'
-d.ts("Requests / s by status", [(f'sum by (code) (rate(traefik_service_requests_total{{{ING}}}[5m]))', "{{code}}")], unit="reqps", stack=True, w=8)
-d.ts("Error ratio (5xx)", [(f'sum(rate(traefik_service_requests_total{{{ING}, code=~"5.."}}[5m])) / sum(rate(traefik_service_requests_total{{{ING}}}[5m]))', "5xx")], unit="percentunit", w=8, th=steps((None, GREEN), (0.05, RED)))
+d.ts("Requests / s by status", [(f'sum by (code) (rate(traefik_router_requests_total{{{ING}}}[5m]))', "{{code}}")], unit="reqps", stack=True, w=8)
+d.ts("Error ratio (5xx)", [(f'sum(rate(traefik_router_requests_total{{{ING}, code=~"5.."}}[5m])) / sum(rate(traefik_router_requests_total{{{ING}}}[5m]))', "5xx")], unit="percentunit", w=8, th=steps((None, GREEN), (0.05, RED)))
 d.ts("Latency percentiles", [
-    (f'histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{ING}}}[5m])))', "p50"),
-    (f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{ING}}}[5m])))', "p95"),
-    (f'histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{ING}}}[5m])))', "p99"),
+    (f'histogram_quantile(0.50, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{ING}}}[5m])))', "p50"),
+    (f'histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{ING}}}[5m])))', "p95"),
+    (f'histogram_quantile(0.99, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{ING}}}[5m])))', "p99"),
 ], unit="s", w=8)
 d.row("Application metrics (when the workload exposes http_request_duration_seconds)")
 APP = 'cluster="$cluster", namespace="$namespace", service="$workload"'
@@ -352,39 +352,90 @@ d.write()
 # =====================================================================================================================
 # 5. Ingress
 d = Dash("obs-ingress", "Ingress traffic", "Workloads", ["obs", "ingress", "workload"], "Golden signals of everything behind the gateway (Traefik, one HTTPRoute per app), with no per-app work")
-d.var_query("cluster", "label_values(traefik_service_requests_total, cluster)", "Cluster")
-d.var_query("ingress", 'label_values(traefik_service_requests_total{cluster=~"$cluster"}, ingress)', "Route (HTTPRoute)")
+d.var_query("cluster", "label_values(traefik_router_requests_total, cluster)", "Cluster")
+d.var_query("ingress", 'label_values(traefik_router_requests_total{cluster=~"$cluster"}, ingress)', "Route (HTTPRoute)")
 I = 'cluster=~"$cluster", ingress=~"$ingress"'
 d.row("Golden signals")
-d.stat("Requests / s", f'sum(rate(traefik_service_requests_total{{{I}}}[5m]))', unit="reqps", decimals=2, w=4)
-d.stat("Error ratio (5xx)", f'sum(rate(traefik_service_requests_total{{{I}, code=~"5.."}}[5m])) / sum(rate(traefik_service_requests_total{{{I}}}[5m]))', unit="percentunit", th=steps((None, GREEN), (0.01, ORANGE), (0.05, RED)), w=4)
-d.stat("Client errors (4xx)", f'sum(rate(traefik_service_requests_total{{{I}, code=~"4.."}}[5m])) / sum(rate(traefik_service_requests_total{{{I}}}[5m]))', unit="percentunit", th=steps((None, GREEN), (0.1, ORANGE), (0.3, RED)), w=4)
-d.stat("p95 latency", f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))', unit="s", th=steps((None, GREEN), (0.5, ORANGE), (1, RED)), w=4)
-d.stat("p99 latency", f'histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))', unit="s", th=steps((None, GREEN), (1, ORANGE), (2, RED)), w=4)
+d.stat("Requests / s", f'sum(rate(traefik_router_requests_total{{{I}}}[5m]))', unit="reqps", decimals=2, w=4)
+d.stat("Error ratio (5xx)", f'sum(rate(traefik_router_requests_total{{{I}, code=~"5.."}}[5m])) / sum(rate(traefik_router_requests_total{{{I}}}[5m]))', unit="percentunit", th=steps((None, GREEN), (0.01, ORANGE), (0.05, RED)), w=4)
+d.stat("Client errors (4xx)", f'sum(rate(traefik_router_requests_total{{{I}, code=~"4.."}}[5m])) / sum(rate(traefik_router_requests_total{{{I}}}[5m]))', unit="percentunit", th=steps((None, GREEN), (0.1, ORANGE), (0.3, RED)), w=4)
+d.stat("p95 latency", f'histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))', unit="s", th=steps((None, GREEN), (0.5, ORANGE), (1, RED)), w=4)
+d.stat("p99 latency", f'histogram_quantile(0.99, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))', unit="s", th=steps((None, GREEN), (1, ORANGE), (2, RED)), w=4)
 d.stat("Config reload failures (1h)", f'sum(increase(traefik_config_reloads_failure_total{{cluster=~"$cluster"}}[1h])) or vector(0)', th=steps((None, GREEN), (1, RED)), w=4)
-d.ts("Requests / s by route", [(f'sum by (cluster, ingress) (rate(traefik_service_requests_total{{{I}}}[5m]))', "{{cluster}} {{ingress}}")], unit="reqps", stack=True)
-d.ts("Requests / s by status", [(f'sum by (code) (rate(traefik_service_requests_total{{{I}}}[5m]))', "{{code}}")], unit="reqps", stack=True)
-d.ts("Error ratio by route", [(f'sum by (cluster, ingress) (rate(traefik_service_requests_total{{{I}, code=~"5.."}}[5m])) / sum by (cluster, ingress) (rate(traefik_service_requests_total{{{I}}}[5m]))', "{{cluster}} {{ingress}}")], unit="percentunit", th=steps((None, GREEN), (0.05, RED)))
+d.ts("Requests / s by route", [(f'sum by (cluster, ingress) (rate(traefik_router_requests_total{{{I}}}[5m]))', "{{cluster}} {{ingress}}")], unit="reqps", stack=True)
+d.ts("Requests / s by status", [(f'sum by (code) (rate(traefik_router_requests_total{{{I}}}[5m]))', "{{code}}")], unit="reqps", stack=True)
+d.ts("Error ratio by route", [(f'sum by (cluster, ingress) (rate(traefik_router_requests_total{{{I}, code=~"5.."}}[5m])) / sum by (cluster, ingress) (rate(traefik_router_requests_total{{{I}}}[5m]))', "{{cluster}} {{ingress}}")], unit="percentunit", th=steps((None, GREEN), (0.05, RED)))
 d.ts("Latency percentiles", [
-    (f'histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))', "p50"),
-    (f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))', "p95"),
-    (f'histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))', "p99"),
+    (f'histogram_quantile(0.50, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))', "p50"),
+    (f'histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))', "p95"),
+    (f'histogram_quantile(0.99, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))', "p99"),
 ], unit="s")
 d.row("Per route")
 d.table("Routes", [
-    f'sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{{{I}}}[5m]))',
-    f'sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{{{I}, code=~"5.."}}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{{{I}}}[5m]))',
-    f'histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_service_request_duration_seconds_bucket{{{I}}}[5m])))',
+    f'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{I}}}[5m]))',
+    f'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{I}, code=~"5.."}}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{I}}}[5m]))',
+    f'histogram_quantile(0.95, sum by (cluster, namespace, ingress, le) (rate(traefik_router_request_duration_seconds_bucket{{{I}}}[5m])))',
 ], rename=["Requests/s", "Error ratio", "p95 (s)"], units={"Requests/s": "reqps", "Error ratio": "percentunit", "p95 (s)": "s"},
     thresholds={"Error ratio": steps((None, GREEN), (0.01, ORANGE), (0.05, RED)), "p95 (s)": steps((None, GREEN), (0.5, ORANGE), (1, RED))}, h=7)
 d.row("Controller")
 d.ts("Request size / response size", [
-    (f'sum(rate(traefik_service_requests_bytes_total{{{I}}}[5m]))', "request"),
-    (f'sum(rate(traefik_service_responses_bytes_total{{{I}}}[5m]))', "response"),
+    (f'sum(rate(traefik_router_requests_bytes_total{{{I}}}[5m]))', "request"),
+    (f'sum(rate(traefik_router_responses_bytes_total{{{I}}}[5m]))', "response"),
 ], unit="Bps", w=8)
 d.ts("Active connections", [(f'sum by (cluster, entrypoint) (traefik_open_connections{{cluster=~"$cluster"}})', "{{cluster}} {{entrypoint}}")], w=8)
 d.ts("Controller memory", [(f'sum by (cluster, pod) (container_memory_working_set_bytes{{cluster=~"$cluster", namespace="traefik", container="traefik"}})', "{{cluster}} {{pod}}")], unit="bytes", w=8)
 d.logs("Access log: errors", '{cluster=~"$cluster", namespace="traefik"} | json | DownstreamStatus >= 500', desc="Traefik writes one JSON line per request (access log)")
+d.write()
+
+# =====================================================================================================================
+# 5b. Gateway (Traefik)
+d = Dash("obs-gateway", "Gateway (Traefik)", "Platform", ["obs", "gateway", "traefik"], "The Traefik gateway of each cluster: traffic, errors it answers itself, latency, routes, TLS certificates, configuration reloads and its own resources")
+d.var_query("cluster", "label_values(traefik_entrypoint_requests_total, cluster)", "Cluster")
+GW = 'cluster=~"$cluster"'
+d.row("Is the gateway healthy?")
+d.stat("Gateway pods ready", f'sum(kube_deployment_status_replicas_available{{{GW}, namespace="traefik", deployment="traefik"}})', th=steps((None, RED), (1, GREEN)), w=4)
+d.stat("Requests / s", f'sum(rate(traefik_entrypoint_requests_total{{{GW}}}[5m]))', unit="reqps", decimals=2, w=4)
+d.stat("Error ratio (5xx)", f'sum(rate(traefik_entrypoint_requests_total{{{GW}, code=~"5.."}}[5m])) / sum(rate(traefik_entrypoint_requests_total{{{GW}}}[5m]))', unit="percentunit", th=steps((None, GREEN), (0.01, ORANGE), (0.05, RED)), w=4, desc="Includes the 503 the gateway answers itself when a route has no backend")
+d.stat("Config reload failures (1h)", f'sum(increase(traefik_config_reloads_failure_total{{{GW}}}[1h])) or vector(0)', th=steps((None, GREEN), (1, RED)), w=4)
+d.stat("Certificate days left (min)", f'min((certmanager_certificate_expiration_timestamp_seconds{{{GW}}} - time()) / 86400)', unit="d", decimals=1, th=steps((None, RED), (7, ORANGE), (14, GREEN)), w=4)
+d.stat("Open connections", f'sum(traefik_open_connections{{{GW}}})', w=4)
+d.row("Traffic by entrypoint")
+d.ts("Requests / s by entrypoint and status", [(f'sum by (cluster, entrypoint, code) (rate(traefik_entrypoint_requests_total{{{GW}}}[5m]))', "{{cluster}} {{entrypoint}} {{code}}")], unit="reqps", stack=True)
+d.ts("Error ratio (5xx) by entrypoint", [(f'sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total{{{GW}, code=~"5.."}}[5m])) / sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total{{{GW}}}[5m]))', "{{cluster}} {{entrypoint}}")], unit="percentunit", th=steps((None, GREEN), (0.05, RED)))
+d.ts("Latency by entrypoint (p50, p95)", [
+    (f'histogram_quantile(0.50, sum by (cluster, entrypoint, le) (rate(traefik_entrypoint_request_duration_seconds_bucket{{{GW}}}[5m])))', "p50 {{cluster}} {{entrypoint}}"),
+    (f'histogram_quantile(0.95, sum by (cluster, entrypoint, le) (rate(traefik_entrypoint_request_duration_seconds_bucket{{{GW}}}[5m])))', "p95 {{cluster}} {{entrypoint}}"),
+], unit="s", desc="Streams (the live views of Argo CD or Grafana) are counted for their whole lifetime, so a high p95 on a quiet gateway is usually a stream")
+d.ts("Requests / s by method", [(f'sum by (method) (rate(traefik_entrypoint_requests_total{{{GW}}}[5m]))', "{{method}}")], unit="reqps", stack=True)
+d.row("Routes (one per app)")
+d.ts("Requests / s by route", [(f'sum by (cluster, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!=""}}[5m]))', "{{cluster}} {{ingress}}")], unit="reqps", stack=True)
+d.ts("Error ratio by route", [(f'sum by (cluster, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!="", code=~"5.."}}[5m])) / sum by (cluster, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!=""}}[5m]))', "{{cluster}} {{ingress}}")], unit="percentunit", th=steps((None, GREEN), (0.05, RED)), desc="Counts the 503 the gateway answers when a route has no backend pod")
+d.table("Routes", [
+    f'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!=""}}[5m]))',
+    f'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!="", code=~"5.."}}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!=""}}[5m]))',
+    f'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!="", code=~"4.."}}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{{{GW}, ingress!=""}}[5m]))',
+], rename=["Requests/s", "5xx ratio", "4xx ratio"], units={"Requests/s": "reqps", "5xx ratio": "percentunit", "4xx ratio": "percentunit"},
+    thresholds={"5xx ratio": steps((None, GREEN), (0.01, ORANGE), (0.05, RED)), "4xx ratio": steps((None, GREEN), (0.1, ORANGE), (0.3, RED))}, h=7)
+d.row("TLS certificates")
+d.table("Certificates (cert-manager)", [
+    f'(max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds{{{GW}}}) - time()) / 86400',
+    f'max by (cluster, namespace, name) (certmanager_certificate_ready_status{{{GW}, condition="True"}})',
+], rename=["Days left", "Ready"], units={"Days left": "short"}, thresholds={"Days left": steps((None, RED), (7, ORANGE), (14, GREEN)), "Ready": steps((None, RED), (1, GREEN))}, h=6, w=12)
+d.ts("Days until the certificates Traefik serves expire", [(f'(traefik_tls_certs_not_after{{{GW}}} - time()) / 86400', "{{cluster}} {{cn}}")], w=12, h=6)
+d.row("Configuration")
+d.ts("Configuration reloads (5 min)", [
+    (f'sum by (cluster) (increase(traefik_config_reloads_total{{{GW}}}[5m]))', "{{cluster}} reloads"),
+    (f'sum by (cluster) (increase(traefik_config_reloads_failure_total{{{GW}}}[5m]))', "{{cluster}} failed"),
+], w=12)
+d.ts("Seconds since the last successful reload", [(f'time() - max by (cluster) (traefik_config_last_reload_success{{{GW}}})', "{{cluster}}")], unit="s", w=12, desc="Grows while nothing changes; it resets when a route, middleware or the Gateway changes")
+d.row("The gateway itself")
+d.ts("Memory", [(f'sum by (cluster, pod) (container_memory_working_set_bytes{{{GW}, namespace="traefik", container="traefik"}})', "{{cluster}} {{pod}}")], unit="bytes", w=8)
+d.ts("CPU", [(f'sum by (cluster, pod) (rate(container_cpu_usage_seconds_total{{{GW}, namespace="traefik", container="traefik"}}[5m]))', "{{cluster}} {{pod}}")], unit="short", w=8)
+d.ts("Restarts (5 min)", [(f'sum by (cluster, pod) (increase(kube_pod_container_status_restarts_total{{{GW}, namespace="traefik", container="traefik"}}[5m]))', "{{cluster}} {{pod}}")], w=8)
+d.row("Logs")
+d.logs("Access log: 5xx", '{cluster=~"$cluster", namespace="traefik"} | json | DownstreamStatus >= 500', desc="Traefik writes one JSON line per request")
+d.logs("Gateway errors", '{cluster=~"$cluster", namespace="traefik"} | json | level =~ "error|fatal"', desc="Route or middleware problems show here, for example a middleware that does not exist")
+d.logs("cert-manager errors", '{cluster=~"$cluster", namespace="cert-manager"} |~ "(?i)error|fail"')
 d.write()
 
 # =====================================================================================================================

@@ -170,7 +170,7 @@ def test_node_not_ready_is_infrastructure_and_p1_when_users_run_there(monkeypatc
 
 def test_ingress_errors_with_no_ready_backend(monkeypatch):
     fake(monkeypatch, pods=[pod(ready=False, waiting="CrashLoopBackOff")], prom={
-        'code=~"5.."}[2m])) /': 0.9, "request_duration_seconds_bucket": 0.2, "sum by (code)": 0.5, "sum(rate(traefik_service_requests_total{cluster": 4.0,
+        'code=~"5.."}[2m])) /': 0.9, "request_duration_seconds_bucket": 0.2, "sum by (code)": 0.5, "sum(rate(traefik_router_requests_total{cluster": 4.0,
         "count by (backend)": {"series": [{"labels": {"backend": "orders-api"}, "min": 1, "max": 1, "avg": 1, "last": 1}]}})
     r = investigate(alert("IngressHighErrorRate", "page", cluster="platform", namespace="demo", ingress="orders-api", host="orders.localhost"))
     assert r.root_cause.category == "ingress_backend_failure"
@@ -413,3 +413,87 @@ def test_one_workload_has_one_target_and_a_recent_twin_is_found():
     assert incident.recent_duplicate([old], NOW) is None
     failed = {"metadata": {"name": "incident-z", "creationTimestamp": rca.iso(NOW - 60)}, "status": {"phase": "Failed"}}
     assert incident.recent_duplicate([failed], NOW) is None   # a failed investigation does not suppress the next one
+
+
+# ---------------------------------------------------------------------------------------------------- gateway and certificates
+def cond_series(**flags):
+    """certmanager_certificate_ready_status: one series per condition, value 1 for the one that holds."""
+    return {"series": [{"labels": {"condition": c, "issuer_name": flags.get("issuer", "selfsigned")}, "min": v, "max": v, "avg": v, "last": v}
+                       for c, v in (("False", flags.get("false", 0)), ("True", flags.get("true", 0)), ("Unknown", 0))]}
+
+
+CM_POD = "cert-manager-6d8f9c7b5-abcde"
+
+
+def test_new_gateway_alerts_are_routed_to_the_generic_investigation():
+    for name in ("GatewayServerErrors", "GatewayConfigReloadFailing", "GatewayCertificateNotReady", "GatewayCertificateExpiring"):
+        assert generic.is_generic(alert(name))
+
+
+def test_certificate_with_a_missing_issuer_is_a_config_error_in_the_application(monkeypatch):
+    fake(monkeypatch, pods=[pod(CM_POD, ready=True)],
+         events=[event("IssuerNotFound", 'Referenced "ClusterIssuer" not found: clusterissuer.cert-manager.io "does-not-exist" not found', obj="fault-cert-notready")],
+         prom={"certmanager_certificate_ready_status": cond_series(false=1, issuer="does-not-exist")})
+    r = investigate(alert("GatewayCertificateNotReady", cluster="platform", namespace="sandbox", name="fault-cert-notready", issuer_name="does-not-exist"))
+    assert r.root_cause.category == "certificate_not_ready"
+    assert r.fault_domain.layer == "application"
+    assert "does-not-exist" in r.fault_domain.component
+    assert r.priority.level == "P3"
+    assert r.service == "fault-cert-notready"
+    assert any("clusterissuer" in c for c in r.how_to_fix.immediate)
+
+
+def test_certificate_is_not_issued_while_cert_manager_is_down(monkeypatch):
+    fake(monkeypatch, pods=[pod(CM_POD, ready=False)], prom={"certmanager_certificate_ready_status": cond_series(false=1)})
+    r = investigate(alert("GatewayCertificateNotReady", cluster="platform", namespace="traefik", name="platform-tls"))
+    assert r.root_cause.category == "certificate_not_ready"
+    assert r.fault_domain.layer == "infrastructure"
+    assert "cert-manager" in r.fault_domain.component
+
+
+def test_short_lived_certificate_that_will_be_renewed_is_not_a_failure(monkeypatch):
+    fake(monkeypatch, pods=[pod(CM_POD, ready=True)],
+         prom={"certmanager_certificate_ready_status": cond_series(true=1), "certmanager_certificate_expiration_timestamp_seconds": 3000.0, "certmanager_certificate_renewal_timestamp_seconds": 2400.0})
+    r = investigate(alert("GatewayCertificateExpiring", cluster="platform", namespace="sandbox", name="fault-cert-expiring"))
+    assert r.root_cause.category == "certificate_expiring"
+    assert r.fault_domain.layer == "application"
+    assert "renew" in r.what_happened
+    assert r.priority.level == "P2"   # it expires within the hour and nothing has renewed it yet
+
+
+def test_overdue_renewal_points_at_cert_manager(monkeypatch):
+    fake(monkeypatch, pods=[pod(CM_POD, ready=True)],
+         prom={"certmanager_certificate_ready_status": cond_series(true=1), "certmanager_certificate_expiration_timestamp_seconds": 86400.0 * 5, "certmanager_certificate_renewal_timestamp_seconds": -3600.0})
+    r = investigate(alert("GatewayCertificateExpiring", cluster="platform", namespace="traefik", name="platform-tls"))
+    assert r.root_cause.category == "certificate_expiring"
+    assert r.fault_domain.layer == "infrastructure"
+    assert r.priority.level == "P3"
+
+
+def test_gateway_errors_from_one_route_point_at_its_backend_and_are_p1_when_most_requests_fail(monkeypatch):
+    fake(monkeypatch, pods=[pod("traefik-69f5f65fb4-abcde", ready=True)],
+         prom={"topk(5": {"series": [{"labels": {"namespace": "sandbox", "ingress": "fault-ingress-5xx"}, "min": 2.0, "max": 2.0, "avg": 2.0, "last": 2.0}]},
+               'code=~"5.."': 0.9, 'entrypoint="web"}[2m]))': 3.0, "traefik_config_reloads_failure_total": 0.0})
+    r = investigate(alert("GatewayServerErrors", "page", cluster="platform", entrypoint="web", service="traefik", namespace="traefik"))
+    assert r.root_cause.category == "ingress_backend_failure"
+    assert "fault-ingress-5xx" in r.fault_domain.component
+    assert r.priority.level == "P1"
+    assert any("sandbox" in c for c in r.how_to_fix.immediate)
+
+
+def test_gateway_config_error_names_the_missing_middleware(monkeypatch):
+    fake(monkeypatch, pods=[pod("traefik-69f5f65fb4-abcde", ready=True)],
+         logs=[('middleware "sre-agent-basic-auth@kubernetescrd" does not exist', 14)], prom={"traefik_config_reloads_failure_total": 0.0})
+    r = investigate(alert("GatewayConfigReloadFailing", cluster="observability", service="traefik", namespace="traefik"))
+    assert r.root_cause.category == "gateway_config_error"
+    assert r.fault_domain.layer == "application"
+    assert "sre-agent-basic-auth" in r.fault_domain.component
+    assert r.priority.level == "P3"
+
+
+def test_failed_reloads_without_a_log_hint_are_still_a_config_problem(monkeypatch):
+    fake(monkeypatch, pods=[pod("traefik-69f5f65fb4-abcde", ready=True)], prom={"traefik_config_reloads_failure_total": 3.0})
+    r = investigate(alert("GatewayConfigReloadFailing", cluster="platform", service="traefik", namespace="traefik"))
+    assert r.root_cause.category == "gateway_config_error"
+    assert r.root_cause.confidence == "medium"
+    assert "3" in r.what_happened

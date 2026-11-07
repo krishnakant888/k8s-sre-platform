@@ -117,9 +117,11 @@ RULES = [
          "DNS lookups fail in {{ $labels.cluster }}",
          "Over 5% of DNS answers are SERVFAIL in {{ $labels.cluster }}: services cannot find each other."),
     ]),
-    ("ingress", [
+    # The gateway (Traefik) of every cluster: what users see on each route, what the gateway answers itself, and the
+    # certificate it serves. The route rules read the router series, which count the 503 of a route with no backend.
+    ("gateway", [
         ("generic-ingress-errors", "IngressHighErrorRate",
-         'sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!="", code=~"5.."}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=""}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_requests_total{ingress!=""}[5m])) > 0.05',
+         'sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!="", code=~"5.."}[5m])) / sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!=""}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_router_requests_total{ingress!=""}[5m])) > 0.05',
          "5m", "page", {},
          "{{ $labels.ingress }} returns errors to users",
          "Over 5% of requests through the gateway route {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) end in 5xx."),
@@ -127,10 +129,30 @@ RULES = [
         # Requests longer than 10 s are left out on purpose: they are streams (the live views of Argo CD, Grafana and the
         # Workflows UI keep a connection open for minutes), and the gateway records a stream's whole life as one request.
         ("generic-ingress-slow", "IngressSlow",
-         '(sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"1|1.0"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_service_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05',
+         '(sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) - sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!="", le=~"1|1.0"}[5m]))) / sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05 and sum by (cluster, namespace, ingress) (rate(traefik_router_request_duration_seconds_bucket{ingress!="", le=~"10|10.0"}[5m])) > 0.05',
          "5m", "ticket", {},
          "Route {{ $labels.ingress }} is slow",
          "Over 5% of the requests through {{ $labels.namespace }}/{{ $labels.ingress }} ({{ $labels.cluster }}) take longer than one second (requests over 10 s are ignored, they are streams)."),
+        ("generic-gateway-server-errors", "GatewayServerErrors",
+         'sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total{code=~"5.."}[5m])) / sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total[5m])) > 0.05 and sum by (cluster, entrypoint) (rate(traefik_entrypoint_requests_total[5m])) > 0.1',
+         "5m", "page", {"service": "traefik", "namespace": "traefik"},
+         "The gateway of {{ $labels.cluster }} returns errors on {{ $labels.entrypoint }}",
+         "Over 5% of the requests the gateway of {{ $labels.cluster }} answers on the {{ $labels.entrypoint }} entrypoint end in 5xx, counting the errors it produces itself (a route with no backend)."),
+        ("generic-gateway-config-reload", "GatewayConfigReloadFailing",
+         "sum by (cluster) (increase(traefik_config_reloads_failure_total[10m])) > 0",
+         "1m", "ticket", {"service": "traefik", "namespace": "traefik"},
+         "The gateway of {{ $labels.cluster }} cannot load its configuration",
+         "Traefik failed to apply a new configuration in the last 10 minutes: a route, a middleware or the Gateway it was given is invalid, so changes to routes are not live."),
+        ("generic-gateway-cert-not-ready", "GatewayCertificateNotReady",
+         'max by (cluster, namespace, name, issuer_name) (certmanager_certificate_ready_status{condition!="True"}) == 1',
+         "10m", "ticket", {},
+         "Certificate {{ $labels.name }} is not ready",
+         "cert-manager has not issued {{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}, issuer {{ $labels.issuer_name }}): the gateway cannot serve or renew TLS with it."),
+        ("generic-gateway-cert-expiring", "GatewayCertificateExpiring",
+         "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400",
+         "10m", "ticket", {},
+         "Certificate {{ $labels.name }} expires within 14 days",
+         "{{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}) expires within 14 days and has not been renewed: cert-manager is not renewing it, or its lifetime is very short."),
     ]),
     ("gitops", [
         ("generic-argocd-out-of-sync", "ArgoAppOutOfSync",

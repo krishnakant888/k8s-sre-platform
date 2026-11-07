@@ -24,6 +24,8 @@ FAMILIES = {
     "NodeNotReady": "node", "NodePressure": "node", "NodeCpuSaturated": "node", "NodeMemoryNearAllocatable": "node",
     "ApiServerErrors": "controlplane", "ApiServerSlow": "controlplane", "CoreDnsErrors": "dns",
     "IngressHighErrorRate": "ingress", "IngressSlow": "ingress",
+    "GatewayServerErrors": "gateway", "GatewayConfigReloadFailing": "gateway",
+    "GatewayCertificateNotReady": "certificate", "GatewayCertificateExpiring": "certificate",
     "ArgoAppOutOfSync": "argocd", "ArgoAppUnhealthy": "argocd", "ArgoSyncFailing": "argocd",
     "ClusterTelemetryMissing": "telemetry", "TelemetryNotDelivered": "telemetry", "LogsDropped": "telemetry",
     "PodCrashLooping": "container", "PodOOMKilled": "memory", "DeploymentReplicasUnavailable": "rollout",
@@ -140,8 +142,9 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             add("kubernetes", f"events {namespace} in {cluster}", "; ".join(f"{e['reason']} {e['object']}: {e['message'][:110]}" for e in sig["events"][:4]))
         sig["nodes"] = sorted({p["node"] for p in sig["pods"] if p.get("node")})
 
-    def logs_for(selector: str, label: str, everything: bool = False):
-        q = f'{{{selector}}}' if everything else f'{{{selector}}} |~ "{ERROR_LINES}"'
+    def logs_for(selector: str, label: str, everything: bool = False, contains: str = ""):
+        narrow = f' |= "{contains}"' if contains else ""
+        q = f'{{{selector}}}{narrow}' if everything else f'{{{selector}}}{narrow} |~ "{ERROR_LINES}"'
         logs = tools.call_tool("query_logql", {"query": q, "minutes": lookback_minutes, "limit": 150})
         raw["logs"] = logs
         sig["log_total"] = logs.get("total", 0)
@@ -239,16 +242,17 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     elif family == "ingress":
         ing = labels.get("ingress", workload)
         sel = f'cluster="{cluster}", namespace="{ns}", ingress="{ing}"'
-        err = _q(f'sum(rate(traefik_service_requests_total{{{sel}, code=~"5.."}}[2m])) / sum(rate(traefik_service_requests_total{{{sel}}}[2m]))')
-        p95 = _q(f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{sel}}}[2m])))')
-        by_status = _q(f'sum by (code) (rate(traefik_service_requests_total{{{sel}}}[5m]))', 10)
-        rps = _q(f'sum(rate(traefik_service_requests_total{{{sel}}}[2m]))')
+        err = _q(f'sum(rate(traefik_router_requests_total{{{sel}, code=~"5.."}}[2m])) / sum(rate(traefik_router_requests_total{{{sel}}}[2m]))')
+        p95 = _q(f'histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{{{sel}}}[2m])))')
+        by_status = _q(f'sum by (code) (rate(traefik_router_requests_total{{{sel}}}[5m]))', 10)
+        rps = _q(f'sum(rate(traefik_router_requests_total{{{sel}}}[2m]))')
         sig["error_ratio_peak"], sig["error_ratio_last"] = _num(err, "max") or 0.0, _num(err, "last") or 0.0
         sig["p95_peak"] = _num(p95, "max") or 0.0
         sig["rps"] = _num(rps, "last") or 0.0
         sig["statuses"] = {s["labels"].get("code"): round(s["last"], 3) for s in by_status.get("series", [])}
-        add("mimir", f"traefik_service_requests_total {ing}", f"{sig['rps']:.2f} req/s, 5xx ratio peaked at {sig['error_ratio_peak']:.0%} (now {sig['error_ratio_last']:.0%}), p95 up to {sig['p95_peak'] * 1000:.0f} ms; by status {sig['statuses']}")
-        # the backend Service is a label of the gateway's request series (set in Alloy from the route's service name)
+        add("mimir", f"traefik_router_requests_total {ing}", f"{sig['rps']:.2f} req/s, 5xx ratio peaked at {sig['error_ratio_peak']:.0%} (now {sig['error_ratio_last']:.0%}), p95 up to {sig['p95_peak'] * 1000:.0f} ms; by status {sig['statuses']}")
+        # the backend Service is a label of the gateway's per-service series (set in Alloy from the route's service name);
+        # with no backend pod there is no such series, and the route is named after its Service by convention
         backend = _q(f'count by (backend) (traefik_service_requests_total{{{sel}}})', 5)
         names = _label_values(backend, "backend")
         sig["backend"] = names[0] if names else ing
@@ -258,6 +262,54 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         node_facts(sig.get("nodes", []))
         deploys([f"platform-{sig['backend']}", sig["backend"]])
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or (family == "ingress" and sig["p95_peak"] > 1 and labels["alertname"] == "IngressSlow")
+
+    elif family == "gateway":
+        ns, workload = "traefik", "traefik"
+        sig.update({"namespace": ns, "workload": workload})
+        pods_and_events("traefik", ns)
+        entry = labels.get("entrypoint", "")
+        esel = f'cluster="{cluster}"' + (f', entrypoint="{entry}"' if entry else "")
+        err = _q(f'sum(rate(traefik_entrypoint_requests_total{{{esel}, code=~"5.."}}[2m])) / sum(rate(traefik_entrypoint_requests_total{{{esel}}}[2m]))')
+        rps = _q(f'sum(rate(traefik_entrypoint_requests_total{{{esel}}}[2m]))')
+        top = _q(f'topk(5, sum by (namespace, ingress) (rate(traefik_router_requests_total{{cluster="{cluster}", ingress!="", code=~"5.."}}[5m])))', 10)
+        fails = _q(f'sum(increase(traefik_config_reloads_failure_total{{cluster="{cluster}"}}[15m]))', 15)
+        sig["error_ratio_peak"], sig["error_ratio_last"] = _num(err, "max") or 0.0, _num(err, "last") or 0.0
+        sig["rps"] = _num(rps, "last") or 0.0
+        sig["failing_routes"] = sorted(((s["labels"].get("namespace", ""), s["labels"].get("ingress", ""), s["last"]) for s in top.get("series", []) if s["last"] > 0), key=lambda r: -r[2])
+        sig["reload_failures"] = _num(fails, "max") or 0.0
+        add("mimir", f"traefik_entrypoint_requests_total {entry or cluster}", f"{sig['rps']:.2f} req/s, 5xx ratio peaked at {sig['error_ratio_peak']:.0%} (now {sig['error_ratio_last']:.0%}); "
+            + ("routes with 5xx: " + ", ".join(f"{r[0]}/{r[1]} {r[2]:.2f}/s" for r in sig["failing_routes"][:3]) if sig["failing_routes"] else "no route stands out")
+            + f"; configuration reload failures in 15m: {sig['reload_failures']:.0f}")
+        logs_for(f'cluster="{cluster}", namespace="{ns}"', "gateway error lines")
+        # a configuration error in the log (a middleware that does not exist) lasts until someone fixes it
+        config_error = bool(re.search(r"does not exist|failed to load|error while reading", _msgs(sig)))
+        sig["ongoing"] = sig["error_ratio_last"] > 0.02 or sig["reload_failures"] > 0 or config_error
+
+    elif family == "certificate":
+        cert, cert_ns = labels.get("name", workload), labels.get("namespace") or "traefik"
+        ns, workload = cert_ns, cert
+        sig.update({"namespace": cert_ns, "workload": cert, "certificate": cert})
+        csel = f'cluster="{cluster}", namespace="{cert_ns}", name="{cert}"'
+        cond = _q(f'max by (condition) (certmanager_certificate_ready_status{{{csel}}})', 15)
+        sig["cert_condition"] = next((s["labels"].get("condition") for s in cond.get("series", []) if s["last"] == 1), None)
+        sig["issuer"] = (_label_values(_q(f'max by (issuer_name) (certmanager_certificate_ready_status{{{csel}}})', 5), "issuer_name") or [""])[0]
+        left = _num(_q(f'max(certmanager_certificate_expiration_timestamp_seconds{{{csel}}}) - time()', 5), "last")
+        renew = _num(_q(f'max(certmanager_certificate_renewal_timestamp_seconds{{{csel}}}) - time()', 5), "last")
+        sig["days_left"] = left / 86400 if left is not None else None
+        sig["renew_in_hours"] = renew / 3600 if renew is not None else None
+        add("mimir", f"certmanager_certificate_* {cert_ns}/{cert}", f"ready condition: {sig['cert_condition'] or 'no series'}; issuer {sig['issuer'] or 'unknown'}; "
+            + (f"expires in {sig['days_left']:.2f} days" if sig["days_left"] is not None else "no expiry recorded (never issued)")
+            + (f"; renewal due in {sig['renew_in_hours']:.1f} h" if sig["renew_in_hours"] is not None else ""))
+        pods_and_events("cert-manager", "cert-manager")
+        ev = tools.call_tool("get_k8s_events", {"namespace": cert_ns, "minutes": 120, "cluster": cluster, "name_prefix": cert})
+        sig["cert_events"] = ev.get("events", []) if "error" not in ev else []
+        if "error" in ev:
+            sig["tool_errors"].append(f"event lookup in {cluster} failed: {ev['error'][:120]}")
+        if sig["cert_events"]:
+            add("kubernetes", f"events {cert_ns}/{cert} in {cluster}", "; ".join(f"{e['reason']} {e['object']}: {e['message'][:110]}" for e in sig["cert_events"][:4]))
+        sig["events"] = sorted(sig["cert_events"] + sig.get("events", []), key=lambda e: e["ts"], reverse=True)
+        logs_for(f'cluster="{cluster}", namespace="cert-manager"', "cert-manager lines about this certificate", contains=cert)
+        sig["ongoing"] = sig["cert_condition"] not in (None, "True") or (labels.get("alertname") == "GatewayCertificateExpiring" and sig["days_left"] is not None and sig["days_left"] < 14)
 
     elif family == "argocd":
         app = labels.get("name", workload)
@@ -623,6 +675,69 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["Add RED metrics and tracing to the backend"], ["p95 on the ingress below 500 ms"], f"Users of {ing} wait longer than usual.")
 
     # ------------------------------------------------------------------ Argo CD
+    if family == "gateway":
+        text = _msgs(sig)
+        mw = re.search(r'middleware "?([\w@.-]+)"? does not exist', text)
+        cfg = mw or re.search(r"failed to load|cannot find|does not exist|error while reading|invalid", text)
+        if cfg or sig.get("reload_failures", 0) > 0:
+            named = f"middleware `{mw.group(1)}`" if mw else "a route, middleware or Gateway"
+            top = sig["top_log_messages"][0][0][:160] if sig.get("top_log_messages") else ""
+            return Diag("gateway_config_error", "application", f"configuration of the gateway ({mw.group(1) if mw else 'see the Traefik log'})", "high" if cfg else "medium",
+                        f"The gateway rejects part of its configuration: {named}.",
+                        f"Traefik in the {cluster} cluster cannot use {named}" + (f": `{top}`" if top else "") + ". The routes that depend on it do not work (they answer 404 or 5xx) and changes to routes may not be applied"
+                        + (f"; {sig['reload_failures']:.0f} configuration reload(s) failed in the last 15 minutes" if sig.get("reload_failures") else "") + ".",
+                        ["Traefik logs a configuration error" if cfg else "the configuration reload counter increased", "the gateway pods are running"],
+                        [f"{k} -n {ns} logs deploy/traefik --tail=50 | grep -i -E 'error|does not exist'", f"{k} get httproute,middleware -A  # does what the route references exist, in the right namespace?",
+                         "Fix the HTTPRoute, Middleware or Secret named in the log in Git (gitops/gateway/*, gitops/workloads/*) and let Argo CD sync it"],
+                        ["Validate routes before merge (kubeconform) and keep each Middleware in the same namespace as the HTTPRoute that references it"],
+                        [f"{k} -n {ns} logs deploy/traefik --since=5m | grep -c -i error  # 0", "the affected URL answers 200 again"], "Routes that depend on the broken configuration fail while the gateway runs.")
+        routes = sig.get("failing_routes", [])
+        total = sum(r[2] for r in routes)
+        if routes and routes[0][2] / total >= 0.6:   # one route produces most of the errors
+            r_ns, route, rate = routes[0]
+            return Diag("ingress_backend_failure", "application", f"backend of route {r_ns}/{route}", "medium", f"Most of the gateway's errors come from one route: {route}.",
+                        f"The gateway of the {cluster} cluster answers 5xx on {sig.get('error_ratio_peak', 0):.0%} of its requests, and {rate:.2f} req/s of them belong to the route `{r_ns}/{route}`. The gateway itself is running; the backend of that route has no ready pod or answers errors.",
+                        ["the gateway pods are ready", f"route {route} produces most of the 5xx"],
+                        [f"{k} -n {r_ns} get pods,endpoints  # does the Service behind {route} have a ready pod?", f"Follow the IngressHighErrorRate report for {route}, which looks at the backend pods and logs"],
+                        ["Run 2+ replicas with a PodDisruptionBudget and readiness probes behind every route"], ["5xx ratio of the gateway below 1%"], f"Users of {route} get errors.")
+
+    if family == "certificate":
+        cert = sig.get("certificate", wl)
+        text = _msgs(sig) + " " + " ".join(e["message"].lower() for e in sig.get("events", []))
+        ctrl = [p for p in pods if "webhook" not in p["pod"] and "cainjector" not in p["pod"]]
+        cm_down = not ctrl or not any(p.get("ready") for p in ctrl)
+        missing = re.search(r'issuer\.cert-manager\.io "([^"]+)" not found', text)
+        expiring = alertname == "GatewayCertificateExpiring"
+        days = sig.get("days_left")
+        left = f"{days:.1f} days" if days is not None and days >= 1 else f"{(days or 0) * 24:.1f} hours"
+        if cm_down:
+            return Diag("certificate_expiring" if expiring else "certificate_not_ready", "infrastructure", "cert-manager controller", "high",
+                        "cert-manager is not running, so certificates are not issued or renewed.",
+                        f"The certificate `{ns}/{cert}` ({cluster}) " + (f"expires in {left}" if expiring else "is not ready") + f", and cert-manager has no ready controller pod ({', '.join(f'{p['pod']} {p['phase']}' for p in pods[:2]) or 'none found'}): nothing can issue or renew it.",
+                        ["no ready cert-manager controller pod", "the certificate is not being reconciled"], [f"{k} -n cert-manager get pods", f"{k} -n cert-manager describe pod -l app.kubernetes.io/component=controller | tail -20"],
+                        ["Run cert-manager with resource requests and a PodDisruptionBudget, and alert on certificates well before they expire (GatewayCertificateExpiring)"], [f"{k} -n cert-manager get pods  # 1/1 Running", f"{k} -n {ns} get certificate {cert}  # READY True"],
+                        "New TLS handshakes fail once the certificate expires; existing HTTP (8080) is unaffected.")
+        if missing:
+            return Diag("certificate_expiring" if expiring else "certificate_not_ready", "application", f"issuerRef of certificate {cert} (issuer `{missing.group(1)}`)", "high",
+                        f"The certificate names an issuer that does not exist: {missing.group(1)}.",
+                        f"cert-manager cannot issue `{ns}/{cert}` ({cluster}) because the issuer `{missing.group(1)}` it references does not exist. Nothing is wrong with cert-manager itself, which is running; the Certificate (or the `cert-manager.io/cluster-issuer` annotation of the Gateway that created it) names the wrong issuer.",
+                        [f"the event says the issuer `{missing.group(1)}` was not found", "cert-manager is running"], [f"{k} get clusterissuer,issuer -A  # which issuers exist?", f"Point `issuerRef` of `{cert}` (or the Gateway annotation) at an existing issuer, or create `{missing.group(1)}` (gitops/gateway/common/issuer.yaml)"],
+                        ["Keep the issuer and everything that references it in the same Git change, and alert on certificates that are not ready (GatewayCertificateNotReady)"], [f"{k} -n {ns} get certificate {cert}  # READY True"], "The certificate is never issued, so nothing can use the secret it should create.")
+        if expiring and (sig.get("renew_in_hours") or 0) > 0 and sig.get("cert_condition") == "True":
+            return Diag("certificate_expiring", "application", f"lifetime of certificate {cert}", "medium", f"The certificate is valid and will be renewed, but its lifetime is shorter than the alert window.",
+                        f"`{ns}/{cert}` ({cluster}) is ready and expires in {left}. cert-manager has scheduled its renewal in {sig['renew_in_hours']:.1f} hours, so it is not stuck: the certificate was issued with a short `spec.duration`, which puts it inside the 14-day warning window all the time. If that is on purpose (a test or a short-lived certificate), nothing is wrong.",
+                        ["the certificate is Ready", f"renewal is due in {sig['renew_in_hours']:.1f} hours", "no issuer or cert-manager error"], [f"{k} -n {ns} get certificate {cert} -o jsonpath='{{.spec.duration}} {{.spec.renewBefore}}'", f"{k} -n {ns} get certificate {cert}  # READY True; wait for the renewal"],
+                        ["Use the default 90 day duration with renewBefore of 30 days for real certificates, so the alert only fires when a renewal is overdue"], [f"{k} -n {ns} get certificate {cert} -o jsonpath='{{.status.notAfter}}'  # a new date after the renewal"], "None while the renewal succeeds.")
+        if expiring and sig.get("cert_condition") == "True":
+            return Diag("certificate_expiring", "infrastructure", f"renewal of certificate {cert}", "medium", "The certificate is close to expiry and its renewal is overdue.",
+                        f"`{ns}/{cert}` ({cluster}) expires in {left} and cert-manager has not renewed it although the renewal time has passed. cert-manager is running and the issuer exists, so look at the cert-manager log for the failed order.",
+                        ["the renewal time has passed", "cert-manager is running"], [f"{k} -n cert-manager logs deploy/cert-manager --tail=50 | grep {cert}", f"{k} -n {ns} describe certificate {cert} | tail -20"],
+                        ["Alert on overdue renewals and give the issuer a health check"], [f"{k} -n {ns} get certificate {cert}  # a new notAfter date"], "TLS fails when it expires.")
+        return Diag("certificate_not_ready", "application", f"certificate {cert}", "low", "The certificate is not ready and the signals do not say why.",
+                    f"cert-manager reports `{ns}/{cert}` ({cluster}) as not ready (condition {sig.get('cert_condition') or 'unknown'}) and the events and log lines do not name a cause" + (f"; the last log line says `{sig['top_log_messages'][0][0][:120]}`" if sig.get("top_log_messages") else "") + ".",
+                    ["the certificate is not Ready", "cert-manager is running"], [f"{k} -n {ns} describe certificate {cert}", f"{k} -n {ns} get certificaterequest,order,challenge"],
+                    ["Alert on certificates that are not ready (GatewayCertificateNotReady) and keep issuers in Git"], [f"{k} -n {ns} get certificate {cert}  # READY True"], "The certificate is not issued.")
+
     if family == "argocd":
         app = sig.get("app") or {}
         name = labels.get("name", wl)
@@ -748,6 +863,19 @@ def _priority(alert: dict, ctx: dict, d: Diag) -> Priority:
     level = 2 if severity == "page" else 3
     why = [f"alert severity is '{severity}'"]
     ns, wl, family = sig["namespace"], sig["workload"], sig["family"]
+    if family == "certificate":
+        # TLS on the gateway breaks only when the certificate expires, and plain http keeps working: a ticket, unless it expires within a day
+        days = sig.get("days_left")
+        if days is not None and days < 1 and sig.get("cert_condition") == "True" or (days is not None and days < 1 and d.category == "certificate_expiring" and d.layer == "infrastructure"):
+            level = 2
+            why.append(f"it expires in {days * 24:.1f} hours and nothing has renewed it")
+        else:
+            why.append("a certificate that is not ready or expires later breaks new TLS connections only when it expires, not now")
+        ongoing = bool(sig.get("ongoing", True))
+        why.append("it is still ongoing" if ongoing else "the signals have recovered, so the urgency is lower")
+        if not ongoing:
+            level = min(level + 1, 4)
+        return Priority(level=f"P{level}", respond_within={1: "now: page the on-call and open an incident", 2: "within 1 hour", 3: "next business day", 4: "backlog, no action needed unless it repeats"}[level], ongoing=ongoing, rationale=why)
     user_facing = wl in config.USER_FACING_SERVICES or sig.get("backend") in config.USER_FACING_SERVICES or ns in ("demo", "traefik") or any(p.startswith(tuple(config.USER_FACING_SERVICES)) for p in sig.get("user_pods_on_node", []))
     ready = [p for p in sig.get("pods", []) if p.get("ready")]
     nothing_serving = (bool(sig.get("pods")) and not ready) or (d.category == "scaled_to_zero" and sig.get("desired") == 0)
@@ -840,7 +968,7 @@ def analyze(alert: dict, ctx: dict, now: float | None = None) -> RcaReport:
         what_happened=d.what,
         priority=priority,
         fault_domain=FaultDomain(layer=d.layer, component=d.component, reasoning=d.reasoning, confidence=d.confidence),
-        impact=Impact(slo="no SLO defined for this signal" if sig["family"] != "ingress" else "ingress 5xx below 1% and p95 below 500 ms", summary=d.impact or d.what[:200]),
+        impact=Impact(slo="no SLO defined for this signal" if sig["family"] not in ("ingress", "gateway") else "gateway 5xx below 1% and p95 below 500 ms", summary=d.impact or d.what[:200]),
         timeline=timeline,
         root_cause=RootCause(category=d.category, description=d.description, confidence=d.confidence),
         evidence=[Evidence(**e) for e in ctx["evidence"]],
