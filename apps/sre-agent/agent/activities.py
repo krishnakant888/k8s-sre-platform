@@ -6,8 +6,8 @@ from pathlib import Path
 
 import httpx
 
-from agent import config, insights, llm, rca
-from agent.models import RcaReport
+from agent import config, insights, llm, rca, remediate
+from agent.models import RcaReport, TimelineEntry
 
 log = logging.getLogger("sre-agent")
 
@@ -34,6 +34,18 @@ def analyze(alert: dict, ctx: dict) -> dict:
         log.warning("insights failed: %s", exc)
     report.alert_details = alert_details(alert)
     report.incident = incident_details(report.mode)
+    try:
+        pr = remediate.maybe_open_pr(ctx, report)
+        if pr:
+            report.remediation = pr
+            report.timeline.append(TimelineEntry(
+                time=report.generated_at,
+                event=f"remediation: draft PR #{pr['pr_number']} opened to raise memory limit {pr['old_limit']} → {pr['new_limit']} ({pr['file']})",
+            ))
+            report.how_to_fix.immediate.insert(0, f"Review and merge the remediation PR: {pr['pr_url']}")
+            report.rca_markdown = report.rca_markdown.rstrip("\n") + _remediation_section(pr)
+    except Exception as exc:
+        log.warning("remediation failed: %s", exc)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + incident_section(report.incident)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + alert_section(report.alert_details)
     return report.model_dump()
@@ -50,6 +62,17 @@ def incident_details(mode: str, now: datetime | None = None) -> dict:
     except ValueError:
         pass
     return {"id": os.environ.get("WORKFLOW_NAME", ""), "started_at": created, "finished_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "took_seconds": took, "analysis_mode": mode}
+
+
+def _remediation_section(pr: dict) -> str:
+    return (
+        f"\n\n## Remediation taken\n"
+        f"A draft PR was automatically opened while this issue is being investigated.\n"
+        f"- **PR:** [{pr['pr_url']}]({pr['pr_url']}) (draft — requires review before merge)\n"
+        f"- **Change:** `{pr['file']}` — `limits.memory` raised from `{pr['old_limit']}` to `{pr['new_limit']}`\n"
+        f"- **Action:** Review the PR. Merge it to let Argo CD apply the new limit and stop the OOMKills. "
+        f"Adjust the value if peak usage differs from the suggested size.\n"
+    )
 
 
 def incident_section(d: dict) -> str:

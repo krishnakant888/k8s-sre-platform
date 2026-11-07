@@ -21,6 +21,10 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "12"))
 
 REPORTS_DIR = os.getenv("REPORTS_DIR", "/reports")
+
+# remediation: open a draft PR when the agent diagnoses a sizing OOM
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITOPS_REPO = os.getenv("GITOPS_REPO", "krishnakant888/k8s-sre-platform")
 NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 
 # services whose failures users feel, used to decide priority

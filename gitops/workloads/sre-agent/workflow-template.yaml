@@ -123,6 +123,8 @@ spec:
           - {name: GITOPS_K8S_URL, value: "https://gitops-control-plane:6443"}
           - name: ANTHROPIC_API_KEY   # absent: the agent runs its rule based analysis and says so in the report
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
+          - name: GITHUB_TOKEN   # absent: remediation PRs are skipped; create with: kubectl -n sre-agent create secret generic github-token --from-literal=GITHUB_TOKEN=<pat>
+            valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
         resources:
           requests: {cpu: 100m, memory: 512Mi}
           limits: {memory: 1536Mi}
