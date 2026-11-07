@@ -156,6 +156,10 @@ form.rjsf .MuiFormHelperText-root { margin-top: 5px; font-size: 12.5px; }
 :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemText-root { margin: 0; flex: none; }
 :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:not(:has(table)) > .MuiPaper-root .MuiListItemSecondaryAction-root { position: static; transform: none; margin-left: 4px; }
 :is([data-pc-route='/catalog'], [data-pc-route='/api-docs'], [data-pc-route='/docs']) .MuiGrid-item:has(table) > .MuiBox-root { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
+
+/* the catalog graph: the diagram (tagged by TerminalEffects, it is the svg with the most elements) fits the visible page instead of scaling by width only */
+[data-pc-route='/catalog-graph'] svg[data-pc-graph] { width: 100% !important; height: calc(100vh - 230px) !important; min-height: 480px; max-height: none !important; }
+[data-pc-route='/catalog-graph'] svg[data-pc-graph] text { font-size: 13px; }
 `;
 
 export const ConsoleStyles = () => <style>{CSS}</style>;
