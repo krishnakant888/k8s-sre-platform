@@ -99,7 +99,11 @@
     else if (/^Node|^Kubelet|^ApiServer|^CoreDns/.test(alert)) id = "nodes";
     else if (/^(ClusterTelemetryMissing|TelemetryNotDelivered|LogsDropped)$/.test(alert)) id = "alloy";
     else if (/^InvestigationWorkflowFailed$/.test(alert)) id = "agent";
-    else if (/^Datasource/.test(alert)) id = "grafana";
+    else if (/^Datasource/.test(alert)) {
+      // component holds the backend name ("mimir in the observability cluster", etc.) — prefer it over defaulting to grafana
+      const ds = component.match(/^(mimir|loki|tempo)\b/i);
+      id = ds ? ds[1].toLowerCase() : "grafana";
+    }
     else id = byService(service);
     if (/^Ingress/.test(alert)) impacted = new Set(["users"]);   // slow or failing answers reach the users of that service only
     if (!id) id = "svc";
