@@ -507,7 +507,7 @@ data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: mimir
-                model: {refId: A, expr: "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400", instant: true}
+                model: {refId: A, expr: "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400 and max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) > 0", instant: true}
               - refId: C
                 datasourceUid: __expr__
                 model: {refId: C, type: math, expression: "$A >= 0"}

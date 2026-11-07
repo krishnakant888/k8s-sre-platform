@@ -149,7 +149,8 @@ RULES = [
          "Certificate {{ $labels.name }} is not ready",
          "cert-manager has not issued {{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}, issuer {{ $labels.issuer_name }}): the gateway cannot serve or renew TLS with it."),
         ("generic-gateway-cert-expiring", "GatewayCertificateExpiring",
-         "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400",
+         # expiry 0 means the certificate was never issued: that is GatewayCertificateNotReady, not an expiry
+         "max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) < time() + 14 * 86400 and max by (cluster, namespace, name) (certmanager_certificate_expiration_timestamp_seconds) > 0",
          "10m", "ticket", {},
          "Certificate {{ $labels.name }} expires within 14 days",
          "{{ $labels.namespace }}/{{ $labels.name }} ({{ $labels.cluster }}) expires within 14 days and has not been renewed: cert-manager is not renewing it, or its lifetime is very short."),
