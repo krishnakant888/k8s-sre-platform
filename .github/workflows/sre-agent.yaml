@@ -63,7 +63,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           [ -d gitops/workloads/sre-agent ] || { echo "no deployment yet"; exit 0; }
-          sed -i "s#\(image: ${IMAGE}\):.*#\1:sha-${GITHUB_SHA}#" gitops/workloads/sre-agent/*.yaml
+          sed -i "s#\(image: ${IMAGE}\)[^\"' ]*#\1:sha-${GITHUB_SHA}#" gitops/workloads/sre-agent/*.yaml
           git config user.name "sre-agent ci"
           git config user.email "ci@users.noreply.github.com"
           git add gitops/workloads/sre-agent
