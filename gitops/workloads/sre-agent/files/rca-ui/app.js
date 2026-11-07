@@ -258,6 +258,8 @@
     const add = (k, v) => { if (!v) return; const w = el("div"); w.append(el("dt", "", k), el("dd", "", v)); grid.append(w); };
     add("Alert", d.alertname); add("State when it fired", d.status); add("Severity", d.severity); add("Started", fmtTime(when(d.starts_at)));
     add("Cluster", d.cluster); add("Namespace", d.namespace);
+    const inc = r.incident || {};
+    add("Incident", inc.id); add("Investigation took", inc.took_seconds != null ? inc.took_seconds + " s" : ""); add("Analysis", words(inc.analysis_mode));
     body.append(grid);
     const a = d.annotations || {};
     for (const k of ["summary", "description"]) if (a[k]) { const p = el("p", "alert-ann"); p.append(el("b", "", k[0].toUpperCase() + k.slice(1) + ": "), document.createTextNode(a[k])); body.append(p); }

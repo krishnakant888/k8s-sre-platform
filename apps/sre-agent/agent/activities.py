@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -26,8 +28,30 @@ def analyze(alert: dict, ctx: dict) -> dict:
             log.warning("llm analysis failed, keeping the rule based report: %s", exc)
             report.contributing_factors.append(f"LLM analysis failed ({type(exc).__name__}); this report is rule based")
     report.alert_details = alert_details(alert)
+    report.incident = incident_details(report.mode)
+    report.rca_markdown = report.rca_markdown.rstrip("\n") + incident_section(report.incident)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + alert_section(report.alert_details)
     return report.model_dump()
+
+
+def incident_details(mode: str, now: datetime | None = None) -> dict:
+    """The investigation: the Argo Workflow that ran it (its name and creation time come in through the environment) and how long it took.
+    Argo Workflows keeps no history here, so this is stored in the report."""
+    now = now or datetime.now(timezone.utc)
+    created = os.environ.get("WORKFLOW_CREATED", "")
+    took = None
+    try:
+        took = max(0, round((now - datetime.fromisoformat(created.replace("Z", "+00:00"))).total_seconds()))
+    except ValueError:
+        pass
+    return {"id": os.environ.get("WORKFLOW_NAME", ""), "started_at": created, "finished_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "took_seconds": took, "analysis_mode": mode}
+
+
+def incident_section(d: dict) -> str:
+    if not d.get("id"):
+        return ""
+    took = f", took {d['took_seconds']} s" if d.get("took_seconds") is not None else ""
+    return f"\n## Incident\n- **Investigation:** `{d['id']}`, started {d.get('started_at', '')}{took}, analysis {d.get('analysis_mode', '')}\n"
 
 
 def alert_details(alert: dict) -> dict:

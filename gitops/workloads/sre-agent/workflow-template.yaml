@@ -116,6 +116,8 @@ spec:
         image: ghcr.io/krishnakant888/sre-agent:sha-cdf997a222d098bcc20937718b35c38fba33d76b
         command: [python, -m, agent.steps, analyze]
         env:
+          - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}   # recorded in the report: Argo Workflows keeps no history here
+          - {name: WORKFLOW_CREATED, value: "{{workflow.creationTimestamp}}"}
           - {name: ANTHROPIC_MODEL, value: claude-sonnet-5-5}
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
           - {name: GITOPS_K8S_URL, value: "https://gitops-control-plane:6443"}
