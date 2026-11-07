@@ -91,7 +91,13 @@ def alert_section(d: dict) -> str:
 def store_report(report: dict) -> str:
     """Writes report.json and rca.md under <REPORTS_DIR>/<report id>/ (a volume) and logs one json line (searchable in Loki)."""
     r = RcaReport.model_validate(report)
-    log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "target_service": r.service, "priority": r.priority.level, "layer": r.fault_domain.layer, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "report": r.model_dump()})
+    try:
+        _start = datetime.fromisoformat(r.started_at.replace("Z", "+00:00"))
+        _end = datetime.fromisoformat(r.generated_at.replace("Z", "+00:00"))
+        investigation_took = max(0, round((_end - _start).total_seconds()))
+    except Exception:
+        investigation_took = None
+    log.info("rca report", extra={"report_id": r.id, "alert": r.alert, "target_service": r.service, "priority": r.priority.level, "layer": r.fault_domain.layer, "root_cause": r.root_cause.category, "confidence": r.root_cause.confidence, "mode": r.mode, "investigation_took": investigation_took, "report": r.model_dump()})
     folder = Path(config.REPORTS_DIR) / r.id
     folder.mkdir(parents=True, exist_ok=True)
     for name, text in (("report.json", json.dumps(report, indent=2)), ("rca.md", r.rca_markdown)):

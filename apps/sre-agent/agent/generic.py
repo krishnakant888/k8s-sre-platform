@@ -834,7 +834,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         recent = [p for p in pods if p.get("restarts", 0) > 0]
         if not pods or down:
             return Diag("telemetry_gap", "infrastructure", f"{be} in the observability cluster", "high", f"Grafana cannot query {be}: it is not running.",
-                        f"Grafana's alert rules could not query `{be}` (alert {alertname}) because `{be}` has no ready pod ({', '.join(f\"{p['pod']} {p['phase']}\" for p in pods[:2]) or 'none found'}). While it is down, no alert that depends on it can fire, so the observability stack is blind. Argo CD self-heal will restore `{be}` automatically if its replica count was changed outside of Git; if the pod is OOMKilled or crash-looping, self-heal will not help until the root cause (memory limit, bad config) is fixed in Git.",
+                        f"Grafana's alert rules could not query `{be}` (alert {alertname}) because `{be}` has no ready pod ({', '.join(p['pod'] + ' ' + p['phase'] for p in pods[:2]) or 'none found'}). While it is down, no alert that depends on it can fire, so the observability stack is blind. Argo CD self-heal will restore `{be}` automatically if its replica count was changed outside of Git; if the pod is OOMKilled or crash-looping, self-heal will not help until the root cause (memory limit, bad config) is fixed in Git.",
                         [f"{be} pod not ready", "Grafana itself answers"], [f"{_ctl('observability')} -n observability describe pod -l app.kubernetes.io/name={be} | tail -20", f"{_ctl('observability')} -n observability logs -l app.kubernetes.io/name={be} --tail=50"],
                         ["Give the stores a PodDisruptionBudget and memory headroom (OOM is the usual cause), and alert on their absence from outside the cluster"], [f"{_ctl('observability')} -n observability get pods  # {be} Running"], "Alerting is blind until the datasource is back.")
         return Diag("telemetry_gap", "infrastructure", f"{be} restarted or was unreachable for a short time", "medium", f"{be} was briefly unreachable for Grafana.",
@@ -933,6 +933,18 @@ def _gaps(ctx: dict, d: Diag) -> list[str]:
         gaps.append("The gateway reports no request rate for this route: check that Traefik's metrics are scraped (container port named `metrics`) and that the series carry the `ingress` label (gateway_routes in gitops/observability/alloy/config.alloy)")
     if sig["family"] == "argocd" and not sig.get("app"):
         gaps.append("The agent could not read the Argo CD application: grant the gitops-reader token access to Applications")
+    if sig["family"] == "datasource" and d.category == "unknown":
+        gaps.append(f"No signal identified which backend caused the datasource alert; add `grafana_alerting_rule_evaluation_failures_total` and `grafana_datasource_request_duration_seconds` to the alert context so the agent can name the failing datasource and the first rule that broke")
+    if sig["family"] == "telemetry" and d.category == "unknown":
+        gaps.append(f"No log or metric pinpointed why telemetry delivery failed; add a counter on the collector for `loki_write_failed_lines_total` and `prometheus_remote_storage_failed_samples_total` broken down by `cluster` and `component` so the first failing step is visible")
+    if sig["family"] == "pipeline" and d.category == "unknown":
+        gaps.append(f"The investigation workflow failed but no structured error was found; add a `failed_step` label and `error_message` annotation to the workflow's exit handler so the next run names the step and the Python exception")
+    if d.category == "unknown":
+        evidence_sources = {e.get("source") for e in ctx.get("evidence", []) if isinstance(e, dict)}
+        missing = [s for s in ("mimir", "loki", "tempo") if s not in evidence_sources]
+        if missing:
+            gaps.append(f"The investigation had no data from {', '.join(missing)}; check that those stores are reachable and that the workload's metrics are scraped (`up{{namespace=\"{ns}\"}}` series present) and its logs reach Loki (`{{namespace=\"{ns}\"}}` streams present)")
+        gaps.append(f"The alert was not explained; add a recording rule or structured log field that captures the state at alert-fire time (the value that crossed the threshold, the pod name, the error message) so the agent has a named signal to anchor its diagnosis")
     if sig.get("tool_errors"):
         gaps.append("Some lookups failed, so this report may be incomplete: " + "; ".join(sig["tool_errors"]))
     return gaps or ["The telemetry available was enough for this investigation."]
