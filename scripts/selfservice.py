@@ -561,9 +561,6 @@ def act_drill(p):
         raise Refused("a drill runs 10 to 240 minutes")
     folder = ROOT / "gitops/fault-drills/active"
     folder.mkdir(parents=True, exist_ok=True)
-    ns_file = folder / "00-namespace.yaml"
-    if not ns_file.exists():
-        ns_file.write_text("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: scenarios\n  labels:\n    app.kubernetes.io/part-of: platform\n")
     out = folder / f"{scenario}.yaml"
     if out.exists():
         raise Refused(f"the drill {scenario} is already running ({out.relative_to(ROOT)})")
@@ -572,7 +569,7 @@ def act_drill(p):
     out.write_text(f"# sre-platform/expires: {expiry(hours=minutes / 60)}\n# A failure drill requested from the developer portal (scripts/selfservice.py drill). It breaks a workload in the `scenarios` namespace on purpose so the alerts\n# and the SRE agent can be seen working. It is removed when the time above passes.\n{src}")
     for d in split_docs(out.read_text())[::2]:
         load(d)
-    return dict(files=[out, ns_file], title=f"failure drill: {scenario} for {minutes} minutes",
+    return dict(files=[out], title=f"failure drill: {scenario} for {minutes} minutes",
                 body=f"Deploys `scenarios/{scenario}.yaml` into the `scenarios` namespace of the platform cluster for {minutes} minutes.\n\n"
                      "Expect a Grafana alert within a few minutes and an RCA report at https://reports.localhost:9443 after that. The drill is removed automatically.")
 
