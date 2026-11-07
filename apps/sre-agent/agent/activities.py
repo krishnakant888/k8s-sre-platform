@@ -38,11 +38,15 @@ def analyze(alert: dict, ctx: dict) -> dict:
         pr = remediate.maybe_open_pr(ctx, report)
         if pr:
             report.remediation = pr
+            status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
             report.timeline.append(TimelineEntry(
                 time=report.generated_at,
-                event=f"remediation: draft PR #{pr['pr_number']} opened to raise memory limit {pr['old_limit']} → {pr['new_limit']} ({pr['file']})",
+                event=f"remediation {status_label}: memory limit {pr['old_limit']} → {pr['new_limit']} ({pr['file']})",
             ))
-            report.how_to_fix.immediate.insert(0, f"Review and merge the remediation PR: {pr['pr_url']}")
+            if pr["status"] == "merged":
+                report.how_to_fix.immediate.insert(0, f"Remediation already applied — wait for Argo CD to sync the new limit: {pr['pr_url']}")
+            else:
+                report.how_to_fix.immediate.insert(0, f"Review and merge the remediation PR: {pr['pr_url']}")
             report.rca_markdown = report.rca_markdown.rstrip("\n") + _remediation_section(pr)
     except Exception as exc:
         log.warning("remediation failed: %s", exc)
