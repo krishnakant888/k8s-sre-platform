@@ -21,7 +21,7 @@ spec:
           - $values/gitops/traefik/values.yaml   # same NodePorts in every cluster; kind maps them to different host ports
           - $values/gitops/traefik/values-platform.yaml   # the namespaces whose routes this Gateway accepts
     - repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
-      targetRevision: main
+      targetRevision: test/gateway-e2e
       ref: values
   destination:
     name: platform   # registered in this Argo CD by bootstrap.py

@@ -11,7 +11,7 @@ spec:
   project: observability
   source:
     repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
-    targetRevision: main
+    targetRevision: test/gateway-e2e
     path: gitops/observability/mimir
   destination:
     name: observability   # registered in this Argo CD by bootstrap.py

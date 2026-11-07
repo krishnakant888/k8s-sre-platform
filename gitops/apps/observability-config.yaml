@@ -11,7 +11,7 @@ spec:
   project: prod-observability
   source:
     repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
-    targetRevision: main
+    targetRevision: test/gateway-e2e
     path: gitops/observability/config
   destination:
     name: platform   # registered in this Argo CD by bootstrap.py
