@@ -1,5 +1,7 @@
-# read-only file listing of the reports volume, at http://reports.localhost:9080
-# (report.json and rca.md are served as plain text so the browser shows them instead of downloading)
+# The RCA report viewer, at https://reports.localhost:9443 (behind the gateway login).
+#   /            the viewer page (files/rca-ui) for a browser; the plain directory listing for anything else (scripts, the portal card)
+#   /_list/      the same listing as JSON, which the page reads
+#   /<id>/rca.md and /<id>/report.json   the files of a report, served as plain text so a browser shows them instead of downloading
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -24,6 +26,24 @@ data:
         listen 8080;
         root /reports;
         location = /healthz { access_log off; return 200 "ok\n"; }
+        location /ui/ {   # the page: files/rca-ui, mounted from the ConfigMap rca-viewer-ui
+          alias /ui/;
+          add_header Cache-Control no-cache;
+          add_header X-Content-Type-Options nosniff;
+          add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'self'";
+        }
+        location /_list/ {
+          alias /reports/;
+          autoindex on;
+          autoindex_format json;
+          default_type application/json;
+          add_header Cache-Control no-store;
+        }
+        location = / {
+          if ($http_accept ~* "text/html") { rewrite ^ /ui/index.html last; }
+          autoindex on;
+          add_header X-Content-Type-Options nosniff;
+        }
         location / {
           autoindex on;
           types { text/plain md json; }
@@ -76,12 +96,15 @@ spec:
           volumeMounts:
             - {name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf}
             - {name: reports, mountPath: /reports, readOnly: true}
+            - {name: ui, mountPath: /ui, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: nginx-conf
           configMap: {name: rca-viewer-nginx}
         - name: reports
           persistentVolumeClaim: {claimName: rca-reports, readOnly: true}
+        - name: ui
+          configMap: {name: rca-viewer-ui}
         - name: tmp
           emptyDir: {}
 ---
