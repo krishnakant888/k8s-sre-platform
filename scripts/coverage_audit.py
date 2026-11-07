@@ -73,7 +73,7 @@ def main():
                         gaps.append("no log lines in 30 min (idle, or not writing to stdout)")
                     app = prom(f'count(up{{cluster="{cluster}", namespace="{ns}", pod=~"{pod_rx}"}})')
                     if (ns, name) in backends:
-                        ing = prom(f'count(traefik_service_requests_total{{cluster="{cluster}", namespace="{ns}"}})')
+                        ing = prom(f'count(traefik_router_requests_total{{cluster="{cluster}", namespace="{ns}"}})')
                         if not ing:
                             gaps.append("has an HTTPRoute but no traffic metrics yet (no request has passed)")
                     if not labels.get("app.kubernetes.io/name"):

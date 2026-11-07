@@ -847,7 +847,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (code) (rate(traefik_service_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m]))",
+              "expr": "sum by (code) (rate(traefik_router_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m]))",
               "legendFormat": "{{code}}",
               "datasource": {
                 "type": "prometheus",
@@ -901,7 +901,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(traefik_service_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\", code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m]))",
+              "expr": "sum(rate(traefik_router_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\", code=~\"5..\"}[5m])) / sum(rate(traefik_router_requests_total{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m]))",
               "legendFormat": "5xx",
               "datasource": {
                 "type": "prometheus",
@@ -971,7 +971,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
               "legendFormat": "p50",
               "datasource": {
                 "type": "prometheus",
@@ -980,7 +980,7 @@ data:
             },
             {
               "refId": "B",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
               "legendFormat": "p95",
               "datasource": {
                 "type": "prometheus",
@@ -989,7 +989,7 @@ data:
             },
             {
               "refId": "C",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{cluster=\"$cluster\", namespace=\"$namespace\", ingress=~\"$workload.*\"}[5m])))",
               "legendFormat": "p99",
               "datasource": {
                 "type": "prometheus",

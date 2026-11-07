@@ -171,7 +171,8 @@ prometheus.scrape "named_metrics_port" {
 // is published from a new one. The series then carry the labels the dashboards, alerts and the SRE agent use:
 //   namespace  the route's namespace (replaces the controller's own)
 //   ingress    the HTTPRoute name (the name of what users reach)
-//   backend    the Service that answers
+//   backend    the Service that answers (service series only)
+// The router series (traefik_router_*, which also count the 503 the gateway answers when a route has no backend) get namespace and ingress.
 prometheus.relabel "gateway_routes" {
   forward_to = [prometheus.remote_write.mimir.receiver]
   rule {
@@ -191,6 +192,19 @@ prometheus.relabel "gateway_routes" {
     regex         = "traefik_service_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*-svc-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+)-[0-9]+@.*"
     target_label  = "backend"
     replacement   = "$4"
+  }
+  // router series: httproute-<route namespace>-<route name>-gw-<gateway namespace>-<gateway name>-ep-<entrypoint>-<rule>-<hash>@kubernetesgateway
+  rule {
+    source_labels = ["__name__", "router"]
+    regex         = "traefik_router_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*@.*"
+    target_label  = "namespace"
+    replacement   = "$1"
+  }
+  rule {
+    source_labels = ["__name__", "router"]
+    regex         = "traefik_router_.*;httproute-(argo-workflows|argocd|demo|observability|sandbox|sre-agent)-(.+?)-gw-.*@.*"
+    target_label  = "ingress"
+    replacement   = "$2"
   }
 }
 

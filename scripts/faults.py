@@ -248,6 +248,18 @@ def _():
     kubectl(PLATFORM, "-n", NS, "scale", "deploy/fault-ingress-nobackend", "--replicas=0")
 
 
+@scenario("gateway-cert-notready", "a Certificate whose issuer does not exist", ["GatewayCertificateNotReady"], ["certificate_not_ready"], ["application"], 14, service="fault-cert-notready")
+def _():
+    apply({"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": {"name": "fault-cert-notready", "namespace": NS, "labels": {"team": "fault-drill"}},
+           "spec": {"secretName": "fault-cert-notready", "dnsNames": ["fault-cert.localhost"], "issuerRef": {"name": "does-not-exist", "kind": "ClusterIssuer"}}})
+
+
+@scenario("gateway-cert-expiring", "a Certificate that is valid for only one hour", ["GatewayCertificateExpiring"], ["certificate_expiring"], ["application"], 14, service="fault-cert-expiring")
+def _():
+    apply({"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": {"name": "fault-cert-expiring", "namespace": NS, "labels": {"team": "fault-drill"}},
+           "spec": {"secretName": "fault-cert-expiring", "dnsNames": ["fault-cert.localhost"], "duration": "1h", "renewBefore": "10m", "issuerRef": {"name": "selfsigned", "kind": "ClusterIssuer"}}})
+
+
 def argo_app(name, path, ns=NS):
     return {"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": name, "namespace": "argocd", "finalizers": ["resources-finalizer.argocd.argoproj.io"]},
             "spec": {"project": "prod-workloads", "source": {"repoURL": "https://github.com/krishnakant888/k8s-sre-platform.git", "targetRevision": "main", "path": path},
@@ -346,7 +358,8 @@ def clear():
     save_state({})
     kubectl(PLATFORM, "delete", "pods", "-A", "--field-selector=status.phase=Failed", check=False)   # evicted pods stay as objects
     for ns in (NS, "demo"):
-        kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,httproute,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
+        kubectl(PLATFORM, "-n", ns, "delete", "deploy,sts,ds,svc,httproute,certificate,cm,pvc,job", "-l", "team=fault-drill", "--ignore-not-found", check=False)
+    kubectl(PLATFORM, "-n", NS, "delete", "secret", "fault-cert-notready", "fault-cert-expiring", "--ignore-not-found", check=False)   # made by cert-manager, not labelled
     kubectl(PLATFORM, "delete", "ns", "fault-quota", "--ignore-not-found", check=False)
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
