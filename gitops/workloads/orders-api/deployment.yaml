@@ -57,6 +57,7 @@ spec:
             - {name: ENVIRONMENT, value: local}
             - name: CHAOS_TOKEN
               valueFrom: {secretKeyRef: {name: orders-api-chaos, key: CHAOS_TOKEN}}
+            - {name: TEMP_KEY009, value: "3252352"}
           startupProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 2
