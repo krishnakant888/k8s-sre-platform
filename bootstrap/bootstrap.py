@@ -511,6 +511,14 @@ def _apps_progress():
     return f"{ok} of {len(items)} Argo CD applications Synced and Healthy" if items else ""
 
 
+def _gateway_ready(cluster):
+    """The Traefik gateway of a cluster runs and at least one HTTPRoute exists (the routes of the UIs are applied by Argo CD after Traefik is up)."""
+    if not _available(cluster, "traefik", "traefik"):
+        return False
+    r = kubectl(cluster, "get", "httproute", "-A", "--no-headers", capture=True, check=False, quiet=True)
+    return r.returncode == 0 and bool((r.stdout or "").strip())
+
+
 def wait_for_services(present, timeout_min=25):
     """Argo CD deploys Grafana, and applies the portal account of its own configuration, after the bootstrap itself has returned.
     Wait for them (printing where it stands), then create the tokens that need them: the portal's and the report viewer's.
@@ -520,6 +528,9 @@ def wait_for_services(present, timeout_min=25):
         waits["Grafana"] = lambda: _available("observability", "observability", "grafana") and bool(read_secret("observability", "observability", "grafana-admin", "admin-password"))
     if HUB in present:
         waits["the Argo CD portal account"] = lambda: _available(HUB, ARGOCD_NS, "argocd-server") and _portal_account_declared()
+    for cluster in (HUB, "observability", "platform"):   # the URLs printed at the end work only once each gateway and its routes are there
+        if cluster in present:
+            waits[f"the gateway of the {cluster} cluster"] = (lambda c=cluster: _gateway_ready(c))
     start = time.time()
     print(f"\nWaiting for Argo CD to deploy {' and '.join(waits)} (usually 10 to 20 minutes, up to {timeout_min}); the access tokens are created when they are ready.", flush=True)
     while waits and time.time() - start < timeout_min * 60:
