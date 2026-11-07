@@ -1,0 +1,5 @@
+# shell scripts and manifests keep LF line endings on Windows checkouts, or the scripts fail inside Linux containers and bash
+*.sh text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf

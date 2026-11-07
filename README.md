@@ -11,6 +11,17 @@ alert fires (Grafana alerting) -> webhook -> Argo Workflow -> SRE agent queries 
 Kubernetes and Argo CD -> structured RCA (files on a volume, JSON log in Loki, optional chat webhook)
 ```
 
+## Runs on
+
+Linux, macOS (Intel and Apple Silicon) and Windows. You need Docker (Docker Desktop, or Docker Engine on Linux), `kind`, `kubectl`, `helm` and Python 3; `bootstrap/bootstrap.py` checks that they are on the PATH.
+
+| | What to know |
+|---|---|
+| Docker memory | The three clusters need about 10 GB and 4 CPUs. Docker Desktop: Settings > Resources. |
+| Apple Silicon and ARM Linux | The images of this repo are published for `linux/amd64` and `linux/arm64`, so nothing is emulated. |
+| Windows | Run the scripts from Git Bash or WSL 2 (`drill.sh` and `scenarios.sh` are bash; `bootstrap.py` and `faults.py` are plain Python). The repo keeps LF line endings (`.gitattributes`). |
+| Ports | 7080/7443, 9080/9443 and 8080/8443 on localhost. `bootstrap.py` stops with the port number if one is taken (on Windows some vendor services hold 9080). |
+
 ## Quick start
 
 Needs Linux or WSL2 with: Docker, [kind](https://kind.sigs.k8s.io), kubectl, helm, Python 3.9+ (standard library only). About 16 GB of RAM for Docker (WSL2: `memory=16GB` in `.wslconfig`, see Sizing); the three clusters use about 9 GB idle.

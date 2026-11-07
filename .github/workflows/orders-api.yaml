@@ -30,6 +30,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3   # to build the arm64 image on the amd64 runner
       - uses: docker/setup-buildx-action@v3
       - name: release version
         id: version
@@ -44,6 +45,7 @@ jobs:
       - name: build (and push on main)
         uses: docker/build-push-action@v6
         with:
+          platforms: linux/amd64,linux/arm64   # Apple Silicon and ARM machines run the image natively, no emulation
           context: apps/orders-api
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
