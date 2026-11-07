@@ -2,16 +2,16 @@
 apiVersion: "scaffolder.backstage.io/v1beta3"
 kind: "Template"
 metadata:
-  name: "change-resources"
-  title: "Change the resources of a service"
-  description: "Set the memory limit and requests of a service's container. Kyverno requires a memory limit; the request cannot be above it."
-  tags: ["self-service", "day-2", "resources"]
+  name: "request-dashboard"
+  title: "Request a Grafana dashboard for a service"
+  description: "A dashboard of a service: replicas, restarts, CPU, memory, gateway traffic and latency, logs. Extra panels can be added later by editing the file."
+  tags: ["self-service", "observability", "dashboards"]
 spec:
   owner: "group:platform-team"
   type: "self-service"
   parameters:
-    - title: "Change the resources of a service"
-      required: ["service", "memory_limit"]
+    - title: "Request a Grafana dashboard for a service"
+      required: ["service"]
       properties:
         service:
           title: "Service"
@@ -23,34 +23,18 @@ spec:
               kind: "Component"
               "metadata.annotations.selfservice/enabled": "true"
             defaultKind: "Component"
-        memory_limit:
-          title: "Memory limit"
-          type: "string"
-          enum: ["128Mi", "256Mi", "512Mi", "1Gi", "2Gi", "4Gi"]
-          default: "512Mi"
-        memory_request:
-          title: "Memory request (optional)"
-          type: "string"
-          enum: ["", "64Mi", "128Mi", "256Mi", "512Mi", "1Gi", "2Gi"]
-          default: ""
-        cpu_request:
-          title: "CPU request (optional)"
-          type: "string"
-          description: "For example 100m or 1."
-          pattern: "^(\\d{1,5}m|\\d{1,2})?$"
-          default: ""
   steps:
     - id: request
       name: The request
       action: debug:log
       input:
-        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'memory_limit': parameters.memory_limit, 'memory_request': parameters.memory_request, 'cpu_request': parameters.cpu_request} | dump }}"
+        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} | dump }}"
     - id: dispatch
       name: Run the request on GitHub and follow it
       action: selfservice:run
       input:
-        action: resources
-        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'memory_limit': parameters.memory_limit, 'memory_request': parameters.memory_request, 'cpu_request': parameters.cpu_request} }}"
+        action: dashboard
+        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} }}"
         requestedBy: "${{ user.entity.metadata.name if user.entity else 'the developer portal' }}"
   output:
     links:
@@ -61,7 +45,7 @@ spec:
       - title: The deployment in Argo CD
         url: ${{ steps['dispatch'].output.argoUrl }}
       - title: All requests
-        url: https://portal.localhost:7443/self-service
+        url: https://backstage-portal.localhost:7443/self-service
     text:
       - title: What happens next
         content: |

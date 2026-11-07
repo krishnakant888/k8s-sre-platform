@@ -1,6 +1,6 @@
 # Developer portal (Backstage)
 
-An internal developer platform on top of this repo: one place to see what runs, who owns it, how it is doing, and to create a new service that already fits the platform. It is Backstage, in the **gitops cluster**, at **https://portal.localhost:7443** (also http on :7080). Sign-in is the guest user and the portal is read-only.
+An internal developer platform on top of this repo: one place to see what runs, who owns it, how it is doing, and to create a new service that already fits the platform. It is Backstage, in the **gitops cluster**, at **https://backstage-portal.localhost:7443** (also http on :7080). Sign-in is the guest user and the portal is read-only.
 
 ## What it gives you
 
@@ -16,11 +16,11 @@ An internal developer platform on top of this repo: one place to see what runs, 
 ## How it is put together
 
 ```
-portal/ folder              the Backstage app: plugins, the three cards, the new-service template  ->  container image
+backstage-portal/ folder     the Backstage app: plugins, the three cards, the new-service template  ->  container image
 k8s-sre-platform repo        how it runs here (gitops/backstage: portal + Postgres + route) and what it shows (the catalog)
 ```
 
-- **Deployment:** `gitops/hub/apps/portal.yaml` is the Argo CD application `gitops-portal`; it deploys `gitops/backstage` (kustomize): the portal, its Postgres (a StatefulSet on a volume), the route `portal.localhost`, the catalog ConfigMap and the portal's configuration (`app-config.k8s.yaml`).
+- **Deployment:** `gitops/hub/apps/portal.yaml` is the Argo CD application `gitops-backstage-portal`; it deploys `gitops/backstage` (kustomize): the portal, its Postgres (a StatefulSet on a volume), the route `backstage-portal.localhost`, the catalog ConfigMap and the portal's configuration (`app-config.k8s.yaml`).
 - **Catalog changes** are a pull request to `gitops/backstage/catalog/*.yaml`; the ConfigMap name carries a hash of its content, so the portal restarts and reads the new catalog when Argo CD syncs.
 - **Read-only access:** `bootstrap.py` creates a service account `portal-reader` in each cluster (a ClusterRole with get/list/watch on workloads, pods, services, ConfigMaps and routes, no Secrets, no writes), a read-only `portal` account in Argo CD, and a Viewer service account in Grafana. Their tokens are in the Secret `portal-secrets` in the `portal` namespace, never in Git.
 - **Grafana, RCA viewer:** the portal reaches them through the backend proxy (`/api/proxy/grafana`, `/api/proxy/rca`) with the token or login held server side, through the observability cluster's gateway.
@@ -33,7 +33,7 @@ k8s-sre-platform repo        how it runs here (gitops/backstage: portal + Postgr
 python3 bootstrap/bootstrap.py --portal-access
 ```
 
-**The image.** The image is built from the `portal/` folder of this repo (the `portal-image` workflow builds it to ghcr for amd64 and arm64). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
+**The image.** The image is built from the `backstage-portal/` folder of this repo (the `backstage-portal-image` workflow builds it to ghcr for amd64 and arm64). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
 
 ```bash
 docker build -t ghcr.io/krishnakant888/backstage-portal:0.1.0 -f packages/backend/Dockerfile .   # in portal/al repo, after yarn install, tsc and build:backend

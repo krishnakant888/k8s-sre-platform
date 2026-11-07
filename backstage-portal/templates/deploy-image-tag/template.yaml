@@ -2,16 +2,16 @@
 apiVersion: "scaffolder.backstage.io/v1beta3"
 kind: "Template"
 metadata:
-  name: "roll-back-service"
-  title: "Roll back a service"
-  description: "Go back to the image of the previous change to the service's Deployment. Opens a pull request that reverts the tag."
+  name: "deploy-image-tag"
+  title: "Deploy a new image tag"
+  description: "Change the tag of a service's image (the repository stays). The `latest` tag is refused."
   tags: ["self-service", "day-2", "release"]
 spec:
   owner: "group:platform-team"
   type: "self-service"
   parameters:
-    - title: "Roll back a service"
-      required: ["service"]
+    - title: "Deploy a new image tag"
+      required: ["service", "tag"]
       properties:
         service:
           title: "Service"
@@ -23,18 +23,23 @@ spec:
               kind: "Component"
               "metadata.annotations.selfservice/enabled": "true"
             defaultKind: "Component"
+        tag:
+          title: "Image tag"
+          type: "string"
+          pattern: "^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"
+          description: "For example 1.4.0 or sha-3f2c9ab."
   steps:
     - id: request
       name: The request
       action: debug:log
       input:
-        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} | dump }}"
+        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'tag': parameters.tag} | dump }}"
     - id: dispatch
       name: Run the request on GitHub and follow it
       action: selfservice:run
       input:
-        action: rollback
-        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} }}"
+        action: image
+        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'tag': parameters.tag} }}"
         requestedBy: "${{ user.entity.metadata.name if user.entity else 'the developer portal' }}"
   output:
     links:
@@ -45,7 +50,7 @@ spec:
       - title: The deployment in Argo CD
         url: ${{ steps['dispatch'].output.argoUrl }}
       - title: All requests
-        url: https://portal.localhost:7443/self-service
+        url: https://backstage-portal.localhost:7443/self-service
     text:
       - title: What happens next
         content: |

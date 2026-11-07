@@ -2,16 +2,16 @@
 apiVersion: "scaffolder.backstage.io/v1beta3"
 kind: "Template"
 metadata:
-  name: "promote-to-demo"
-  title: "Promote a sandbox service to demo"
-  description: "Move a service from the sandbox namespace to demo (restricted Pod Security, Kyverno enforced)."
-  tags: ["self-service", "day-2", "release"]
+  name: "request-alert"
+  title: "Request an alert for a service"
+  description: "Add a Grafana alert rule for a service. When it fires, the SRE agent investigates and writes a report like for any other alert."
+  tags: ["self-service", "observability", "alerting"]
 spec:
   owner: "group:platform-team"
   type: "self-service"
   parameters:
-    - title: "Promote a sandbox service to demo"
-      required: ["service"]
+    - title: "Request an alert for a service"
+      required: ["service", "kind"]
       properties:
         service:
           title: "Service"
@@ -23,18 +23,36 @@ spec:
               kind: "Component"
               "metadata.annotations.selfservice/enabled": "true"
             defaultKind: "Component"
+        kind:
+          title: "What to alert on"
+          type: "string"
+          enum: ["error-rate", "latency", "availability", "restarts", "memory"]
+          enumNames: ["Error rate (share of 5xx at the gateway, default 0.05)", "Latency (p95 in seconds, default 1)", "Availability (fewer ready replicas than, default 1)", "Restarts (in 15 minutes, default 3)", "Memory (share of the limit, default 0.9)"]
+          default: "error-rate"
+        threshold:
+          title: "Threshold (optional)"
+          type: "string"
+          description: "A number; leave empty for the default of the kind."
+          pattern: "^([0-9]+(\\.[0-9]+)?)?$"
+          default: ""
+        severity:
+          title: "Severity"
+          type: "string"
+          enum: ["ticket", "page"]
+          default: "ticket"
+          description: "page also notifies the on-call."
   steps:
     - id: request
       name: The request
       action: debug:log
       input:
-        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} | dump }}"
+        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'kind': parameters.kind, 'threshold': parameters.threshold, 'severity': parameters.severity} | dump }}"
     - id: dispatch
       name: Run the request on GitHub and follow it
       action: selfservice:run
       input:
-        action: promote
-        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name'))} }}"
+        action: alert
+        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'kind': parameters.kind, 'threshold': parameters.threshold, 'severity': parameters.severity} }}"
         requestedBy: "${{ user.entity.metadata.name if user.entity else 'the developer portal' }}"
   output:
     links:
@@ -45,7 +63,7 @@ spec:
       - title: The deployment in Argo CD
         url: ${{ steps['dispatch'].output.argoUrl }}
       - title: All requests
-        url: https://portal.localhost:7443/self-service
+        url: https://backstage-portal.localhost:7443/self-service
     text:
       - title: What happens next
         content: |

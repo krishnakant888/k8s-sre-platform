@@ -151,7 +151,7 @@ def render(t):
       - title: The deployment in Argo CD
         url: ${{{{ steps['dispatch'].output.argoUrl }}}}
       - title: All requests
-        url: https://portal.localhost:7443/self-service
+        url: https://backstage-portal.localhost:7443/self-service
     text:
       - title: What happens next
         content: |

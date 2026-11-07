@@ -28,7 +28,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: portal
-          # built from the portal/ folder of this repo; on this machine it is loaded into the kind node (see docs/portal.md)
+          # built from the backstage-portal/ folder of this repo; on this machine it is loaded into the kind node (see docs/portal.md)
           image: ghcr.io/krishnakant888/backstage-portal:0.1.0
           imagePullPolicy: IfNotPresent
           command: [node, packages/backend, --config, app-config.yaml, --config, app-config.production.yaml, --config, /config/app-config.k8s.yaml]

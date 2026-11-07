@@ -7,7 +7,7 @@ metadata:
 spec:
   parentRefs:
     - {name: platform, namespace: traefik}
-  hostnames: [portal.localhost]
+  hostnames: [backstage-portal.localhost]
   rules:
     - backendRefs:
         - {name: portal, port: 80}

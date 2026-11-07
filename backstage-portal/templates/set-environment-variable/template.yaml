@@ -2,57 +2,48 @@
 apiVersion: "scaffolder.backstage.io/v1beta3"
 kind: "Template"
 metadata:
-  name: "request-sandbox"
-  title: "Request a short-lived sandbox namespace"
-  description: "A namespace sbx-<name> in the platform cluster with quota, limit range and network policies, removed automatically when the time is up."
-  tags: ["self-service", "environments"]
+  name: "set-environment-variable"
+  title: "Set an environment variable"
+  description: "Add or change a plain environment variable of a service. Secrets are refused: use a SealedSecret."
+  tags: ["self-service", "day-2", "config"]
 spec:
   owner: "group:platform-team"
   type: "self-service"
   parameters:
-    - title: "Request a short-lived sandbox namespace"
-      required: ["name", "owner", "days"]
+    - title: "Set an environment variable"
+      required: ["service", "name", "value"]
       properties:
+        service:
+          title: "Service"
+          type: "string"
+          description: "A service the platform deploys (workloads of gitops/workloads)."
+          "ui:field": "EntityPicker"
+          "ui:options":
+            catalogFilter:
+              kind: "Component"
+              "metadata.annotations.selfservice/enabled": "true"
+            defaultKind: "Component"
         name:
           title: "Name"
           type: "string"
-          pattern: "^[a-z][a-z0-9-]{1,30}$"
-          description: "The namespace is sbx-<name>."
-        owner:
-          title: "Owner"
+          pattern: "^[A-Z][A-Z0-9_]{0,62}$"
+          description: "Upper case letters, digits and underscores."
+        value:
+          title: "Value"
           type: "string"
-          "ui:field": "OwnerPicker"
-          "ui:options":
-            catalogFilter:
-              kind: "Group"
-        days:
-          title: "Lives for"
-          type: "integer"
-          enum: [1, 2, 3, 5, 7, 14]
-          default: 3
-          description: "Days."
-        cpu:
-          title: "CPU quota (cores)"
-          type: "string"
-          enum: ["1", "2", "4"]
-          default: "2"
-        memory:
-          title: "Memory quota"
-          type: "string"
-          enum: ["1Gi", "2Gi", "4Gi"]
-          default: "2Gi"
+          maxLength: 300
   steps:
     - id: request
       name: The request
       action: debug:log
       input:
-        message: "${{ {'name': parameters.name, 'owner': parameters.owner, 'days': parameters.days, 'cpu': parameters.cpu, 'memory': parameters.memory} | dump }}"
+        message: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'name': parameters.name, 'value': parameters.value} | dump }}"
     - id: dispatch
       name: Run the request on GitHub and follow it
       action: selfservice:run
       input:
-        action: sandbox
-        params: "${{ {'name': parameters.name, 'owner': parameters.owner, 'days': parameters.days, 'cpu': parameters.cpu, 'memory': parameters.memory} }}"
+        action: env
+        params: "${{ {'service': (parameters.service | parseEntityRef | pick('name')), 'name': parameters.name, 'value': parameters.value} }}"
         requestedBy: "${{ user.entity.metadata.name if user.entity else 'the developer portal' }}"
   output:
     links:
@@ -63,7 +54,7 @@ spec:
       - title: The deployment in Argo CD
         url: ${{ steps['dispatch'].output.argoUrl }}
       - title: All requests
-        url: https://portal.localhost:7443/self-service
+        url: https://backstage-portal.localhost:7443/self-service
     text:
       - title: What happens next
         content: |

@@ -1,12 +1,12 @@
-name: portal-image
+name: backstage-portal-image
 
-# Builds the developer portal (the Backstage app in portal/) and publishes it to ghcr for amd64 and arm64.
+# Builds the developer portal (the Backstage app in backstage-portal/) and publishes it to ghcr for amd64 and arm64.
 on:
   push:
     branches: [main]
-    paths: ["portal/**", ".github/workflows/portal-image.yaml"]
+    paths: ["backstage-portal/**", ".github/workflows/backstage-portal-image.yaml"]
   pull_request:
-    paths: ["portal/**", ".github/workflows/portal-image.yaml"]
+    paths: ["backstage-portal/**", ".github/workflows/backstage-portal-image.yaml"]
 
 jobs:
   image:
@@ -16,14 +16,14 @@ jobs:
       packages: write
     defaults:
       run:
-        working-directory: portal
+        working-directory: backstage-portal
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: yarn
-          cache-dependency-path: portal/yarn.lock
+          cache-dependency-path: backstage-portal/yarn.lock
       - run: yarn install --immutable
       - run: yarn tsc
       - run: yarn build:backend
@@ -37,8 +37,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: portal
-          file: portal/packages/backend/Dockerfile
+          context: backstage-portal
+          file: backstage-portal/packages/backend/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' }}
           tags: ghcr.io/${{ github.repository_owner }}/backstage-portal:sha-${{ github.sha }}
