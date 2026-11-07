@@ -1,0 +1,2 @@
+172.19.0.3 - - [07/Nov/2026 14:16:15] "GET /api/prometheus/grafana/api/v1/rules HTTP/1.0" 401 -
+172.19.0.4 - - [07/Nov/2026 14:16:15] "GET /api/prometheus/grafana/api/v1/rules HTTP/1.0" 200 -

@@ -445,7 +445,7 @@ def portal_grafana_token():
 
 def give_viewer_access(present):
     """The RCA report viewer shows whether the alert of a report is still firing: its nginx asks Grafana for the state of the alert rules with
-    the token of a Viewer service account, from the Secret rca-viewer-grafana (a one-line nginx include). Needs Grafana to be up, so run
+    the token of a Viewer service account, from the Secret rca-viewer-grafana (a one-line nginx include that sets $grafana_auth). Needs Grafana to be up, so run
     `bootstrap.py --viewer-access` once it is if the first bootstrap was too early. Without the Secret the viewer still works and shows "unknown"."""
     if AGENT not in present:
         return
@@ -456,7 +456,7 @@ def give_viewer_access(present):
         return
     ensure_namespace(AGENT, "sre-agent")
     manifest = json.dumps({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "rca-viewer-grafana", "namespace": "sre-agent"}, "type": "Opaque",
-                           "stringData": {"grafana-auth.conf": f'proxy_set_header Authorization "Bearer {token}";\n'}})
+                           "stringData": {"grafana-auth.conf": f'set $grafana_auth "Bearer {token}";\n'}})
     kubectl(AGENT, "apply", "-f", "-", stdin=manifest)
     print("rca-viewer-grafana written in the observability cluster (read-only Grafana token for the report viewer)")
 
