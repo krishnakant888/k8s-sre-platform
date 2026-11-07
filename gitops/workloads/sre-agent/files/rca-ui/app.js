@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 
-  const state = { reports: [], filter: new Set(), query: "", current: null, loaded: false, liveTimer: null };
+  const state = { reports: [], filter: new Set(), query: "", current: null, loaded: false, liveTimer: null, live: {} };
   const meta = new Map(); // id -> report.json
 
   // ---- theme -------------------------------------------------------------------------------------------------
@@ -44,6 +44,15 @@
     }));
     state.reports = dirs.map((d) => meta.get(d)).sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id)) || b.id.localeCompare(a.id));
     state.loaded = true;
+    try {
+      const data = await getJson("/_status/rules");
+      for (const r of state.reports) {
+        if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
+        const s = statusFrom(data, r);
+        state.live[r.id] = s.state;
+        if (s.state === "resolved") saveResolved(r.id, (s.at || new Date()).toISOString());
+      }
+    } catch (_) { for (const r of state.reports) if (savedResolved(r.id)) state.live[r.id] = "resolved"; }
     renderChips();
     renderList();
   }
@@ -85,7 +94,9 @@
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       const top = el("div", "item-top");
       top.append(el("span", "item-title", r.alert || r.id));
-      if (level(r)) top.append(pill(level(r), level(r).toLowerCase()));
+      const done = state.live[r.id] === "resolved";
+      if (done) b.classList.add("resolved");
+      if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
       b.append(top, el("div", "item-sub", r.service || r.id));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
@@ -181,6 +192,10 @@
     if (saved) return { state: "resolved", at: new Date(saved), cached: true };
     let data;
     try { data = await getJson("/_status/rules"); } catch (_) { return { state: "unknown", why: "Grafana could not be asked" }; }
+    return statusFrom(data, r);
+  }
+
+  function statusFrom(data, r) {
     const rules = ((data && data.data && data.data.groups) || []).flatMap((g) => g.rules || []).filter((x) => x.name === r.alert);
     if (!rules.length) return { state: "unknown", why: "no alert rule named " + r.alert };
     const evaluated = new Date(rules.map((x) => x.lastEvaluation).filter(Boolean).sort().pop() || NaN);
