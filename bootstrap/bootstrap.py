@@ -458,6 +458,8 @@ def give_viewer_access(present):
                            "stringData": {"grafana-auth.conf": f'set $grafana_auth "Bearer {token}";\n'}})
     kubectl(AGENT, "apply", "-f", "-", stdin=manifest)
     print("rca-viewer-grafana written in the observability cluster (read-only Grafana token for the report viewer)")
+    # nginx reads the token only when it starts: a viewer that is already running would keep answering without it
+    kubectl(AGENT, "-n", "sre-agent", "rollout", "restart", "deploy/rca-viewer", check=False)
 
 
 def give_portal_access(present):
