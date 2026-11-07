@@ -1,5 +1,5 @@
 # Failure drills asked for in the developer portal: each file in the path is a broken workload that the alerts and the SRE agent should catch.
-# Empty apart from the namespace until someone asks for one.
+# Empty until someone asks for one. The namespace is created by the sync (the project may not carry a Namespace object).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -22,3 +22,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

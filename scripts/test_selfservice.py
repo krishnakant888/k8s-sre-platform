@@ -149,7 +149,6 @@ def test_drill(repo):
     for s in ss.SCENARIOS:
         r = run("drill", scenario=s, minutes=30)
         assert (repo / f"gitops/fault-drills/active/{s}.yaml").exists()
-    assert (repo / "gitops/fault-drills/active/00-namespace.yaml").exists()
     with pytest.raises(ss.Refused):
         run("drill", scenario="crashloop", minutes=30)
     with pytest.raises(ss.Refused):
