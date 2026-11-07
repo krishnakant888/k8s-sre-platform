@@ -1,0 +1,23 @@
+# The developer portal (Backstage) in the gitops cluster: the catalog, the new-service template and the live views.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitops-portal
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: hub
+  source:
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+    targetRevision: main
+    path: gitops/backstage
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

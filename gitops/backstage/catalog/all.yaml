@@ -1,0 +1,15 @@
+# The software catalog of the platform: what runs, who owns it, where it runs and how to look at it.
+# Backstage reads this file (mounted from a ConfigMap, see ../kustomization.yaml) and the files it points to.
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sre-platform
+  description: Everything the k8s-sre-platform repo deploys
+spec:
+  targets:
+    - ./org.yaml
+    - ./systems.yaml
+    - ./resources.yaml
+    - ./workloads.yaml
+    - ./platform.yaml
+    - ./apis.yaml

@@ -34,11 +34,14 @@ Use `--only platform`, `--only observability` or `--only gitops` to create or de
 |---|---|---|---|
 | Argo CD (deploys the other two) | gitops | https://argocd.localhost:7443 | `admin`, own login |
 | Grafana | observability | https://grafana.localhost:9443 | `admin`, own login |
+| Developer portal (Backstage) | gitops | https://portal.localhost:7443 | guest sign-in, read-only |
 | Argo Workflows UI | observability | https://workflows.localhost:9443 | gateway basic auth |
 | RCA reports | observability | https://reports.localhost:9443 | gateway basic auth |
 | Sample API | platform | https://orders.localhost:8443/orders | none |
 
 Each URL also works over plain http on the `…080` port of its cluster (7080, 9080, 8080). The HTTPS certificate is issued by cert-manager and self-signed, so browsers warn once. Argo CD and Grafana have their own logins. The Workflows UI and the RCA viewer have none, so the gateway asks for a basic-auth login (user `admin`, a random password created by `bootstrap.py` in the `gateway-login` Secret, hashed into `gateway-basic-auth` for Traefik and printed at the end): a local stopgap, SSO (OIDC) is the production answer.
+
+The developer portal is a catalog of everything here, a live view of pods, Argo CD and alerts per component, and a template for a new service: see [docs/portal.md](docs/portal.md).
 
 Mimir, Loki, Tempo and Alloy are not published on a gateway, because they have no login of their own. Query them in Grafana (Explore, dashboards), or from an operator's machine with a port-forward:
 

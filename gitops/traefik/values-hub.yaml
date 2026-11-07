@@ -6,6 +6,6 @@ gateway:
         from: Selector   # only the namespaces that publish a route
         selector:
           matchExpressions:
-            - {key: kubernetes.io/metadata.name, operator: In, values: [argocd]}
+            - {key: kubernetes.io/metadata.name, operator: In, values: [argocd, portal]}
     websecure:
       namespacePolicy: *routes

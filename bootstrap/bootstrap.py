@@ -23,6 +23,7 @@ External Secrets.
 """
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -32,6 +33,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -124,6 +126,39 @@ metadata:
   name: sre-agent-reader-token
   namespace: kube-system
   annotations: {kubernetes.io/service-account.name: sre-agent-reader}
+type: kubernetes.io/service-account-token
+"""
+
+# what the developer portal (Backstage) may read in every cluster: workloads, pods and routes, no secrets, no writes
+PORTAL_ACCESS = """\
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: portal-reader, namespace: kube-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: portal-read}
+rules:
+  - {apiGroups: [""], resources: [pods, services, configmaps, limitranges, resourcequotas, replicationcontrollers, namespaces, nodes], verbs: [get, list, watch]}
+  - {apiGroups: [apps], resources: [deployments, replicasets, statefulsets, daemonsets], verbs: [get, list, watch]}
+  - {apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch]}
+  - {apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch]}
+  - {apiGroups: [networking.k8s.io], resources: [ingresses], verbs: [get, list, watch]}
+  - {apiGroups: [gateway.networking.k8s.io], resources: [gateways, httproutes], verbs: [get, list, watch]}
+  - {apiGroups: [metrics.k8s.io], resources: [pods], verbs: [get, list]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: portal-read}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: portal-read}
+subjects: [{kind: ServiceAccount, name: portal-reader, namespace: kube-system}]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: portal-reader-token
+  namespace: kube-system
+  annotations: {kubernetes.io/service-account.name: portal-reader}
 type: kubernetes.io/service-account-token
 """
 
@@ -359,6 +394,76 @@ def wire(clusters_present):
     for name in [HUB, *SPOKES]:
         if name in clusters_present:
             kubectl(HUB, "apply", "-f", str(ROOT_APPS[name]))
+    give_portal_access(clusters_present)
+
+
+@contextlib.contextmanager
+def port_forward(cluster, ns, svc, remote_port, local_port):
+    """kubectl port-forward for the length of a with block (the API of Argo CD or Grafana, called from this machine)."""
+    p = subprocess.Popen(["kubectl", "--context", context(cluster), "-n", ns, "port-forward", f"svc/{svc}", f"{local_port}:{remote_port}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(3)
+        yield f"http://127.0.0.1:{local_port}"
+    finally:
+        p.terminate()
+
+
+def http_json(url, body=None, user=None, token=None, method=None):
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method or ("POST" if body is not None else "GET"))
+    req.add_header("Content-Type", "application/json")
+    if user:
+        req.add_header("Authorization", "Basic " + base64.b64encode(f"{user[0]}:{user[1]}".encode()).decode())
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def portal_argocd_token():
+    """An API key of the read-only `portal` account, which gitops/hub/argocd/values.yaml declares (the default policy is read only)."""
+    pw = argocd_password()
+    with port_forward(HUB, ARGOCD_NS, "argocd-server", 80, 18081) as base:
+        session = http_json(base + "/api/v1/session", {"username": "admin", "password": pw})["token"]
+        return http_json(base + "/api/v1/account/portal/token", {"name": "portal"}, token=session)["token"]
+
+
+def portal_grafana_token():
+    """A token of a Viewer service account in Grafana, for the portal's alerts card. Needs Grafana, which Argo CD deploys later."""
+    pw = read_secret("observability", "observability", "grafana-admin", "admin-password")
+    with port_forward("observability", "observability", "grafana", 80, 18082) as base:
+        admin = ("admin", pw)
+        found = http_json(base + "/api/serviceaccounts/search?query=portal", user=admin)["serviceAccounts"]
+        sa = next((s for s in found if s["name"] == "portal"), None) or http_json(base + "/api/serviceaccounts", {"name": "portal", "role": "Viewer"}, user=admin)
+        return http_json(base + f"/api/serviceaccounts/{sa['id']}/tokens", {"name": f"portal-{int(time.time())}"}, user=admin)["key"]
+
+
+def give_portal_access(present):
+    """The developer portal (Backstage, in the hub) reads every cluster, Argo CD and Grafana with read-only tokens, which go
+    into its Secret portal-secrets. Safe to run again: the database password and the backend secret are kept. The Grafana
+    token needs Grafana to be up, so after the first sync run `bootstrap.py --portal-access` again if it was not ready."""
+    if HUB not in present:
+        return
+    ensure_namespace(HUB, "portal")
+    old = {k: read_secret(HUB, "portal", "portal-secrets", k) for k in ("POSTGRES_PASSWORD", "BACKEND_SECRET", "GRAFANA_TOKEN", "ARGOCD_TOKEN")}
+    data = {"POSTGRES_PASSWORD": old["POSTGRES_PASSWORD"] or secrets.token_urlsafe(18), "BACKEND_SECRET": old["BACKEND_SECRET"] or secrets.token_urlsafe(24)}
+    for c in (HUB, *SPOKES):
+        if c in present:
+            kubectl(c, "apply", "-f", "-", stdin=PORTAL_ACCESS)
+            data[f"K8S_TOKEN_{c.upper()}"] = wait_token(c, "kube-system", "portal-reader-token")[0]
+        else:
+            data[f"K8S_TOKEN_{c.upper()}"] = "not-created"
+    # the RCA report viewer is behind the gateway's basic-auth login; the portal's backend sends it
+    rca_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_LOGIN_SECRET, "password") if "observability" in present else ""
+    data["RCA_BASIC_AUTH"] = "Basic " + base64.b64encode(f"admin:{rca_pw}".encode()).decode() if rca_pw else "not-created"
+    for key, fn, where in (("ARGOCD_TOKEN", portal_argocd_token, "Argo CD"), ("GRAFANA_TOKEN", portal_grafana_token, "Grafana")):
+        try:
+            data[key] = fn()
+        except Exception as exc:  # noqa: BLE001
+            data[key] = old[key] or "not-created"
+            print(f"portal: no {key} yet ({type(exc).__name__}: {where} is not ready); run `python3 bootstrap/bootstrap.py --portal-access` once it is")
+    manifest = json.dumps({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "portal-secrets", "namespace": "portal"}, "type": "Opaque", "stringData": data})
+    kubectl(HUB, "apply", "-f", "-", stdin=manifest)
+    print("portal-secrets written in the gitops cluster (read-only tokens for the portal)")
 
 
 def build(cluster):
@@ -389,6 +494,7 @@ def summary(clusters, first_run=True):
 
     if HUB in clusters:
         show("Argo CD", "argocd.localhost", (7443, 7080), "admin / " + argocd_password())
+        show("Developer portal (Backstage)", "portal.localhost", (7443, 7080), "guest sign-in, read-only")
     if "observability" in clusters:
         gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_LOGIN_SECRET, "password") or "(secret not found)"
         gateway_login = f"admin / {gateway_pw}   (gateway basic auth)"
@@ -416,11 +522,16 @@ def main():
     ap.add_argument("--destroy", action="store_true")
     ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
     ap.add_argument("--credentials", action="store_true", help="print the URLs and logins of the clusters that exist, and exit")
+    ap.add_argument("--portal-access", action="store_true", help="(re)create the read-only tokens of the developer portal, and exit (run it once Grafana is up)")
     args = ap.parse_args()
 
     clusters = [args.only] if args.only else list(CLUSTERS)
     if args.credentials:
         summary([c for c in clusters if cluster_exists(c)], first_run=False)
+        return
+
+    if args.portal_access:
+        give_portal_access({c for c in CLUSTERS if cluster_exists(c)})
         return
 
     preflight()

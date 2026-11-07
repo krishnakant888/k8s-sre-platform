@@ -1,0 +1,20 @@
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  description: "Owns the platform: the three clusters, the gateway, observability and the SRE agent"
+spec:
+  type: team
+  profile:
+    displayName: Platform team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: krishnakant888
+spec:
+  profile:
+    displayName: Krishna Kant
+    email: krishnakant888@gmail.com
+  memberOf: [platform-team]

@@ -1,0 +1,48 @@
+# The three clusters. A component's `dependsOn` points at the cluster it runs in.
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: cluster-gitops
+  description: Runs Argo CD (the hub that deploys the other two clusters), its gateway and this portal
+  links:
+    - {url: "https://argocd.localhost:7443", title: Argo CD, icon: dashboard}
+spec:
+  type: kubernetes-cluster
+  owner: group:platform-team
+  system: gitops-and-gateway
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: cluster-observability
+  description: Mimir, Loki, Tempo, Grafana, alerting, the SRE agent, Argo Workflows and the RCA report viewer
+  links:
+    - {url: "https://grafana.localhost:9443", title: Grafana, icon: dashboard}
+    - {url: "https://workflows.localhost:9443", title: Argo Workflows, icon: dashboard}
+spec:
+  type: kubernetes-cluster
+  owner: group:platform-team
+  system: observability
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: cluster-platform
+  description: "The production side: the sample applications, Kyverno policy and the collectors that ship telemetry out"
+  links:
+    - {url: "https://orders.localhost:8443/orders", title: Sample API, icon: web}
+spec:
+  type: kubernetes-cluster
+  owner: group:platform-team
+  system: workloads
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: postgres-portal
+  description: The portal's own database
+spec:
+  type: database
+  owner: group:platform-team
+  system: developer-portal
+  dependsOn: [resource:cluster-gitops]
