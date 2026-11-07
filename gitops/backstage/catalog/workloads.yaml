@@ -10,6 +10,7 @@ metadata:
   description: Sample orders API with an SLO, traces, structured logs and fault injection for the drills
   tags: [python, fastapi, slo]
   annotations:
+    selfservice/enabled: "true"   # the self-service templates offer it (scale, resources, image, alerts ...)
     github.com/project-slug: krishnakant888/k8s-sre-platform
     backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/apps/orders-api
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=orders-api
@@ -56,6 +57,7 @@ metadata:
   description: Stateless nginx frontend that logs one JSON line per request
   tags: [nginx]
   annotations:
+    selfservice/enabled: "true"   # the self-service templates offer it (scale, resources, image, alerts ...)
     github.com/project-slug: krishnakant888/k8s-sre-platform
     backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/workloads/frontend
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=frontend
@@ -78,6 +80,7 @@ metadata:
   description: "A deliberately plain web app with no metrics endpoint: everything about it comes from the platform (the observability coverage test)"
   tags: [nginx, coverage-test]
   annotations:
+    selfservice/enabled: "true"   # the self-service templates offer it (scale, resources, image, alerts ...)
     github.com/project-slug: krishnakant888/k8s-sre-platform
     backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/workloads/dummy
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=dummy-shop

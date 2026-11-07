@@ -234,3 +234,18 @@ spec:
   owner: group:platform-team
   system: developer-portal
   dependsOn: [resource:postgres-portal, resource:cluster-gitops]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: platform-docs
+  description: The documentation of the platform (architecture, self-service, portal, secrets, runbooks), built from docs/ of the repo
+  tags: [docs]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/techdocs-ref: url:https://github.com/krishnakant888/k8s-sre-platform
+spec:
+  type: documentation
+  lifecycle: production
+  owner: group:platform-team
+  system: developer-portal

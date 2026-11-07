@@ -28,6 +28,19 @@ The portal starts the workflow with the `github:actions:dispatch` action. The wo
 
 The script edits the YAML as text so comments and the flow style of the repo stay as written, then parses the file before and after and refuses the change if anything other than the asked-for field moved. `scripts/test_selfservice.py` runs every action on a copy of the real manifests.
 
+## In the portal
+
+Create > pick a template. The requests above are the templates *Scale a service*, *Change the resources of a service*, *Set an environment variable*, *Deploy a new image tag*, *Roll back a service*, *Add a host name to a service*, *Promote a sandbox service to demo*, *Request an alert for a service*, *Request a Grafana dashboard for a service*, *Request a short-lived sandbox namespace*, *Request read-only access to a namespace* and *Run a failure drill*. *New service on the platform* opens its own pull request with the whole service (manifests, Argo CD application, catalog entry in `gitops/backstage/catalog/services/`, which the portal reads from GitHub, so the service shows up in the catalog after the merge).
+
+Services offered in the pickers are the components annotated `selfservice/enabled: "true"` (orders-api, frontend, dummy-shop and the services created from the template).
+
+On a component's page: **Resources** (CPU and memory against request and limit, with hints), **Scorecard** (eight checks of what the platform expects of a service), Argo CD status, firing alerts and RCA reports. The documentation of the platform is in the catalog as `platform-docs` (TechDocs, built from `docs/` with `mkdocs.yml`).
+
+## Not done
+
+- **Re-run an investigation from the portal**: the SRE agent only starts investigations from an alert; a manual one needs an endpoint on the agent and a decision on what it concludes when nothing is wrong.
+- **Real sign-in** (GitHub or OIDC instead of guest): needs a GitHub OAuth app (client id and secret) that only an owner can create, the `auth-backend-module-github-provider` in the image, and a sign-in page with the provider. Until then every request is made as `guest`.
+
 ## Setup (once)
 
 1. In the repo: Settings > Actions > General > **Allow GitHub Actions to create and approve pull requests**.
