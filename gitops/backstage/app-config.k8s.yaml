@@ -92,6 +92,16 @@ proxy:
       target: http://argocd-server.argocd.svc.cluster.local
       headers:
         Authorization: Bearer ${ARGOCD_TOKEN}
+    # GitHub API for the Self-service page (runs of the selfservice workflow and their pull requests). GET only: the token also has write rights
+    # for the templates, and the proxy must not hand them to the browser.
+    /github:
+      target: https://api.github.com
+      allowedMethods: ['GET']
+      changeOrigin: true
+      headers:
+        Authorization: Bearer ${GITHUB_TOKEN}
+        Accept: application/vnd.github+json
+        X-GitHub-Api-Version: '2022-11-28'
     /grafana:
       target: https://observability-control-plane:30443
       headers:
