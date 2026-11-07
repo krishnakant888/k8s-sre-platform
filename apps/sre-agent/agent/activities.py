@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from agent import config, llm, rca
+from agent import config, insights, llm, rca
 from agent.models import RcaReport
 
 log = logging.getLogger("sre-agent")
@@ -27,6 +27,11 @@ def analyze(alert: dict, ctx: dict) -> dict:
         except Exception as exc:
             log.warning("llm analysis failed, keeping the rule based report: %s", exc)
             report.contributing_factors.append(f"LLM analysis failed ({type(exc).__name__}); this report is rule based")
+    try:
+        report.insights = insights.build(report, ctx)
+        report.rca_markdown = report.rca_markdown.rstrip("\n") + insights.section(report.insights)
+    except Exception as exc:  # noqa: BLE001  the insights are extra: never lose the report because of them
+        log.warning("insights failed: %s", exc)
     report.alert_details = alert_details(alert)
     report.incident = incident_details(report.mode)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + incident_section(report.incident)

@@ -104,6 +104,8 @@
     if (/^Ingress/.test(alert)) impacted = new Set(["users"]);   // slow or failing answers reach the users of that service only
     if (!id) id = "svc";
     if (!impacted) impacted = new Set(IMPACT[id] || []);
+    const ins = r.insights || {};
+    if (id !== "users" && (ins.blast_radius || []).some((x) => /users|frontend|URL/.test(x))) impacted.add("users");
     impacted.delete(id);
     // the namespace the alert reported, so the workload is named as it is in the cluster
     const ns = (r.alert_details && r.alert_details.namespace) || "";
@@ -138,6 +140,35 @@
       }
     }
     return marks;
+  }
+
+  // what the rules worked out (report.insights): tags on the problem component and the chain from the entry point to it
+  function tag(svg, x, y, text, kind) {
+    const w = Math.round(text.length * 6.4 + 18);
+    const g = s("g", { class: "tag " + kind });
+    g.append(s("rect", { x: x - w, y, width: w, height: 20, rx: 10 }));
+    g.append(s("text", { x: x - w / 2, y: y + 14, "text-anchor": "middle" }, text));
+    svg.append(g);
+  }
+
+  function overlays(svg, ins, a, past) {
+    const [, , x, y, w, h] = NODES[a.root];
+    let ty = y + h + 6;
+    if (ins.change && ins.change.likely) { tag(svg, x + w, ty, "change " + clip(ins.change.revision || "", 8) + ", " + ins.change.minutes_before_alert + " min before", "chg"); ty += 24; }
+    if (ins.recurrence && ins.recurrence.times_before >= 1) { tag(svg, x + w, ty, "seen " + (ins.recurrence.times_before + 1) + "x in " + ins.recurrence.window_days + " days", "rec"); ty += 24; }
+    if (ins.confidence && ins.confidence.level === "low") tag(svg, x + w, ty, "low confidence", "low");
+    // the chain: where a request goes, with the hop that has the problem in red
+    const hops = ins.chain.slice(0, 5);
+    const gap = 22, bw = Math.floor((640 - gap * (hops.length - 1)) / hops.length);
+    svg.append(s("text", { x: 20, y: 524, class: "chain-t" }, past ? "Path to the problem (was)" : "Path to the problem"));
+    hops.forEach((hop, i) => {
+      const hx = 20 + i * (bw + gap);
+      const g = s("g", { class: "hop" + (hop.problem ? " bad" : "") });
+      g.append(s("rect", { x: hx, y: 534, width: bw, height: 34, rx: 9 }));
+      g.append(s("text", { x: hx + bw / 2, y: 555, "text-anchor": "middle" }, clip(hop.hop, Math.floor(bw / 7))));
+      svg.append(g);
+      if (i < hops.length - 1) svg.append(s("path", { d: `M${hx + bw + 4},551 L${hx + bw + gap - 4},551`, class: "edge idle", "marker-end": "url(#ah-idle)" }));
+    });
   }
 
   // live: "firing", "pending", "resolved" or "unknown" (from Grafana); a resolved alert turns everything green, the rest draws what the report found
@@ -191,6 +222,7 @@
       if (sub) g.append(s("text", { x: x + 32, y: y + h / 2 + 15, class: "sub" }, st === "bad" ? (past ? "problem was here" : "problem here") : st === "warn" ? (past ? "was affected" : "affected") : recovered && id === a.root ? "recovered" : sub));
       svg.append(g);
     }
+    if (!recovered && r.insights && r.insights.chain) overlays(svg, r.insights, a, past);
     return { svg, analysis: a, nameOf };
   }
 

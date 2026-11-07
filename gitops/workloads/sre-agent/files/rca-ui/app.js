@@ -247,6 +247,24 @@
     run();
   }
 
+  // what the rules worked out beyond the cause: blast radius, change, confidence, competing causes, chain, trend, recurrence, related alerts
+  function renderInsights(r) {
+    const card = document.getElementById("insights-card"), body = document.getElementById("insights-body"), i = r.insights;
+    body.replaceChildren();
+    card.hidden = !i || !i.chain;
+    if (card.hidden) return;
+    const block = (title, items) => { if (!items || !items.length) return; const d = el("div", "ins"); d.append(el("b", "", title)); const ul = el("ul"); for (const t of items) ul.append(el("li", "", t)); d.append(ul); body.append(d); };
+    block("What else is affected", i.blast_radius);
+    block("Was it a change?", [i.change.note]);
+    block("How sure is this", [words(i.confidence.level) + " confidence, evidence from " + (i.confidence.agreeing_sources.join(", ") || "nothing usable"), ...i.confidence.check_next]);
+    block("Other possible causes", (i.alternatives || []).map((a) => (a.supported ? "Seen: " : "Not seen: ") + a.cause + " (" + a.how_to_tell + ")"));
+    block("Dependency chain", [i.chain.map((h) => h.hop + (h.problem ? "  <- problem here" : "")).join("  >  ")]);
+    block("How long and which way", ["Unhealthy for about " + i.trend.unhealthy_minutes + " min" + (i.trend.still_ongoing ? ", still ongoing" : ", no longer ongoing"), ...i.trend.lines]);
+    block("Seen before", [i.recurrence.note]);
+    block("Related alerts in the same window", (i.related || []).map((x) => x.alert + " on " + x.service + " (" + x.priority + "), " + Math.abs(x.minutes_apart) + " min " + (x.minutes_apart > 0 ? "after" : "before")));
+    block("Confirming the fix", [i.verification.resolves_when]);
+  }
+
   // the alert that started the investigation, as the agent recorded it (reports written before this have none)
   function renderAlertDetails(r) {
     const card = $("alert-card"), body = $("alert-body");
@@ -338,6 +356,7 @@
     body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
     enhance(body);
     buildToc(body);
+    renderInsights(r);
     renderAlertDetails(r);
     drawArchitecture(r, "unknown");
     startLive(r, badge, stamp);
