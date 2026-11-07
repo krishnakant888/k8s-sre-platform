@@ -2,7 +2,8 @@ name: selfservice
 
 # Runs the changes asked for in the developer portal (scripts/selfservice.py) and opens a pull request with the result. The portal starts it with
 # the `github:actions:dispatch` scaffolder action; the schedule removes sandboxes, access and drills whose time is up.
-# Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+# Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests", and Settings > General > "Allow auto-merge".
+# Low-risk requests (drill, sandbox, expire) are merged by the workflow itself once the lint checks pass; everything else waits for a person to review and merge.
 
 run-name: "selfservice: ${{ inputs.action || 'expire' }} (requested by ${{ inputs.requested_by || 'the schedule' }})"
 
@@ -32,6 +33,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write   # to start the lint checks on the branch of the pull request
 
 jobs:
   change:
@@ -65,6 +67,7 @@ jobs:
           files=$(python3 -c "import json,os; print(' '.join(f for f in json.load(open(os.environ['RUNNER_TEMP']+'/result.json'))['files'] if os.path.exists(f)))")
           [ -z "$files" ] || yamllint -c .yamllint.yaml $files
       - name: Open the pull request
+        id: pr
         if: steps.change.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,7 +78,9 @@ jobs:
           import json, os, subprocess
           r = json.load(open(os.environ["RUNNER_TEMP"] + "/result.json"))
           run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-          body = f"{r['body']}\n\n---\nRequested by {os.environ['REQUESTED_BY']} through the `selfservice` workflow ([run]({run_url})). Review the diff, then merge: Argo CD applies it."
+          auto = os.environ["ACTION"] in ("drill", "sandbox", "expire")
+          closing = "This kind of request is merged automatically once the checks pass." if auto else "Review the diff, then merge: Argo CD applies it."
+          body = f"{r['body']}\n\n---\nRequested by {os.environ['REQUESTED_BY']} through the `selfservice` workflow ([run]({run_url})). {closing}"
           def sh(*a): subprocess.run(a, check=True)
           if os.environ.get("ACTION") == "expire" or r["title"].startswith("remove expired"):
               open_prs = subprocess.run(["gh", "pr", "list", "--state", "open", "--search", "remove expired self-service in:title", "--json", "number"], capture_output=True, text=True, check=True).stdout
@@ -88,5 +93,34 @@ jobs:
           sh("git", "add", "-A", "--", *r["files"])
           sh("git", "commit", "-m", r["title"])
           sh("git", "push", "origin", r["branch"])
-          sh("gh", "pr", "create", "--base", "main", "--head", r["branch"], "--title", r["title"], "--body", body)
+          url = subprocess.run(["gh", "pr", "create", "--base", "main", "--head", r["branch"], "--title", r["title"], "--body", body], check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
+          print("pull request:", url)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"url={url}\nbranch={r['branch']}\n")
           EOF
+      - name: Run the checks on the pull request
+        id: checks
+        if: steps.pr.outputs.url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          # lint runs on pull_request events, which the built-in token cannot start: start it by hand on the branch, so the checks show on the pull request
+          gh workflow run lint.yaml --ref "$BRANCH"
+          id=""
+          for i in $(seq 1 30); do
+            id=$(gh run list --workflow lint.yaml --branch "$BRANCH" --event workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')
+            [ -n "$id" ] && break
+            sleep 3
+          done
+          [ -n "$id" ] || { echo "::error title=Checks did not start::the lint workflow did not start on $BRANCH"; exit 1; }
+          echo "lint run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+          gh run watch "$id" --exit-status
+      - name: Merge the pull request (drill, sandbox, expire)
+        if: steps.checks.outcome == 'success' && contains(fromJSON('["drill","sandbox","expire"]'), inputs.action || 'expire')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.url }}
+        run: |
+          # the checks passed: ask for auto-merge, and if GitHub says it is mergeable already, merge now
+          gh pr merge "$PR" --squash --auto || gh pr merge "$PR" --squash

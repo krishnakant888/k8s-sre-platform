@@ -2,6 +2,7 @@ name: lint
 
 on:
   pull_request:
+  workflow_dispatch:   # the selfservice workflow starts it on the branch of a pull request it opened (a pull request opened with the built-in token does not trigger pull_request runs)
   push:
     branches: [main]
 
