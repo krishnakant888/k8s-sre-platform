@@ -164,3 +164,5 @@ button, input { font: inherit; color: inherit; }
 .arch-note b { color: var(--text); }
 .md > p.meta-line { display: none; }
 @media print { .arch-wrap { overflow: visible; } }
+
+.pills .stamp { align-self: center; font-size: 12.5px; }

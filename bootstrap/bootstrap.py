@@ -395,6 +395,7 @@ def wire(clusters_present):
         if name in clusters_present:
             kubectl(HUB, "apply", "-f", str(ROOT_APPS[name]))
     give_portal_access(clusters_present)
+    give_viewer_access(clusters_present)
 
 
 @contextlib.contextmanager
@@ -427,14 +428,37 @@ def portal_argocd_token():
         return http_json(base + "/api/v1/account/portal/token", {"name": "portal"}, token=session)["token"]
 
 
-def portal_grafana_token():
-    """A token of a Viewer service account in Grafana, for the portal's alerts card. Needs Grafana, which Argo CD deploys later."""
+def grafana_viewer_token(name):
+    """A token of a Viewer service account of that name in Grafana. Needs Grafana, which Argo CD deploys later."""
     pw = read_secret("observability", "observability", "grafana-admin", "admin-password")
     with port_forward("observability", "observability", "grafana", 80, 18082) as base:
         admin = ("admin", pw)
-        found = http_json(base + "/api/serviceaccounts/search?query=portal", user=admin)["serviceAccounts"]
-        sa = next((s for s in found if s["name"] == "portal"), None) or http_json(base + "/api/serviceaccounts", {"name": "portal", "role": "Viewer"}, user=admin)
-        return http_json(base + f"/api/serviceaccounts/{sa['id']}/tokens", {"name": f"portal-{int(time.time())}"}, user=admin)["key"]
+        found = http_json(base + f"/api/serviceaccounts/search?query={name}", user=admin)["serviceAccounts"]
+        sa = next((s for s in found if s["name"] == name), None) or http_json(base + "/api/serviceaccounts", {"name": name, "role": "Viewer"}, user=admin)
+        return http_json(base + f"/api/serviceaccounts/{sa['id']}/tokens", {"name": f"{name}-{int(time.time())}"}, user=admin)["key"]
+
+
+def portal_grafana_token():
+    """The portal's alerts card."""
+    return grafana_viewer_token("portal")
+
+
+def give_viewer_access(present):
+    """The RCA report viewer shows whether the alert of a report is still firing: its nginx asks Grafana for the state of the alert rules with
+    the token of a Viewer service account, from the Secret rca-viewer-grafana (a one-line nginx include). Needs Grafana to be up, so run
+    `bootstrap.py --viewer-access` once it is if the first bootstrap was too early. Without the Secret the viewer still works and shows "unknown"."""
+    if AGENT not in present:
+        return
+    try:
+        token = grafana_viewer_token("rca-viewer")
+    except Exception as exc:  # noqa: BLE001
+        print(f"viewer: no Grafana token yet ({type(exc).__name__}: Grafana is not ready); run `python3 bootstrap/bootstrap.py --viewer-access` once it is")
+        return
+    ensure_namespace(AGENT, "sre-agent")
+    manifest = json.dumps({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "rca-viewer-grafana", "namespace": "sre-agent"}, "type": "Opaque",
+                           "stringData": {"grafana-auth.conf": f'proxy_set_header Authorization "Bearer {token}";\n'}})
+    kubectl(AGENT, "apply", "-f", "-", stdin=manifest)
+    print("rca-viewer-grafana written in the observability cluster (read-only Grafana token for the report viewer)")
 
 
 def give_portal_access(present):
@@ -522,6 +546,7 @@ def main():
     ap.add_argument("--destroy", action="store_true")
     ap.add_argument("--only", choices=list(CLUSTERS), help="act on one cluster instead of all three")
     ap.add_argument("--credentials", action="store_true", help="print the URLs and logins of the clusters that exist, and exit")
+    ap.add_argument("--viewer-access", action="store_true", help="(re)create the read-only Grafana token of the RCA report viewer, and exit (run it once Grafana is up)")
     ap.add_argument("--portal-access", action="store_true", help="(re)create the read-only tokens of the developer portal, and exit (run it once Grafana is up)")
     args = ap.parse_args()
 
@@ -530,6 +555,9 @@ def main():
         summary([c for c in clusters if cluster_exists(c)], first_run=False)
         return
 
+    if args.viewer_access:
+        give_viewer_access({c for c in CLUSTERS if cluster_exists(c)})
+        return
     if args.portal_access:
         give_portal_access({c for c in CLUSTERS if cluster_exists(c)})
         return

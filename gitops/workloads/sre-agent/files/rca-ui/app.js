@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 
-  const state = { reports: [], filter: new Set(), query: "", current: null, loaded: false };
+  const state = { reports: [], filter: new Set(), query: "", current: null, loaded: false, liveTimer: null };
   const meta = new Map(); // id -> report.json
 
   // ---- theme -------------------------------------------------------------------------------------------------
@@ -169,15 +169,75 @@
     heads.forEach((h) => obs.observe(h));
   }
 
-  function drawArchitecture(r) {
-    const { svg, analysis, nameOf } = RcaDiagram.draw(r);
+  // ---- live status: is the alert of this report still firing? --------------------------------------------------
+  // One request to /_status/rules (Grafana's rule states, read-only) matches the report to an alert instance by the alert name and the service.
+  // A resolved report is remembered in this browser and not asked about again: if the problem comes back, the agent writes a new report.
+  const RESOLVED_KEY = (id) => "rca-resolved:" + id;
+  function savedResolved(id) { try { return localStorage.getItem(RESOLVED_KEY(id)); } catch (_) { return null; } }
+  function saveResolved(id, at) { try { localStorage.setItem(RESOLVED_KEY(id), at); } catch (_) { /* ignore */ } }
+
+  async function liveStatus(r) {
+    const saved = savedResolved(r.id);
+    if (saved) return { state: "resolved", at: new Date(saved), cached: true };
+    let data;
+    try { data = await getJson("/_status/rules"); } catch (_) { return { state: "unknown", why: "Grafana could not be asked" }; }
+    const rules = ((data && data.data && data.data.groups) || []).flatMap((g) => g.rules || []).filter((x) => x.name === r.alert);
+    if (!rules.length) return { state: "unknown", why: "no alert rule named " + r.alert };
+    const evaluated = new Date(rules.map((x) => x.lastEvaluation).filter(Boolean).sort().pop() || NaN);
+    if (rules.some((x) => x.health === "error")) return { state: "unknown", why: "Grafana cannot evaluate the rule", evaluated };
+    const svc = r.service || "";
+    const mine = (a) => !svc || Object.values(a.labels || {}).some((v) => v === svc || String(v).startsWith(svc + "-"));
+    const inst = rules.flatMap((x) => x.alerts || []).filter(mine);
+    const firing = inst.filter((a) => /^(alerting|firing)$/i.test(a.state));
+    if (firing.length) return { state: "firing", since: new Date(firing.map((a) => a.activeAt).sort()[0]), evaluated };
+    if (inst.some((a) => /^pending$/i.test(a.state))) return { state: "pending", evaluated };
+    if (inst.some((a) => /^(nodata|error)$/i.test(a.state))) return { state: "unknown", why: "Grafana reports no data for the rule", evaluated };
+    return { state: "resolved", at: isNaN(evaluated) ? new Date() : evaluated, evaluated };
+  }
+
+  const clock = (d) => d.toLocaleTimeString(undefined, { timeStyle: "medium" });
+  function paintLive(r, live, badge, stamp) {
+    const cls = { firing: "p1 live", pending: "p3", resolved: "ok", unknown: "soft" }[live.state];
+    const text = {
+      firing: `Firing now${live.since && !isNaN(live.since) ? " · since " + live.since.toLocaleTimeString(undefined, { timeStyle: "short" }) : ""}`,
+      pending: "Pending: the condition is true, waiting out the alert's time",
+      resolved: `Resolved · ${live.cached ? "seen clear at " : "clear at "}${live.at ? live.at.toLocaleTimeString(undefined, { timeStyle: "short" }) : ""}`,
+      unknown: "Status unknown" + (live.why ? " · " + live.why : ""),
+    }[live.state];
+    badge.className = "pill " + cls;
+    badge.replaceChildren(el("span", "dot"), document.createTextNode(text));
+    badge.title = "Asked Grafana at " + clock(new Date()) + ". The report itself is a snapshot from when it was written.";
+    const asked = live.cached ? "Resolved earlier, not checked again" : "Last updated " + clock(new Date());
+    const evald = live.evaluated && !isNaN(live.evaluated) ? " · rule last evaluated " + clock(live.evaluated) : "";
+    stamp.textContent = asked + evald;
+  }
+
+  function startLive(r, badge, stamp) {
+    clearTimeout(state.liveTimer);
+    const run = async () => {
+      if (state.current !== r.id) return;
+      const live = await liveStatus(r);
+      if (state.current !== r.id) return;
+      paintLive(r, live, badge, stamp);
+      drawArchitecture(r, live.state);
+      if (live.state === "resolved") { if (!live.cached) saveResolved(r.id, live.at.toISOString()); return; }   // resolved: no more checks
+      state.liveTimer = setTimeout(run, live.state === "unknown" ? 60000 : 30000);
+    };
+    run();
+  }
+
+  function drawArchitecture(r, live) {
+    const { svg, analysis, nameOf } = RcaDiagram.draw(r, live);
     $("arch").replaceChildren(svg);
     const note = $("arch-note");
     const where = (r.fault_domain && r.fault_domain.component) || (r.root_cause && r.root_cause.description) || nameOf(analysis.root);
     const hit = [...analysis.impacted].map(nameOf);
-    note.replaceChildren(el("b", "", "Problem: "), document.createTextNode(`${nameOf(analysis.root)} (${where}). `), el("b", "", "Affected: "),
+    const tail = live === "resolved" ? "The alert is no longer firing, so everything is drawn green; the problem described in the report was " + nameOf(analysis.root) + ". "
+      : live === "firing" || live === "pending" ? "Live: the alert is " + (live === "firing" ? "still firing" : "pending") + ", so the problem is drawn as the report found it. "
+      : "Grafana could not say whether the alert is still firing, so this is the state when the report was written. ";
+    note.replaceChildren(el("b", "", "Problem: "), document.createTextNode(`${nameOf(analysis.root)} (${where}). `), el("b", "", live === "resolved" ? "Was affected: " : "Affected: "),
       document.createTextNode(hit.length ? hit.join(", ") + ". " : "nothing else. "),
-      document.createTextNode("Drawn from the alert, the service and the root cause of this report; green means the report found no problem there, not that it was checked live."));
+      document.createTextNode(tail + "The diagram is drawn from the alert, service and root cause of the report; green on a firing alert means the report found no problem there."));
   }
 
   function fact(dl, label, value) {
@@ -186,6 +246,7 @@
   }
 
   async function show(id) {
+    clearTimeout(state.liveTimer);
     state.current = id;
     document.querySelectorAll(".item").forEach((b) => (b.dataset.id === id ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
     $("app").classList.add("reading");
@@ -200,7 +261,10 @@
     const pills = $("pills"); pills.replaceChildren();
     const lv = level(r);
     if (lv) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
-    if (r.priority && r.priority.ongoing !== undefined) pills.append(r.priority.ongoing ? pill("Ongoing", "p2 live") : pill("Resolved", "ok"));
+    const badge = pill("Checking Grafana…", "soft");
+    badge.id = "live-badge";
+    const stamp = el("span", "stamp muted", "");
+    pills.append(badge, stamp);
     if (r.severity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode) pills.append(pill(words(r.mode), "soft"));
     $("title").textContent = `${r.alert || id}${r.service ? " on " + r.service : ""}`;
@@ -224,7 +288,8 @@
     body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
     enhance(body);
     buildToc(body);
-    drawArchitecture(r);
+    drawArchitecture(r, "unknown");
+    startLive(r, badge, stamp);
     document.title = `${r.alert || id} · RCA reports`;
     $("main").scrollTo({ top: 0 });
   }
@@ -232,7 +297,7 @@
   function route() {
     const id = decodeURIComponent(location.hash.slice(1));
     if (id && /^rca-[\w.-]+$/.test(id)) show(id);
-    else { state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "RCA reports"; renderList(); }
+    else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "RCA reports"; renderList(); }
   }
 
   // ---- wiring ------------------------------------------------------------------------------------------------
