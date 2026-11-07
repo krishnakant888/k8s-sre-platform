@@ -30,6 +30,8 @@ The values were sized from measured usage, not guessed.
 | Alloy, config-reloader | 200m, 10m | 384Mi, 32Mi | 768Mi, 64Mi | 301Mi (was above its 192Mi request), 8Mi |
 | Grafana, sidecars (each) | 100m, 20m | 256Mi, 128Mi | 512Mi, 256Mi | 135Mi, 85Mi (was above its 64Mi request) |
 | kube-state-metrics | 25m | 64Mi | 256Mi | 23Mi, grows with object count |
+| Developer portal (Backstage) | 200m | 640Mi | 1280Mi | not measured |
+| Portal database (Postgres) | 50m | 128Mi | 384Mi | not measured |
 | Traefik (gateway, one per cluster) | 100m | 128Mi | 256Mi | not measured |
 | cert-manager, webhook, cainjector (one set per cluster) | 25m, 10m, 25m | 64Mi, 32Mi, 128Mi | 256Mi, 128Mi, 256Mi | not measured |
 | Kyverno admission | 100m | 256Mi | 768Mi | 54Mi |

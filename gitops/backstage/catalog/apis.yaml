@@ -1,0 +1,34 @@
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: orders-api-http
+  description: The orders API of the sample service
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:platform-team
+  system: workloads
+  definition: |
+    openapi: 3.0.3
+    info:
+      title: orders-api
+      version: 1.0.0
+      description: Sample orders service with an SLO (99.5% of requests succeed and finish within 300 ms over 28 days) and fault injection endpoints for the drills.
+    servers:
+      - url: https://orders.localhost:8443
+    paths:
+      /orders:
+        get: {summary: List orders, responses: {"200": {description: The orders}}}
+        post: {summary: Create an order, responses: {"201": {description: Created}}}
+      /orders/{order_id}:
+        get:
+          summary: Get one order
+          parameters: [{name: order_id, in: path, required: true, schema: {type: string}}]
+          responses: {"200": {description: The order}, "404": {description: Not found}}
+      /healthz: {get: {summary: Liveness, responses: {"200": {description: Alive}}}}
+      /readyz: {get: {summary: Readiness, responses: {"200": {description: Ready}}}}
+      /metrics: {get: {summary: Prometheus metrics, responses: {"200": {description: Metrics}}}}
+      /chaos/latency: {post: {summary: Slow the inventory call (needs X-Chaos-Token), responses: {"200": {description: Set}}}}
+      /chaos/errors: {post: {summary: Make a share of inventory calls fail (needs X-Chaos-Token), responses: {"200": {description: Set}}}}
+      /chaos/oom: {post: {summary: Allocate memory until the container is OOMKilled (needs X-Chaos-Token), responses: {"202": {description: Started}}}}
+      /chaos/reset: {post: {summary: Clear injected faults (needs X-Chaos-Token), responses: {"200": {description: Cleared}}}}

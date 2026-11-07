@@ -1,0 +1,236 @@
+# The platform components. Most run in every cluster, so they carry no cluster-specific annotation: the Kubernetes tab
+# shows the pods of each cluster that has them.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: traefik
+  description: The gateway (Gateway API controller) of every cluster, with per-route metrics, JSON access logs and TLS from cert-manager
+  tags: [gateway, gateway-api, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/traefik
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=traefik
+    backstage.io/kubernetes-namespace: traefik
+    grafana/alert-label-selector: service=traefik
+  links:
+    - {url: "https://grafana.localhost:9443/d/obs-gateway", title: "Dashboard: Gateway (Traefik)", icon: dashboard}
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: gitops-and-gateway
+  dependsOn: [component:cert-manager, resource:cluster-gitops, resource:cluster-observability, resource:cluster-platform]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cert-manager
+  description: Issues the TLS certificate of each cluster's gateway (self-signed locally)
+  tags: [tls, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/cert-manager
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=cert-manager
+    backstage.io/kubernetes-namespace: cert-manager
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: gitops-and-gateway
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: argocd
+  description: The one Argo CD, in the gitops cluster, that deploys all three clusters (including itself) from this repo
+  tags: [gitops, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/hub
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/part-of=argocd
+    backstage.io/kubernetes-namespace: argocd
+    argocd/app-name: gitops-argocd
+  links:
+    - {url: "https://argocd.localhost:7443", title: Argo CD, icon: dashboard}
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: gitops-and-gateway
+  dependsOn: [resource:cluster-gitops]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: kyverno
+  description: Admission policy of the platform cluster (no latest tags, resource limits, non-root, standard labels)
+  tags: [policy, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/platform/policies
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/part-of=kyverno
+    backstage.io/kubernetes-namespace: kyverno
+    argocd/app-name: platform-kyverno
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: policy-and-secrets
+  dependsOn: [resource:cluster-platform]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sealed-secrets
+  description: Controller for Sealed Secrets in the platform cluster
+  tags: [secrets, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/sealed-secrets
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=sealed-secrets
+    backstage.io/kubernetes-namespace: kube-system
+    argocd/app-name: platform-sealed-secrets
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: policy-and-secrets
+  dependsOn: [resource:cluster-platform]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: grafana
+  description: Dashboards and all alerting (rules, contact point and notification policy are provisioned from Git)
+  tags: [observability, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/observability/grafana
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=grafana
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: observability-grafana
+  links:
+    - {url: "https://grafana.localhost:9443", title: Grafana, icon: dashboard}
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: observability
+  dependsOn: [resource:cluster-observability, component:mimir, component:loki, component:tempo]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: mimir
+  description: Metrics store (single binary) and the SLO recording rules; Prometheus API under /prometheus
+  tags: [observability, metrics]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/observability/mimir
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=mimir
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: observability-mimir
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: observability
+  dependsOn: [resource:cluster-observability]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: loki
+  description: Log store, fed by every cluster's collector
+  tags: [observability, logs]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/observability/loki
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=loki
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: observability-loki
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: observability
+  dependsOn: [resource:cluster-observability]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: tempo
+  description: Trace store (OTLP from the collectors)
+  tags: [observability, traces]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/observability/tempo
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=tempo
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: observability-tempo
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: observability
+  dependsOn: [resource:cluster-observability]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: alloy
+  description: "The one collector in every cluster: metrics, logs, events and traces, labelled with cluster, namespace, pod and service"
+  tags: [observability, collector, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/observability/alloy
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=alloy
+    backstage.io/kubernetes-namespace: observability
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: observability
+  dependsOn: [component:mimir, component:loki, component:tempo]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: argo-workflows
+  description: Runs the incident investigations (one workflow per alert)
+  tags: [workflows, helm]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/argo-workflows
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/part-of=argo-workflows
+    backstage.io/kubernetes-namespace: argo-workflows
+    argocd/app-name: observability-argo-workflows
+  links:
+    - {url: "https://workflows.localhost:9443", title: Workflows UI, icon: dashboard}
+spec:
+  type: infrastructure
+  lifecycle: production
+  owner: group:platform-team
+  system: sre-agent
+  dependsOn: [resource:cluster-observability]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: developer-portal
+  description: "This portal: the catalog, the new-service template, and the live Kubernetes, Argo CD and Grafana views"
+  tags: [backstage, portal]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/backstage
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=portal
+    backstage.io/kubernetes-namespace: portal
+    argocd/app-name: gitops-portal
+  links:
+    - {url: "https://portal.localhost:7443", title: Open the portal, icon: web}
+spec:
+  type: website
+  lifecycle: experimental
+  owner: group:platform-team
+  system: developer-portal
+  dependsOn: [resource:postgres-portal, resource:cluster-gitops]

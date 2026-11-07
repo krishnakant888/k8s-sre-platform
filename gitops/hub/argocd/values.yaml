@@ -16,6 +16,7 @@ configs:
     server.insecure: true   # TLS ends at the gateway (Traefik)
   cm:
     admin.enabled: true
+    accounts.portal: apiKey   # the developer portal reads applications with a token of this account
     exec.enabled: false
 
   rbac:

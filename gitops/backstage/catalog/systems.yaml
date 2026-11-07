@@ -1,0 +1,61 @@
+apiVersion: backstage.io/v1alpha1
+kind: Domain
+metadata:
+  name: sre-platform
+  description: "A local SRE platform: three kind clusters deployed by one Argo CD, with metrics, logs, traces, alerting and an AI-assisted root cause analysis"
+spec:
+  owner: group:platform-team
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: workloads
+  description: The sample applications that run on the platform cluster
+spec:
+  owner: group:platform-team
+  domain: sre-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: sre-agent
+  description: Alert webhook, investigation workflow and the RCA report viewer
+spec:
+  owner: group:platform-team
+  domain: sre-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: observability
+  description: Metrics, logs, traces, dashboards and alerting
+spec:
+  owner: group:platform-team
+  domain: sre-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: gitops-and-gateway
+  description: Argo CD, the Traefik gateway and cert-manager
+spec:
+  owner: group:platform-team
+  domain: sre-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: policy-and-secrets
+  description: Kyverno policies and Sealed Secrets in the platform cluster
+spec:
+  owner: group:platform-team
+  domain: sre-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: developer-portal
+  description: This portal
+spec:
+  owner: group:platform-team
+  domain: sre-platform

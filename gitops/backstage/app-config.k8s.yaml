@@ -1,0 +1,85 @@
+# Backstage configuration for the platform. Values like ${NAME} come from the environment, which comes from the Secret
+# portal-secrets (created by bootstrap/bootstrap.py, never stored in Git).
+app:
+  title: SRE Platform Portal
+  baseUrl: https://portal.localhost:7443
+
+organization:
+  name: SRE Platform
+
+backend:
+  baseUrl: https://portal.localhost:7443
+  # (listen is ':7007' in the image's app-config.production.yaml)
+  auth:
+    keys:
+      - secret: ${BACKEND_SECRET}
+  database:
+    client: pg
+    connection:
+      host: postgres
+      port: 5432
+      user: backstage
+      password: ${POSTGRES_PASSWORD}
+
+# Local use: anyone who can reach the portal signs in as the guest and can read. Production would use OIDC.
+auth:
+  environment: production
+  providers:
+    guest:
+      dangerouslyAllowOutsideDevelopment: true
+
+catalog:
+  rules:
+    - allow: [Component, System, API, Resource, Location, Domain, Group, User]
+  locations:
+    - type: file
+      target: /catalog/all.yaml
+    - type: file
+      target: /app/templates/new-service/template.yaml
+      rules:
+        - allow: [Template]
+
+# Pods and deployments of every component, read from the three clusters with a read-only service account each
+kubernetes:
+  serviceLocatorMethod:
+    type: multiTenant
+  clusterLocatorMethods:
+    - type: config
+      clusters:
+        - name: gitops
+          url: https://gitops-control-plane:6443
+          authProvider: serviceAccount
+          serviceAccountToken: ${K8S_TOKEN_GITOPS}
+          skipTLSVerify: true
+        - name: observability
+          url: https://observability-control-plane:6443
+          authProvider: serviceAccount
+          serviceAccountToken: ${K8S_TOKEN_OBSERVABILITY}
+          skipTLSVerify: true
+        - name: platform
+          url: https://platform-control-plane:6443
+          authProvider: serviceAccount
+          serviceAccountToken: ${K8S_TOKEN_PLATFORM}
+          skipTLSVerify: true
+
+# The three cards of a component page (Argo CD, Grafana alerts, RCA reports) call these endpoints of the portal backend, which adds
+# the token or login of the target. Argo CD is in this cluster; Grafana and the RCA viewer are in the observability cluster and
+# are reached through its gateway (NodePort 30443 of its control-plane node) with the host name each is routed on.
+proxy:
+  endpoints:
+    /argocd:
+      target: http://argocd-server.argocd.svc.cluster.local
+      headers:
+        Authorization: Bearer ${ARGOCD_TOKEN}
+    /grafana:
+      target: https://observability-control-plane:30443
+      headers:
+        Host: grafana.localhost
+        Authorization: Bearer ${GRAFANA_TOKEN}
+      secure: false
+    /rca:
+      target: https://observability-control-plane:30443
+      headers:
+        Host: reports.localhost
+        Authorization: ${RCA_BASIC_AUTH}
+      secure: false
