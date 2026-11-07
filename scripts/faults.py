@@ -314,11 +314,20 @@ def _():
 
 
 # ---- disruptive: they break something the platform depends on, so the Argo CD sync of it is paused first
-ROOT_APPS = ("root-gitops", "root-observability", "root-platform")   # they own the child Applications and put a removed `automated` policy back within seconds
+ROOT_APPS = ("root-gitops", "root-observability", "root-platform")   # the names bootstrap.py gives them today
+
+
+def root_apps():
+    """The root Applications of the hub. They own the child Applications and put a removed `automated` policy back within
+    seconds, so a fault that pauses an app has to pause them too. Found by name instead of taken from ROOT_APPS, so it also
+    works on clusters built before the roots were renamed (root-hub, root-prod); ROOT_APPS is the fallback."""
+    r = kubectl(HUB, "-n", "argocd", "get", "applications", "-o", "jsonpath={.items[*].metadata.name}", check=False)
+    found = tuple(n for n in r.stdout.split() if n.startswith("root-"))
+    return found or ROOT_APPS
 
 
 def pause_sync(app):
-    for name in (*ROOT_APPS, app):
+    for name in (*root_apps(), app):
         kubectl(HUB, "-n", "argocd", "patch", "application", name, "--type", "merge", "-p", '{"spec":{"syncPolicy":{"automated":null}}}', check=False)
 
 
@@ -364,7 +373,7 @@ def clear():
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
-    for app in (*ROOT_APPS, "platform-traefik", "gitops-alloy", "observability-loki"):
+    for app in (*root_apps(), "platform-traefik", "gitops-alloy", "observability-loki"):
         resume_sync(app)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)
