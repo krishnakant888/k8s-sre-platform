@@ -672,6 +672,11 @@ data:
             annotations:
               summary: "Logs from {{ $labels.cluster }} are being dropped"
               description: "The collector of {{ $labels.cluster }} drops log lines: Loki is down, unreachable or rate limiting."
+      - orgId: 1
+        name: datasource-health
+        folder: Alerts
+        interval: 1m
+        rules:
           - uid: generic-mimir-down
             title: MimirDown
             condition: C

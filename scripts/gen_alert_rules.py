@@ -4,7 +4,8 @@ import os
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# (group, interval, [rule...]) where rule = (uid, title, expr, for, severity, extra_labels, summary, description)
+# (group, [rule...]) where rule = (uid, title, expr, for, severity, extra_labels, summary, description)
+# All rules use datasourceUid=mimir, relativeTimeRange.from=600, condition "$A >= 0", execErrState=Error.
 RULES = [
     ("workloads", [
         ("generic-container-waiting", "ContainerWaiting",
@@ -201,6 +202,29 @@ RULES = [
     ]),
 ]
 
+# Datasource-health rules live in their own group because they need per-rule execErrState and condition_expr.
+# MimirDown intentionally queries Mimir with a condition that never fires normally ($A > 1 on vector(0));
+# execErrState: Alerting fires it when the datasource is unreachable. LokiDown and TracesDropped use KSM
+# via Mimir so they remain Error when Mimir itself is down (a separate MimirDown fires first in that case).
+# tuple: (uid, title, expr, range_from, condition_expr, for, severity, extra_labels, execErrState, summary, desc)
+DATASOURCE_HEALTH_RULES = [
+    ("generic-mimir-down", "MimirDown",
+     "vector(0)", 60, "$A > 1",
+     "0s", "page", {"service": "mimir"}, "Alerting",
+     "Mimir is unreachable: all metrics queries are failing",
+     "Grafana cannot reach Mimir. Metrics cannot be stored or queried; alert rules that use Mimir are silently failing."),
+    ("generic-loki-down", "LokiDown",
+     'kube_statefulset_status_replicas_ready{namespace="observability", statefulset="loki"} == 0', 300, "$A >= 0",
+     "2m", "page", {"service": "loki"}, "Error",
+     "Loki has no ready replicas",
+     "The log store (Loki) is down. Logs cannot be written or queried."),
+    ("generic-traces-dropping", "TracesDropped",
+     'kube_statefulset_status_replicas_ready{namespace="observability", statefulset="tempo"} == 0', 300, "$A >= 0",
+     "2m", "ticket", {"service": "tempo"}, "Error",
+     "Tempo has no ready replicas: traces cannot be stored",
+     "The trace store (Tempo) is down or not ready. Spans from all clusters are being discarded."),
+]
+
 
 def q(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
@@ -243,5 +267,27 @@ for group, rules in RULES:
             annotations:
               summary: "{q(summary)}"
               description: "{q(desc)}\"""")
+out.append("      - orgId: 1\n        name: datasource-health\n        folder: Alerts\n        interval: 1m\n        rules:")
+for uid, title, expr, range_from, cond_expr, for_, sev, extra, exec_err_state, summary, desc in DATASOURCE_HEALTH_RULES:
+    labels = {"severity": sev, **extra}
+    lab = ", ".join(f"{k}: {v}" for k, v in labels.items())
+    out.append(f"""          - uid: {uid}
+            title: {title}
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {{from: {range_from}, to: 0}}
+                datasourceUid: mimir
+                model: {{refId: A, expr: "{q(expr)}", instant: true}}
+              - refId: C
+                datasourceUid: __expr__
+                model: {{refId: C, type: math, expression: "{cond_expr}"}}
+            noDataState: OK
+            execErrState: {exec_err_state}
+            for: {for_}
+            labels: {{{lab}}}
+            annotations:
+              summary: "{q(summary)}"
+              description: "{q(desc)}\"""")
 open("gitops/observability/alerting/rules-generic.yaml", "w").write("\n".join(out) + "\n")
-print(sum(len(r) for _, r in RULES), "rules")
+print(sum(len(r) for _, r in RULES) + len(DATASOURCE_HEALTH_RULES), "rules")
