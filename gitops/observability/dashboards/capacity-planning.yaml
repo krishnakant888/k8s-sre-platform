@@ -1,0 +1,238 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-capacity-planning
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Platform
+data:
+  capacity-planning.json: |
+    {
+      "uid": "capacity-planning",
+      "title": "Capacity Planning",
+      "description": "Resource utilization vs limits, observed peaks, and automated remediation history",
+      "tags": ["capacity", "sre-agent", "resources"],
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "refresh": "30s",
+      "time": {"from": "now-24h", "to": "now"},
+      "timezone": "browser",
+      "graphTooltip": 1,
+      "templating": {
+        "list": [
+          {
+            "name": "cluster",
+            "label": "Cluster",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "mimir"},
+            "query": {"query": "label_values(kube_deployment_spec_replicas, cluster)", "refId": "v_cluster"},
+            "definition": "label_values(kube_deployment_spec_replicas, cluster)",
+            "includeAll": false,
+            "multi": false,
+            "refresh": 2,
+            "sort": 1,
+            "current": {}
+          },
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "mimir"},
+            "query": {"query": "label_values(kube_deployment_spec_replicas{cluster=\"$cluster\"}, namespace)", "refId": "v_ns"},
+            "definition": "label_values(kube_deployment_spec_replicas{cluster=\"$cluster\"}, namespace)",
+            "includeAll": true,
+            "multi": true,
+            "allValue": ".+",
+            "refresh": 2,
+            "sort": 1,
+            "current": {}
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "Resource exhaustion investigations (24h)",
+          "description": "RCA reports where root cause was resource_exhaustion",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "datasource": {"type": "loki", "uid": "loki"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}},
+          "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\" | root_cause=\"resource_exhaustion\" [24h]))", "queryType": "instant", "refId": "A"}]
+        },
+        {
+          "id": 2, "type": "stat", "title": "Workloads >80% memory",
+          "description": "Containers where working set exceeds 80% of their memory limit right now",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}},
+          "targets": [{"expr": "count(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"} / on(cluster,namespace,pod,container) kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"} > 0.8) or vector(0)", "refId": "A", "instant": true}]
+        },
+        {
+          "id": 3, "type": "stat", "title": "Workloads with CPU throttle >20%",
+          "description": "Containers where CPU throttle ratio exceeded 20% in the last 5 minutes",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}},
+          "targets": [{"expr": "count(sum by (cluster,namespace,container) (rate(container_cpu_cfs_throttled_seconds_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster,namespace,container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) > 0.2) or vector(0)", "refId": "A", "instant": true}]
+        },
+        {
+          "id": 4, "type": "stat", "title": "Avg memory headroom",
+          "description": "Average free memory headroom across all containers in selected namespaces",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}},
+          "targets": [{"expr": "1 - avg(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"} / on(cluster,namespace,pod,container) kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true}]
+        },
+
+        {
+          "id": 5,
+          "type": "row",
+          "title": "Memory",
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 4}
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Memory working set vs limit",
+          "description": "Solid lines = working set (actual use); dashed lines = memory limit. OOMKill fires when working set touches the limit.",
+          "gridPos": {"h": 10, "w": 16, "x": 0, "y": 5},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {
+            "defaults": {"unit": "bytes", "custom": {"lineWidth": 2, "fillOpacity": 5}},
+            "overrides": [
+              {"matcher": {"id": "byFrameRefID", "options": "B"}, "properties": [{"id": "custom.lineStyle", "value": {"dash": [6, 4], "fill": "dash"}}, {"id": "custom.fillOpacity", "value": 0}]}
+            ]
+          },
+          "options": {"tooltip": {"mode": "multi"}},
+          "targets": [
+            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} used", "refId": "A"},
+            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} limit", "refId": "B"}
+          ]
+        },
+        {
+          "id": 7, "type": "table", "title": "Memory headroom",
+          "description": "Current memory use, limit, and headroom per container. Red = over 80%. Click a row to filter the timeseries.",
+          "gridPos": {"h": 10, "w": 8, "x": 16, "y": 5},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {
+            "defaults": {"custom": {"displayMode": "auto"}},
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "bytes"}]},
+              {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "bytes"}]},
+              {"matcher": {"id": "byName", "options": "Peak 6h"}, "properties": [{"id": "unit", "value": "bytes"}]},
+              {"matcher": {"id": "byName", "options": "Used %"}, "properties": [
+                {"id": "unit", "value": "percentunit"},
+                {"id": "custom.displayMode", "value": "color-background"},
+                {"id": "thresholds", "value": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.8}]}}
+              ]}
+            ]
+          },
+          "options": {"sortBy": [{"displayName": "Used %", "desc": true}]},
+          "transformations": [
+            {"id": "merge", "options": {}},
+            {"id": "organize", "options": {"includeByName": {"namespace": true, "container": true, "Value #A": true, "Value #B": true, "Value #C": true, "Value #D": true}, "renameByName": {"Value #A": "Used", "Value #B": "Limit", "Value #C": "Peak 6h", "Value #D": "Used %"}}}
+          ],
+          "targets": [
+            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
+            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "B", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
+            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "refId": "C", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
+            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}) / on(namespace, container) min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "D", "instant": true, "legendFormat": "{{namespace}} {{container}}"}
+          ]
+        },
+
+        {
+          "id": 8,
+          "type": "row",
+          "title": "CPU",
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+        },
+        {
+          "id": 9, "type": "timeseries", "title": "CPU throttle ratio",
+          "description": "Fraction of CPU scheduling periods where the container was throttled. >20% suggests the CPU limit is too low.",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {
+            "defaults": {"unit": "percentunit", "min": 0, "max": 1, "custom": {"lineWidth": 2, "fillOpacity": 10},
+              "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.2}, {"color": "red", "value": 0.5}]},
+              "color": {"mode": "thresholds"}
+            }
+          },
+          "options": {"tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "sum by (namespace, container) (rate(container_cpu_cfs_throttled_seconds_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (namespace, container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))", "legendFormat": "{{namespace}}/{{container}}", "refId": "A"}]
+        },
+        {
+          "id": 10, "type": "timeseries", "title": "Deployment replicas",
+          "description": "Desired replica count over time. Scale-out remediations appear as upward steps.",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {
+            "defaults": {"unit": "short", "min": 0, "decimals": 0, "custom": {"lineWidth": 2, "fillOpacity": 5, "staircase": true}}
+          },
+          "options": {"tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "kube_deployment_spec_replicas{cluster=\"$cluster\", namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}}", "refId": "A"}]
+        },
+
+        {
+          "id": 11,
+          "type": "row",
+          "title": "Remediation history",
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+        },
+        {
+          "id": 12, "type": "table", "title": "Resource exhaustion investigations",
+          "description": "RCA reports where the root cause was resource_exhaustion. The remediation column shows what the agent changed.",
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 25},
+          "datasource": {"type": "loki", "uid": "loki"},
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.width", "value": 180}]},
+              {"matcher": {"id": "byName", "options": "target_service"}, "properties": [{"id": "custom.width", "value": 200}]},
+              {"matcher": {"id": "byName", "options": "priority"}, "properties": [{"id": "custom.width", "value": 80}]},
+              {"matcher": {"id": "byName", "options": "confidence"}, "properties": [{"id": "custom.width", "value": 100}]},
+              {"matcher": {"id": "byName", "options": "investigation_took"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.width", "value": 120}]}
+            ]
+          },
+          "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
+          "transformations": [
+            {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
+            {"id": "organize", "options": {"includeByName": {"Time": true, "target_service": true, "priority": true, "root_cause": true, "confidence": true, "mode": true, "investigation_took": true, "report_id": true}, "renameByName": {"target_service": "Workload", "priority": "P", "root_cause": "Root cause", "confidence": "Confidence", "mode": "Mode", "investigation_took": "Duration (s)", "report_id": "ID"}}}
+          ],
+          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\" | root_cause=\"resource_exhaustion\"", "refId": "A"}]
+        },
+
+        {
+          "id": 13, "type": "timeseries", "title": "Memory limit vs observed 6h peak",
+          "description": "Orange band = current memory limit; blue = 6-hour rolling peak. When blue approaches orange an OOM kill is imminent. After remediation the orange line should jump up.",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "fieldConfig": {
+            "defaults": {"unit": "bytes", "custom": {"lineWidth": 2}},
+            "overrides": [
+              {"matcher": {"id": "byFrameRefID", "options": "B"}, "properties": [
+                {"id": "custom.lineStyle", "value": {"dash": [8, 4], "fill": "dash"}},
+                {"id": "custom.lineWidth", "value": 1},
+                {"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}
+              ]}
+            ]
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}},
+          "targets": [
+            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "legendFormat": "{{namespace}}/{{container}} peak 6h", "refId": "A"},
+            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} limit", "refId": "B"}
+          ]
+        },
+
+        {
+          "id": 14, "type": "logs", "title": "Remediation and investigation logs",
+          "description": "Live sre-agent logs filtered to resource exhaustion investigations",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 47},
+          "datasource": {"type": "loki", "uid": "loki"},
+          "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none"},
+          "targets": [{"expr": "{namespace=\"sre-agent\"} |= \"resource_exhaustion\" or {namespace=\"sre-agent\"} |= \"remediat\"", "refId": "A"}]
+        }
+      ]
+    }
