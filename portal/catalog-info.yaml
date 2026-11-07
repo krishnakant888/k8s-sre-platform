@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: backstage-portal
+  description: The Backstage app of the SRE platform's developer portal
+spec:
+  type: website
+  lifecycle: experimental
+  owner: group:platform-team

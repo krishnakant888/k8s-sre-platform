@@ -16,7 +16,7 @@ An internal developer platform on top of this repo: one place to see what runs, 
 ## How it is put together
 
 ```
-backstage-portal repo        the Backstage app: plugins, the three cards, the new-service template  ->  container image
+portal/ folder              the Backstage app: plugins, the three cards, the new-service template  ->  container image
 k8s-sre-platform repo        how it runs here (gitops/backstage: portal + Postgres + route) and what it shows (the catalog)
 ```
 
@@ -33,10 +33,10 @@ k8s-sre-platform repo        how it runs here (gitops/backstage: portal + Postgr
 python3 bootstrap/bootstrap.py --portal-access
 ```
 
-**The image.** The image is built from the `backstage-portal` repo (CI builds it to ghcr). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
+**The image.** The image is built from the `portal/` folder of this repo (the `portal-image` workflow builds it to ghcr for amd64 and arm64). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
 
 ```bash
-docker build -t ghcr.io/krishnakant888/backstage-portal:0.1.0 -f packages/backend/Dockerfile .   # in the portal repo, after yarn install, tsc and build:backend
+docker build -t ghcr.io/krishnakant888/backstage-portal:0.1.0 -f packages/backend/Dockerfile .   # in portal/al repo, after yarn install, tsc and build:backend
 kind load docker-image ghcr.io/krishnakant888/backstage-portal:0.1.0 --name gitops
 ```
 

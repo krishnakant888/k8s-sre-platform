@@ -1,0 +1,21 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description }}
+  annotations:
+    selfservice/enabled: "true"
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/workloads/${{ values.name }}
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=${{ values.name }}
+    backstage.io/kubernetes-namespace: ${{ values.namespace }}
+    argocd/app-name: platform-${{ values.name }}
+    grafana/alert-label-selector: service=${{ values.name }}
+  links:
+    - {url: "https://${{ values.host }}:8443", title: Open the service, icon: web}
+spec:
+  type: service
+  lifecycle: experimental
+  owner: ${{ values.owner }}
+  system: workloads
+  dependsOn: [resource:cluster-platform]

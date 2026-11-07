@@ -1,0 +1,1 @@
+export { platformModule } from './platformModule';

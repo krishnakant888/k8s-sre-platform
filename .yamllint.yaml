@@ -1,6 +1,7 @@
 extends: default
 ignore: |
   charts/*/templates/
+  portal/
 rules:
   line-length: disable
   document-start: disable
