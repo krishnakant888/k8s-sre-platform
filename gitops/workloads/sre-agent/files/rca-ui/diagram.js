@@ -138,13 +138,15 @@
     return marks;
   }
 
-  function draw(r) {
+  // live: "firing", "pending", "resolved" or "unknown" (from Grafana); a resolved alert turns everything green, the rest draws what the report found
+  function draw(r, live) {
     const a = analyze(r);
-    const state = (id) => (id === a.root ? "bad" : a.impacted.has(id) ? "warn" : "ok");
+    const recovered = live === "resolved";
+    const state = (id) => (recovered ? "ok" : id === a.root ? "bad" : a.impacted.has(id) ? "warn" : "ok");
     const nameOf = (id) => (id === "svc" ? a.label || NODES.svc[0] : NODES[id][0]);
     const svg = s("svg", { viewBox: "0 0 1100 600", class: "arch", role: "img" });
     const impactedNames = [...a.impacted].map(nameOf);
-    svg.setAttribute("aria-label", `Architecture: the problem is in ${nameOf(a.root)}. ${impactedNames.length ? "Affected: " + impactedNames.join(", ") + "." : "Nothing else is affected."}`);
+    svg.setAttribute("aria-label", recovered ? `Architecture: the problem in ${nameOf(a.root)} has recovered.` : `Architecture: the problem is in ${nameOf(a.root)}. ${impactedNames.length ? "Affected: " + impactedNames.join(", ") + "." : "Nothing else is affected."}`);
     const defs = s("defs");
     for (const k of ["bad", "warn", "idle"]) {
       const m = s("marker", { id: "ah-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
@@ -158,7 +160,7 @@
       svg.append(s("text", { x: x + 16, y: y + 24, class: "cluster-t" }, title));
     }
 
-    const marks = pathEdges(a);
+    const marks = recovered ? new Map() : pathEdges(a);
     for (const [i, [from, to, label, pts]] of EDGES.entries()) {
       const sf = state(from), st = state(to);
       const kind = marks.get(i) || (sf !== "ok" && st !== "ok" ? "warn" : "idle");
@@ -178,12 +180,12 @@
     for (const [id, [title, sub, x, y, w, h]] of Object.entries(NODES)) {
       const st = state(id);
       const g = s("g", { class: "node " + st });
-      g.append(s("title", {}, `${nameOf(id)}: ${st === "bad" ? "the problem is here" : st === "warn" ? "affected" : "no problem found in this report"}`));
+      g.append(s("title", {}, `${nameOf(id)}: ${st === "bad" ? "the problem is here" : st === "warn" ? "affected" : recovered ? "recovered, the alert is no longer firing" : "no problem found in this report"}`));
       g.append(s("rect", { x, y, width: w, height: h, rx: 12, class: "box" }));
       g.append(s("circle", { cx: x + 16, cy: y + h / 2, r: 6, class: "dot" }));
       const label = id === "svc" ? clip(nameOf(id), 28) : title;
       g.append(s("text", { x: x + 32, y: y + (sub ? h / 2 - 3 : h / 2 + 5), class: "label" }, label));
-      if (sub) g.append(s("text", { x: x + 32, y: y + h / 2 + 15, class: "sub" }, st === "bad" ? "problem here" : st === "warn" ? "affected" : sub));
+      if (sub) g.append(s("text", { x: x + 32, y: y + h / 2 + 15, class: "sub" }, st === "bad" ? "problem here" : st === "warn" ? "affected" : recovered && id === a.root ? "recovered" : sub));
       svg.append(g);
     }
     return { svg, analysis: a, nameOf };
