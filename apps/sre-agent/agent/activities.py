@@ -39,12 +39,18 @@ def analyze(alert: dict, ctx: dict) -> dict:
         if pr:
             report.remediation = pr
             status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
+            if pr.get("type") == "scaleout":
+                change_desc = f"replicas {pr['old_replicas']} → {pr['new_replicas']}"
+                sync_msg = "Remediation already applied — wait for Argo CD to scale the deployment"
+            else:
+                change_desc = f"memory limit {pr.get('old_limit')} → {pr.get('new_limit')}"
+                sync_msg = "Remediation already applied — wait for Argo CD to sync the new limit"
             report.timeline.append(TimelineEntry(
                 time=report.generated_at,
-                event=f"remediation {status_label}: memory limit {pr['old_limit']} → {pr['new_limit']} ({pr['file']})",
+                event=f"remediation {status_label}: {change_desc} ({pr['file']})",
             ))
             if pr["status"] == "merged":
-                report.how_to_fix.immediate.insert(0, f"Remediation already applied — wait for Argo CD to sync the new limit: {pr['pr_url']}")
+                report.how_to_fix.immediate.insert(0, f"{sync_msg}: {pr['pr_url']}")
             else:
                 report.how_to_fix.immediate.insert(0, f"Review and merge the remediation PR: {pr['pr_url']}")
             report.rca_markdown = report.rca_markdown.rstrip("\n") + _remediation_section(pr)
@@ -69,13 +75,20 @@ def incident_details(mode: str, now: datetime | None = None) -> dict:
 
 
 def _remediation_section(pr: dict) -> str:
+    status = pr.get("status", "pr_opened")
+    status_note = "auto-merged" if status == "merged" else "opened — requires review"
+    if pr.get("type") == "scaleout":
+        change = f"`{pr['file']}` — `replicas` raised from `{pr['old_replicas']}` to `{pr['new_replicas']}`"
+        action = "Argo CD will scale the deployment once the PR is synced. Monitor CPU throttle ratio after rollout."
+    else:
+        change = f"`{pr['file']}` — `limits.memory` raised from `{pr.get('old_limit')}` to `{pr.get('new_limit')}`"
+        action = "Argo CD will apply the new limit once synced. Monitor `container_memory_working_set_bytes` after rollout."
     return (
         f"\n\n## Remediation taken\n"
-        f"A draft PR was automatically opened while this issue is being investigated.\n"
-        f"- **PR:** [{pr['pr_url']}]({pr['pr_url']}) (draft — requires review before merge)\n"
-        f"- **Change:** `{pr['file']}` — `limits.memory` raised from `{pr['old_limit']}` to `{pr['new_limit']}`\n"
-        f"- **Action:** Review the PR. Merge it to let Argo CD apply the new limit and stop the OOMKills. "
-        f"Adjust the value if peak usage differs from the suggested size.\n"
+        f"A PR was automatically {status_note} while this issue is being investigated.\n"
+        f"- **PR:** [{pr['pr_url']}]({pr['pr_url']})\n"
+        f"- **Change:** {change}\n"
+        f"- **Action:** {action}\n"
     )
 
 
