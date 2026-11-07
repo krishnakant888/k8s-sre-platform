@@ -256,6 +256,15 @@ def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform",
     return _trim({"cluster": cluster, "namespace": namespace, "events": events[:30]})
 
 
+def _deployed_revision(entry: dict) -> str:
+    """The commit one Argo CD sync deployed. An application with one source records `revision`; one with several sources (a
+    Helm chart plus the values from this repo) records `revisions`, one per source: the chart version and the git commit.
+    The commit is what changes with a deploy, so it is the one reported."""
+    revisions = [r for r in (entry.get("revisions") or [entry.get("revision")]) if r]
+    commits = [r for r in revisions if re.fullmatch(r"[0-9a-f]{40}", r)]
+    return (commits or revisions or [""])[0][:10]
+
+
 def get_recent_deploys(application: str) -> dict:
     """Argo CD sync history for an application, newest first."""
     # every application is named <cluster>-<component> in the Argo CD that deploys the three clusters
@@ -280,7 +289,7 @@ def get_recent_deploys(application: str) -> dict:
             "application": application,
             "source_files": files,
             "history": [
-                {"deployed_at": h.get("deployedAt"), "revision": (h.get("revision") or "")[:10], "id": h.get("id")}
+                {"deployed_at": h.get("deployedAt"), "revision": _deployed_revision(h), "id": h.get("id")}
                 for h in reversed(history)
             ],
         }
