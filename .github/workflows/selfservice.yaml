@@ -41,6 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # runs wait for each other (concurrency), but a run is pinned to the commit of the moment it was dispatched: take the latest main, so a request
+          # made while another one was running does not start from a main that is already behind and conflict with it
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 80
       - run: pip install pyyaml==6.0.2 yamllint==1.35.1
       - name: Make the change
@@ -121,5 +124,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.url }}
         run: |
-          # the checks passed: ask for auto-merge, and if GitHub says it is mergeable already, merge now
-          gh pr merge "$PR" --squash --auto || gh pr merge "$PR" --squash
+          # the checks passed: merge now (GitHub's --auto needs branch protection rules on main, which would also block the workflows that push to it)
+          gh pr merge "$PR" --squash
