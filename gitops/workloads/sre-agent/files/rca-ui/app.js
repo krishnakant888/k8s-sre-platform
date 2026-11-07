@@ -209,8 +209,14 @@
     badge.title = "Asked Grafana at " + clock(new Date()) + ". The report itself is a snapshot from when it was written.";
     const asked = live.cached ? "Resolved earlier, not checked again" : "Last updated " + clock(new Date());
     const evald = live.evaluated && !isNaN(live.evaluated) ? " · rule last evaluated " + clock(live.evaluated) : "";
-    stamp.textContent = asked + evald;
+    const next = live.state === "resolved" ? "" : ` · checks again every ${every(r, live.state) / 1000} s (${level(r) || "no priority"})`;
+    stamp.textContent = asked + evald + next;
   }
+
+  // how often an open report is checked while it fires, is pending or its state is unknown: the higher the priority, the sooner a change shows.
+  // Unknown (Grafana cannot be asked) backs off to twice the interval so a broken proxy is not hammered. Resolved reports are not checked at all.
+  const EVERY = { P1: 10, P2: 30, P3: 60, P4: 120 };
+  const every = (r, st) => (EVERY[level(r)] || 60) * (st === "unknown" ? 2 : 1) * 1000;
 
   function startLive(r, badge, stamp) {
     clearTimeout(state.liveTimer);
@@ -221,7 +227,7 @@
       paintLive(r, live, badge, stamp);
       drawArchitecture(r, live.state);
       if (live.state === "resolved") { if (!live.cached) saveResolved(r.id, live.at.toISOString()); return; }   // resolved: no more checks
-      state.liveTimer = setTimeout(run, live.state === "unknown" ? 60000 : 30000);
+      state.liveTimer = setTimeout(run, every(r, live.state));
     };
     run();
   }
