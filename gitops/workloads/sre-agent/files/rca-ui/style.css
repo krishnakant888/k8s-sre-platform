@@ -175,3 +175,5 @@ button, input { font: inherit; color: inherit; }
 .item .pill.big { font-size: 13.5px; padding: 3px 13px; }
 .item.resolved[aria-current="true"] { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .item.resolved .item-sub { color: var(--ok); }
+
+.arch-now { margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: var(--ok-bg); color: var(--ok); font-weight: 700; }
