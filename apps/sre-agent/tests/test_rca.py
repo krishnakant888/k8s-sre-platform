@@ -240,6 +240,30 @@ def test_pods_and_deploys_are_read_from_their_own_clusters_with_their_own_tokens
     assert seen[1][1] == "Bearer gitops-token"
 
 
+def test_deploy_revision_of_a_multi_source_application_is_its_git_commit():
+    commit = "a1b2c3d4e5" + "f" * 30
+    assert tools._deployed_revision({"revisions": ["42.3.1", commit]}) == commit[:10]   # chart version + git commit
+    assert tools._deployed_revision({"revisions": [commit, "42.3.1"]}) == commit[:10]
+    assert tools._deployed_revision({"revision": commit}) == commit[:10]   # one source
+    assert tools._deployed_revision({"revisions": ["42.3.1"]}) == "42.3.1"   # a chart only
+    assert tools._deployed_revision({}) == ""
+
+
+def test_recent_deploys_of_a_multi_source_application_name_the_commit(monkeypatch, tmp_path):
+    gitops = tmp_path / "gitops"
+    gitops.mkdir()
+    (gitops / "token").write_text("gitops-token")
+    monkeypatch.setattr(tools.config, "GITOPS_DIR", str(gitops))
+    monkeypatch.setattr(tools.config, "GITOPS_K8S_URL", "https://gitops-control-plane:6443")
+    commit = "0123456789" + "a" * 30
+    app = {"spec": {"sources": [{"chart": "traefik", "helm": {"valueFiles": ["$values/gitops/traefik/values.yaml"]}}, {"ref": "values"}]},
+           "status": {"history": [{"id": 0, "deployedAt": "2026-11-07T08:00:19Z", "revisions": ["42.3.1", commit]}]}}
+    monkeypatch.setattr(tools, "_k8s_transport", httpx.MockTransport(lambda request: httpx.Response(200, json=app)))
+    out = tools.get_recent_deploys("traefik")
+    assert out["history"][0]["revision"] == commit[:10]
+    assert out["source_files"] == ["gitops/traefik/values.yaml"]
+
+
 def test_dependency_problem_is_application_level(monkeypatch):
     r = run(monkeypatch, bad=0.9, p99=1.2, slow_span={"name": "inventory.lookup", "duration_ms": 1000.0}, chaos=1)
     assert r.fault_domain.layer == "application"
