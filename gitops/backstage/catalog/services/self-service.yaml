@@ -1,0 +1,19 @@
+# Entries of the services created from the portal's New service template land in this directory (one file each, added by the pull request the template opens).
+# This one describes the self-service machinery itself.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: self-service
+  description: The pull-request workflow behind the portal's templates (scale, resources, image, alerts, dashboards, sandboxes, access, drills)
+  tags: [github-actions, python]
+  annotations:
+    github.com/project-slug: krishnakant888/k8s-sre-platform
+    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/scripts
+  links:
+    - {url: "https://github.com/krishnakant888/k8s-sre-platform/blob/main/docs/self-service.md", title: How it works, icon: docs}
+    - {url: "https://github.com/krishnakant888/k8s-sre-platform/actions/workflows/selfservice.yaml", title: The workflow runs, icon: web}
+spec:
+  type: service
+  lifecycle: production
+  owner: group:platform-team
+  system: workloads

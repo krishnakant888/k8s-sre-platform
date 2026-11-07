@@ -1,0 +1,7 @@
+# Namespace of the failure drills. The drills themselves are added here, and removed when their time is up, by pull requests that the developer portal asks for (scripts/selfservice.py drill).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scenarios
+  labels:
+    app.kubernetes.io/part-of: platform

@@ -28,6 +28,13 @@ auth:
     guest:
       dangerouslyAllowOutsideDevelopment: true
 
+# GitHub: what the templates use to start the selfservice workflow and to open pull requests. GITHUB_TOKEN is optional in portal-secrets
+# (docs/self-service.md): without it the portal works and a template reports the GitHub error.
+integrations:
+  github:
+    - host: github.com
+      token: ${GITHUB_TOKEN}
+
 catalog:
   rules:
     - allow: [Component, System, API, Resource, Location, Domain, Group, User]
@@ -35,9 +42,23 @@ catalog:
     - type: file
       target: /catalog/all.yaml
     - type: file
-      target: /app/templates/new-service/template.yaml
+      target: /app/templates/*/template.yaml   # every template of the image: new service and the self-service requests
       rules:
         - allow: [Template]
+    # services created from the New service template: the pull request adds their entry here, so they show up after the merge without touching the portal.
+    # Read from GitHub (public repo, a GITHUB_TOKEN in portal-secrets only raises the rate limit).
+    - type: url
+      target: https://github.com/krishnakant888/k8s-sre-platform/blob/main/gitops/backstage/catalog/services/*.yaml
+      rules:
+        - allow: [Component]
+
+# TechDocs: the docs of a component are built with mkdocs (in the image) from its GitHub source when first opened, and kept on the pod's disk
+techdocs:
+  builder: local
+  generator:
+    runIn: local
+  publisher:
+    type: local
 
 # Pods and deployments of every component, read from the three clusters with a read-only service account each
 kubernetes:

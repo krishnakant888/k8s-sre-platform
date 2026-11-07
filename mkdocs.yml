@@ -1,0 +1,17 @@
+# The platform's documentation for the developer portal (TechDocs): the Markdown files of docs/.
+site_name: k8s-sre-platform
+docs_dir: docs
+plugins:
+  - techdocs-core
+nav:
+  - Home: index.md
+  - Architecture:
+      - Observability: observability-architecture.md
+      - Logging: logging.md
+  - Operating:
+      - Self-service: self-service.md
+      - Developer portal: portal.md
+      - Secrets: secrets.md
+      - Scenarios: SCENARIOS.md
+      - Resources: RESOURCES.md
+      - Runbook, orders-api: runbooks/orders-api.md

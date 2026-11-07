@@ -1,0 +1,24 @@
+# Failure drills asked for in the developer portal: each file in the path is a broken workload that the alerts and the SRE agent should catch.
+# Empty apart from the namespace until someone asks for one.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-drills
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: prod-workloads
+  source:
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+    targetRevision: main
+    path: gitops/fault-drills/active
+  destination:
+    name: platform   # registered in this Argo CD by bootstrap.py
+    namespace: scenarios
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
