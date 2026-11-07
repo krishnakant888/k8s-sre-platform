@@ -16,7 +16,7 @@ data:
       "schemaVersion": 39,
       "version": 1,
       "refresh": "15s",
-      "time": {"from": "now-6h", "to": "now"},
+      "time": {"from": "now-24h", "to": "now"},
       "panels": [
         {"id": 1, "type": "stat", "title": "Investigations started", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
          "datasource": {"type": "prometheus", "uid": "mimir"},
