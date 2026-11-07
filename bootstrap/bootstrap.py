@@ -520,7 +520,7 @@ def summary(clusters, first_run=True):
 
     if HUB in clusters:
         show("Argo CD", "argocd.localhost", (7443, 7080), "admin / " + argocd_password())
-        show("Developer portal (Backstage)", "portal.localhost", (7443, 7080), "guest sign-in, read-only")
+        show("Developer portal (Backstage)", "backstage-portal.localhost", (7443, 7080), "guest sign-in, read-only")
     if "observability" in clusters:
         gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_LOGIN_SECRET, "password") or "(secret not found)"
         gateway_login = f"admin / {gateway_pw}   (gateway basic auth)"

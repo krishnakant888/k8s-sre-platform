@@ -1,6 +1,7 @@
 extends: default
 ignore: |
   charts/*/templates/
+  backstage-portal/
 rules:
   line-length: disable
   document-start: disable

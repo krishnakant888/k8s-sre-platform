@@ -225,9 +225,9 @@ metadata:
     backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/backstage
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=portal
     backstage.io/kubernetes-namespace: portal
-    argocd/app-name: gitops-portal
+    argocd/app-name: gitops-backstage-portal
   links:
-    - {url: "https://portal.localhost:7443", title: Open the portal, icon: web}
+    - {url: "https://backstage-portal.localhost:7443", title: Open the portal, icon: web}
 spec:
   type: website
   lifecycle: experimental

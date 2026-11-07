@@ -1,0 +1,113 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: new-service
+  title: New service on the platform
+  description: Generates what a service needs to run on the platform cluster - Deployment, Service, HTTPRoute, PodDisruptionBudget, the Argo CD application and its catalog entry - already compliant with the Kyverno policies, Pod Security and the gateway.
+  tags: [platform, kubernetes, gitops, kyverno]
+spec:
+  owner: group:platform-team
+  type: service
+  parameters:
+    - title: The service
+      required: [name, owner]
+      properties:
+        name:
+          title: Name
+          type: string
+          description: Lower case letters, digits and dashes. It becomes the Deployment, the Service, the route and the Argo CD application platform-<name>.
+          pattern: '^[a-z][a-z0-9-]{1,30}$'
+          ui:autofocus: true
+        description:
+          title: Description
+          type: string
+          description: One sentence on what it does.
+        owner:
+          title: Owner
+          type: string
+          description: The team that owns it (the standard `team` label comes from here).
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+    - title: How it runs
+      required: [image]
+      properties:
+        image:
+          title: Container image
+          type: string
+          description: With an explicit tag, for example ghcr.io/you/my-service:1.0.0. Kyverno refuses the latest tag and untagged images.
+        port:
+          title: Container port
+          type: integer
+          default: 8080
+          description: "The port the process listens on. Use a port above 1024: the container runs as a non-root user."
+        replicas:
+          title: Replicas
+          type: integer
+          default: 2
+          enum: [1, 2, 3]
+        memoryLimit:
+          title: Memory limit
+          type: string
+          default: 256Mi
+          enum: [128Mi, 256Mi, 512Mi, 1Gi]
+          description: Kyverno requires a memory limit; the request is half of it.
+        namespace:
+          title: Namespace
+          type: string
+          default: demo
+          enum: [demo, sandbox]
+          description: demo (restricted Pod Security, Kyverno enforced) is for real services, sandbox for experiments.
+        host:
+          title: Host name
+          type: string
+          default: my-service.localhost
+          description: Where the gateway serves it, for example orders.localhost. Reachable at https://<host>:8443.
+  steps:
+    - id: fetch
+      name: Generate the manifests
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          image: ${{ parameters.image }}
+          port: ${{ parameters.port }}
+          replicas: ${{ parameters.replicas }}
+          memoryLimit: ${{ parameters.memoryLimit }}
+          namespace: ${{ parameters.namespace }}
+          host: ${{ parameters.host }}
+    - id: files
+      name: The files of the service
+      action: debug:log
+      input:
+        message: The pull request adds these files to the platform repo.
+        listWorkspace: with-contents
+    - id: pr
+      name: Open the pull request
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=krishnakant888&repo=k8s-sre-platform
+        branchName: new-service-${{ parameters.name }}
+        targetBranchName: main
+        title: "New service ${{ parameters.name }}"
+        description: |
+          Adds the service **${{ parameters.name }}** (${{ parameters.description }}) from the developer portal template *New service on the platform*:
+          Deployment, Service, HTTPRoute, PodDisruptionBudget in `gitops/workloads/${{ parameters.name }}/`, the Argo CD application `platform-${{ parameters.name }}` in
+          `gitops/apps/`, and its entry in the portal's catalog in `gitops/backstage/catalog/services/`.
+
+          Image `${{ parameters.image }}`, ${{ parameters.replicas }} replicas, memory limit ${{ parameters.memoryLimit }}, namespace `${{ parameters.namespace }}`,
+          served at https://${{ parameters.host }}:8443. Merge it and Argo CD deploys it; Kyverno checks the manifests.
+        update: false
+  output:
+    links:
+      - title: The pull request
+        url: ${{ steps['pr'].output.remoteUrl }}
+    text:
+      - title: What happens next
+        content: |
+          A pull request with the whole service was opened in the platform repo. Review and merge it: Argo CD creates the application, Kyverno checks the manifests,
+          the gateway serves `https://${{ parameters.host }}:8443`, and the dashboards and alerts that need no per-app work pick it up. The service appears in this portal's catalog after the merge.

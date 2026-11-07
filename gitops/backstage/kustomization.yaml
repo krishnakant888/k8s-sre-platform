@@ -1,5 +1,5 @@
 # The developer portal (Backstage) of the platform, in the gitops cluster. The Backstage app itself (plugins, the new-service
-# template) is built from the backstage-portal repo; this directory holds how it runs here and the catalog it shows.
+# template) is built from the backstage-portal/ folder of this repo; this directory holds how it runs here and the catalog it shows.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: portal

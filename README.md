@@ -45,7 +45,7 @@ Use `--only platform`, `--only observability` or `--only gitops` to create or de
 |---|---|---|---|
 | Argo CD (deploys the other two) | gitops | https://argocd.localhost:7443 | `admin`, own login |
 | Grafana | observability | https://grafana.localhost:9443 | `admin`, own login |
-| Developer portal (Backstage) | gitops | https://portal.localhost:7443 | guest sign-in, read-only |
+| Developer portal (Backstage) | gitops | https://backstage-portal.localhost:7443 | guest sign-in, read-only |
 | Argo Workflows UI | observability | https://workflows.localhost:9443 | gateway basic auth |
 | RCA reports | observability | https://reports.localhost:9443 | gateway basic auth |
 | Sample API | platform | https://orders.localhost:8443/orders | none |

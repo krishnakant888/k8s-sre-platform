@@ -2,13 +2,13 @@
 # portal-secrets (created by bootstrap/bootstrap.py, never stored in Git).
 app:
   title: SRE Platform Portal
-  baseUrl: https://portal.localhost:7443
+  baseUrl: https://backstage-portal.localhost:7443
 
 organization:
   name: SRE Platform
 
 backend:
-  baseUrl: https://portal.localhost:7443
+  baseUrl: https://backstage-portal.localhost:7443
   # (listen is ':7007' in the image's app-config.production.yaml)
   auth:
     keys:
