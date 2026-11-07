@@ -302,7 +302,7 @@ def _():
 
 
 # ---- disruptive: they break something the platform depends on, so the Argo CD sync of it is paused first
-ROOT_APPS = ("root-hub", "root-observability", "root-prod")   # they own the child Applications and put a removed `automated` policy back within seconds
+ROOT_APPS = ("root-gitops", "root-observability", "root-platform")   # they own the child Applications and put a removed `automated` policy back within seconds
 
 
 def pause_sync(app):
@@ -316,19 +316,19 @@ def resume_sync(app):
 
 @scenario("addon-down", "gateway (Traefik) of the platform cluster scaled to zero", ["CriticalAddonDown"], ["scaled_to_zero"], ["infrastructure"], 5, service="traefik", group="disruptive")
 def _():
-    pause_sync("prod-traefik")
+    pause_sync("platform-traefik")
     kubectl(PLATFORM, "-n", "traefik", "scale", "deploy/traefik", "--replicas=0")
 
 
 @scenario("collector-down", "collector of the gitops cluster scaled to zero", ["ClusterTelemetryMissing"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
 def _():
-    pause_sync("hub-alloy")
+    pause_sync("gitops-alloy")
     kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=0")
 
 
 @scenario("loki-down", "the log store is scaled to zero", ["LogsDropped"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
 def _():
-    pause_sync("loki")
+    pause_sync("observability-loki")
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=0")
 
 
@@ -351,7 +351,7 @@ def clear():
     for app in ("fault-argo-badpath", "fault-argo-degraded", "fault-argo-policy", "fault-argo-kyverno"):
         kubectl(HUB, "-n", "argocd", "delete", "application", app, "--ignore-not-found", check=False)
     subprocess.run(["docker", "start", "platform-worker2"], capture_output=True)
-    for app in (*ROOT_APPS, "prod-traefik", "hub-alloy", "loki"):
+    for app in (*ROOT_APPS, "platform-traefik", "gitops-alloy", "observability-loki"):
         resume_sync(app)
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=1", check=False)
     subprocess.run(["docker", "network", "connect", "kind", "observability-worker"], capture_output=True)

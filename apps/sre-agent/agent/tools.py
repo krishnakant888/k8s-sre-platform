@@ -258,8 +258,8 @@ def get_k8s_events(namespace: str, minutes: int = 30, cluster: str = "platform",
 
 def get_recent_deploys(application: str) -> dict:
     """Argo CD sync history for an application, newest first."""
-    # the platform cluster's applications are named prod-<name> in the Argo CD that deploys both clusters
-    for name in (f"prod-{application}", application):
+    # every application is named <cluster>-<component> in the Argo CD that deploys the three clusters
+    for name in (f"platform-{application}", f"observability-{application}", f"gitops-{application}", application):
         try:
             app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{name}", cluster="gitops")
             break
@@ -267,7 +267,7 @@ def get_recent_deploys(application: str) -> dict:
             if e.response.status_code != 404:
                 raise
     else:
-        raise LookupError(f"no Argo CD application prod-{application} or {application}")
+        raise LookupError(f"no Argo CD application platform-{application}, observability-{application}, gitops-{application} or {application}")
     history = app.get("status", {}).get("history", [])[-6:]
     spec = app.get("spec", {})
     files = []
@@ -290,7 +290,7 @@ def get_recent_deploys(application: str) -> dict:
 def get_argocd_app(name: str) -> dict:
     """Sync and health of one Argo CD application: conditions, last operation message and the resources that are not healthy."""
     app = None
-    for candidate in (name, f"prod-{name}"):
+    for candidate in (name, f"platform-{name}", f"observability-{name}", f"gitops-{name}"):
         try:
             app = _k8s_get(f"/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/{candidate}", cluster="gitops")
             break

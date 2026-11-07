@@ -202,7 +202,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         if sig["restarts"] or any(not p["ready"] for p in sig["pods"]) or family != "memory":
             logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}"', "last log lines of the workload", everything=True)
         node_facts(sig.get("nodes", []))
-        deploys([f"prod-{workload}", workload])
+        deploys([f"platform-{workload}", workload])
         scaled_down = sig.get("desired") == 0 or (family == "rollout" and not sig["pods"])   # no pod at all is an outage, not a recovery
         sig["ongoing"] = scaled_down or any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
 
@@ -256,7 +256,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
         logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(sig["backend"])}"', f"error lines of backend {sig['backend']}")
         node_facts(sig.get("nodes", []))
-        deploys([f"prod-{sig['backend']}", sig["backend"]])
+        deploys([f"platform-{sig['backend']}", sig["backend"]])
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or (family == "ingress" and sig["p95_peak"] > 1 and labels["alertname"] == "IngressSlow")
 
     elif family == "argocd":
@@ -798,7 +798,7 @@ def _gaps(ctx: dict, d: Diag) -> list[str]:
         if sig.get("has_traces") is False and sig["family"] == "ingress":
             gaps.append(f"No traces for `{sig.get('backend', wl)}`: instrument it with OpenTelemetry (OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy.observability:4318) so slow or failing requests show the span that caused it")
         if not sig.get("source_files") and sig["family"] != "ingress":
-            gaps.append(f"`{wl}` has no Argo CD application named prod-{wl} or {wl}: label deploys so the report can name the change and the file")
+            gaps.append(f"`{wl}` has no Argo CD application named platform-{wl} or {wl}: label deploys so the report can name the change and the file")
         if sig.get("mem_ratio") is None and sig["family"] in ("memory", "container"):
             gaps.append(f"No memory limit found for `{wl}`: set resources.limits.memory (Kyverno require-limits would enforce it) so OOM and near-limit alerts have a reference")
     if sig["family"] == "ingress" and not sig.get("rps"):

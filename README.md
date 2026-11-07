@@ -115,7 +115,7 @@ flowchart LR
 bootstrap/          kind configs (platform, observability, gitops) + the one imperative script
 gitops/root/        the root Applications (app of apps), one per cluster
 gitops/hub/         gitops cluster: Argo CD values and its Applications
-gitops/apps/        platform cluster apps (Applications live in the hub, `prod-*`): one per component, AppProjects, sync waves
+gitops/apps/        platform cluster apps (Applications live in the hub, named `platform-*`): one per component, AppProjects, sync waves
 gitops/observability-cluster/  observability cluster: its Applications (including argo-workflows and sre-agent), Alloy values, network policies, NodePorts
 gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
 gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards (deployed by the cluster that owns each Application)

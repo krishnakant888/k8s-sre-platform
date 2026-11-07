@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: platform-base
+  name: observability-platform-base
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-5"
