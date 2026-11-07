@@ -13,14 +13,12 @@ Kubernetes and Argo CD -> structured RCA (files on a volume, JSON log in Loki, o
 
 ## Runs on
 
-Linux, macOS (Intel and Apple Silicon) and Windows. You need Docker (Docker Desktop, or Docker Engine on Linux), `kind`, `kubectl`, `helm` and Python 3; `bootstrap/bootstrap.py` checks that they are on the PATH.
+Linux. You need Docker Engine, `kind`, `kubectl`, `helm` and Python 3; `bootstrap/bootstrap.py` checks that they are on the PATH.
 
 | | What to know |
 |---|---|
-| Docker memory | The three clusters need about 10 GB and 4 CPUs. Docker Desktop: Settings > Resources. |
-| Apple Silicon and ARM Linux | The images of this repo are published for `linux/amd64` and `linux/arm64`, so nothing is emulated. |
-| Windows | Run the scripts from Git Bash or WSL 2 (`drill.sh` and `scenarios.sh` are bash; `bootstrap.py` and `faults.py` are plain Python). The repo keeps LF line endings (`.gitattributes`). |
-| Ports | 7080/7443, 9080/9443 and 8080/8443 on localhost. `bootstrap.py` stops with the port number if one is taken (on Windows some vendor services hold 9080). |
+| Docker memory | The three clusters need about 10 GB and 4 CPUs. |
+| Ports | 7080/7443, 9080/9443 and 8080/8443 on localhost. `bootstrap.py` stops with the port number if one is taken. |
 
 ## Quick start
 
@@ -214,7 +212,7 @@ The webhook creates one Workflow per firing alert, named from the alert fingerpr
 
 ## Design decisions and trade-offs
 
-- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux, WSL2 and macOS. kind has no Gateway API controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik (as a Gateway API controller) is deployed by Argo CD in every cluster (the host ports 8080/8443, 9080/9443 and 7080/7443 map to its NodePorts 30080 and 30443).
+- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux. kind has no Gateway API controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik (as a Gateway API controller) is deployed by Argo CD in every cluster (the host ports 8080/8443, 9080/9443 and 7080/7443 map to its NodePorts 30080 and 30443).
 - **Gateway API, not Ingress.** Routes are `HTTPRoute` objects on one `Gateway` per cluster, so another controller can replace Traefik without touching them. ingress-nginx was dropped: its Helm admission-webhook hook jobs collided with Argo CD syncs. The Traefik and cert-manager charts have no Helm hooks (cert-manager's startup check Job is turned off), which was verified by rendering them.
 - **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster, so observability survives a production rebuild. A third cluster, `gitops`, runs the one Argo CD that deploys both, so the deployer depends on neither (and holds the only credentials for them). Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
 - **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.

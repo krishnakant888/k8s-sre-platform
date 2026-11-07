@@ -262,7 +262,7 @@ def size_system_components(cluster):
 
 
 def keep_running(cluster):
-    """kind nodes are plain containers: when the Docker daemon restarts (a WSL2 restart, a reboot) they stay stopped and
+    """kind nodes are plain containers: when the Docker daemon restarts (a reboot) they stay stopped and
     the cluster looks gone. A restart policy brings them back with the daemon, and the cluster recovers on its own."""
     nodes = run("docker", "ps", "-a", "--filter", f"label=io.x-k8s.kind.cluster={cluster}", "--format", "{{.Names}}", capture=True).stdout.split()
     if nodes:
