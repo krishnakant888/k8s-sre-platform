@@ -102,6 +102,23 @@ spec:
       containers:
         - name: nginx
           image: nginxinc/nginx-unprivileged:1.27-alpine
+          # nginx reads its config and the Grafana token (include /secrets/*.conf) only at start: reload it when either changes, so Argo CD syncing
+          # the ConfigMap or bootstrap writing the Secret later needs no pod restart
+          command:
+            - sh
+            - -c
+            - |
+              nginx -c /etc/nginx-conf/nginx.conf -g 'daemon off;' &
+              pid=$!
+              trap 'kill -QUIT $pid; wait $pid; exit 0' TERM INT
+              sum() { cat /secrets/* /etc/nginx-conf/* 2>/dev/null | md5sum; }
+              last=$(sum)
+              while kill -0 $pid 2>/dev/null; do
+                sleep 10 & wait $!
+                now=$(sum)
+                if [ "$now" != "$last" ]; then last=$now; nginx -c /etc/nginx-conf/nginx.conf -s reload && echo reloaded; fi
+              done
+              wait $pid
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:
@@ -119,7 +136,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
-            - {name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf}
+            - {name: nginx-conf, mountPath: /etc/nginx-conf, readOnly: true}
             - {name: reports, mountPath: /reports, readOnly: true}
             - {name: ui, mountPath: /ui, readOnly: true}
             - {name: grafana-auth, mountPath: /secrets, readOnly: true}
