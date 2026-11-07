@@ -347,7 +347,7 @@ def _():
     kubectl(HUB, "-n", "observability", "scale", "deploy/alloy", "--replicas=0")
 
 
-@scenario("loki-down", "the log store is scaled to zero", ["LogsDropped"], ["telemetry_gap"], ["infrastructure"], 8, service="alloy", group="disruptive")
+@scenario("loki-down", "the log store is scaled to zero", ["LokiDown"], ["storage_unavailable"], ["infrastructure"], 8, service="loki", group="disruptive")
 def _():
     pause_sync("observability-loki")
     kubectl(OBS, "-n", "observability", "scale", "statefulset/loki", "--replicas=0")
