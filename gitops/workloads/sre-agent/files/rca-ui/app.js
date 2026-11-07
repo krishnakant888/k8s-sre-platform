@@ -247,6 +247,26 @@
     run();
   }
 
+  // the alert that started the investigation, as the agent recorded it (reports written before this have none)
+  function renderAlertDetails(r) {
+    const card = $("alert-card"), body = $("alert-body");
+    const d = r.alert_details;
+    body.replaceChildren();
+    card.hidden = false;
+    if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
+    const grid = el("dl", "facts");
+    const add = (k, v) => { if (!v) return; const w = el("div"); w.append(el("dt", "", k), el("dd", "", v)); grid.append(w); };
+    add("Alert", d.alertname); add("State when it fired", d.status); add("Severity", d.severity); add("Started", fmtTime(when(d.starts_at)));
+    add("Cluster", d.cluster); add("Namespace", d.namespace);
+    body.append(grid);
+    const a = d.annotations || {};
+    for (const k of ["summary", "description"]) if (a[k]) { const p = el("p", "alert-ann"); p.append(el("b", "", k[0].toUpperCase() + k.slice(1) + ": "), document.createTextNode(a[k])); body.append(p); }
+    const chips = el("div", "alert-labels");
+    for (const [k, v] of Object.entries(d.labels).sort()) if (k !== "alertname") chips.append(el("span", "chip", k + "=" + v));
+    const det = el("details"); det.append(el("summary", "", "All labels (" + Object.keys(d.labels).length + ")"), chips);
+    body.append(det);
+  }
+
   function drawArchitecture(r, live) {
     // resolved: two pictures, the problem as it was and the recovered state now; otherwise the one picture
     const { svg, analysis, nameOf } = RcaDiagram.draw(r, live === "resolved" ? "unknown" : live, live === "resolved");
@@ -316,6 +336,7 @@
     body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
     enhance(body);
     buildToc(body);
+    renderAlertDetails(r);
     drawArchitecture(r, "unknown");
     startLive(r, badge, stamp);
     document.title = `${r.alert || id} · RCA reports`;

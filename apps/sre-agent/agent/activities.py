@@ -25,7 +25,38 @@ def analyze(alert: dict, ctx: dict) -> dict:
         except Exception as exc:
             log.warning("llm analysis failed, keeping the rule based report: %s", exc)
             report.contributing_factors.append(f"LLM analysis failed ({type(exc).__name__}); this report is rule based")
+    report.alert_details = alert_details(alert)
+    report.rca_markdown = report.rca_markdown.rstrip("\n") + alert_section(report.alert_details)
     return report.model_dump()
+
+
+def alert_details(alert: dict) -> dict:
+    """What the alert said: the labels (cluster, namespace, pod, ...), the annotations (summary, description), the times and the state."""
+    labels = alert.get("labels", {}) or {}
+    ann = alert.get("annotations", {}) or {}
+    return {
+        "alertname": labels.get("alertname", ""),
+        "status": alert.get("status", ""),
+        "severity": labels.get("severity", ""),
+        "cluster": labels.get("cluster", ""),
+        "namespace": labels.get("namespace", ""),
+        "starts_at": alert.get("startsAt", ""),
+        "labels": {k: str(v)[:200] for k, v in labels.items()},
+        "annotations": {k: str(v)[:600] for k, v in ann.items() if k in ("summary", "description", "runbook_url")},
+        "fingerprint": alert.get("fingerprint", ""),
+    }
+
+
+def alert_section(d: dict) -> str:
+    """The same details at the end of rca.md."""
+    if not d.get("labels"):
+        return ""
+    lines = ["", "", "## Alert details", f"- **Alert:** `{d.get('alertname', '')}` ({d.get('status', '')}, severity {d.get('severity') or 'unknown'}), started {d.get('starts_at', '')}"]
+    for k in ("summary", "description"):
+        if d.get("annotations", {}).get(k):
+            lines.append(f"- **{k.capitalize()}:** {d['annotations'][k]}")
+    lines.append("- **Labels:** " + ", ".join(f"`{k}={v}`" for k, v in sorted(d["labels"].items()) if k != "alertname"))
+    return "\n".join(lines) + "\n"
 
 
 def store_report(report: dict) -> str:
