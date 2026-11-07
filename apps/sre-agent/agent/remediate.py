@@ -145,8 +145,7 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
         return None
 
     rc = report.root_cause
-    fd = report.fault_domain
-    if rc.category != "resource_exhaustion" or fd.layer != "infrastructure":
+    if rc.category != "resource_exhaustion":
         return None
 
     sig = ctx["signals"]
