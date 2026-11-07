@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RCA reports</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c2410c'/%3E%3Cpath d='M9 22V10h7a4 4 0 0 1 0 8h-7M16 18l6 4' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side" id="side">
+    <header class="side-head">
+      <div class="brand"><span class="logo" aria-hidden="true"></span><div><h1>RCA reports</h1><p id="count" class="muted">loading…</p></div></div>
+      <button class="icon-btn" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+    </header>
+    <div class="controls">
+      <input id="q" type="search" placeholder="Search alert, service, cause…" autocomplete="off" aria-label="Search reports">
+      <div class="chips" id="chips" role="group" aria-label="Filter by priority"></div>
+    </div>
+    <ul class="list" id="list" aria-label="Reports"></ul>
+    <footer class="side-foot muted">j / k move · / search · the list refreshes every 30 s</footer>
+  </aside>
+  <main class="main" id="main" tabindex="-1">
+    <button class="back" id="back" aria-label="Back to the list">← Reports</button>
+    <div id="empty" class="empty">
+      <div class="empty-art" aria-hidden="true"></div>
+      <h2>Pick a report</h2>
+      <p class="muted">Each report is written by the SRE agent when an alert fires: what happened, the likely cause, how to fix it, and the evidence.</p>
+    </div>
+    <article id="report" class="report" hidden>
+      <header class="report-head">
+        <div class="pills" id="pills"></div>
+        <h2 id="title"></h2>
+        <p id="summary" class="summary"></p>
+        <dl class="facts" id="facts"></dl>
+        <div class="actions" id="actions"></div>
+      </header>
+      <section class="arch-card" aria-labelledby="arch-title">
+        <div class="arch-head">
+          <h3 id="arch-title">Where the problem is and what it affects</h3>
+          <ul class="legend" aria-label="Legend">
+            <li><span class="sw bad"></span>Problem</li><li><span class="sw warn"></span>Affected</li><li><span class="sw ok"></span>No problem found</li>
+          </ul>
+        </div>
+        <div class="arch-wrap" id="arch"></div>
+        <p class="arch-note" id="arch-note"></p>
+      </section>
+      <div class="report-grid">
+        <div id="body" class="md"></div>
+        <nav class="toc" id="toc" aria-label="On this page"></nav>
+      </div>
+    </article>
+  </main>
+</div>
+<script src="/ui/purify.min.js"></script>
+<script src="/ui/marked.umd.js"></script>
+<script src="/ui/diagram.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>
