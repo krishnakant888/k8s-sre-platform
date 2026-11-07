@@ -672,3 +672,57 @@ data:
             annotations:
               summary: "Logs from {{ $labels.cluster }} are being dropped"
               description: "The collector of {{ $labels.cluster }} drops log lines: Loki is down, unreachable or rate limiting."
+          - uid: generic-mimir-down
+            title: MimirDown
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 60, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "vector(0)", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 1"}
+            noDataState: OK
+            execErrState: Alerting
+            for: 2m
+            labels: {severity: page, service: mimir}
+            annotations:
+              summary: "Mimir is unreachable: all metrics queries are failing"
+              description: "Grafana cannot reach Mimir. Metrics cannot be stored or queried; alert rules that use Mimir are silently failing."
+          - uid: generic-loki-down
+            title: LokiDown
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 300, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "kube_statefulset_status_replicas_ready{namespace=\"observability\", statefulset=\"loki\"} == 0", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 2m
+            labels: {severity: page, service: loki}
+            annotations:
+              summary: "Loki has no ready replicas"
+              description: "The log store (Loki) is down. Logs cannot be written or queried."
+          - uid: generic-traces-dropping
+            title: TracesDropped
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 300, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "kube_statefulset_status_replicas_ready{namespace=\"observability\", statefulset=\"tempo\"} == 0", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 2m
+            labels: {severity: ticket, service: tempo}
+            annotations:
+              summary: "Tempo has no ready replicas: traces cannot be stored"
+              description: "The trace store (Tempo) is down or not ready. Spans from all clusters are being discarded."
