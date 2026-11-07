@@ -4,6 +4,8 @@ name: selfservice
 # the `github:actions:dispatch` scaffolder action; the schedule removes sandboxes, access and drills whose time is up.
 # Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
 
+run-name: "selfservice: ${{ inputs.action || 'expire' }} (requested by ${{ inputs.requested_by || 'the schedule' }})"
+
 on:
   workflow_dispatch:
     inputs:
