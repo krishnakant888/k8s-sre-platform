@@ -75,3 +75,23 @@ spec:
   egress:
     - to:
         - namespaceSelector: {}
+---
+# the RCA report viewer (namespace sre-agent) reads the state of the alert rules to show whether the alert of a report is still firing
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-from-rca-viewer
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: sre-agent}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: rca-viewer}
+      ports:
+        - {port: 3000, protocol: TCP}

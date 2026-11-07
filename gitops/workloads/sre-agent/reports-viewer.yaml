@@ -1,6 +1,8 @@
 # The RCA report viewer, at https://reports.localhost:9443 (behind the gateway login).
 #   /            the viewer page (files/rca-ui) for a browser; the plain directory listing for anything else (scripts, the portal card)
 #   /_list/      the same listing as JSON, which the page reads
+#   /_status/rules   the state of Grafana's alert rules (GET only): the page uses it to show whether the alert of a report is still firing.
+#                    The token of a Viewer service account is in the Secret rca-viewer-grafana (bootstrap.py --viewer-access); without it the page shows "unknown"
 #   /<id>/rca.md and /<id>/report.json   the files of a report, served as plain text so a browser shows them instead of downloading
 apiVersion: v1
 kind: ConfigMap
@@ -21,6 +23,7 @@ data:
       uwsgi_temp_path /tmp/uwsgi_temp;
       scgi_temp_path /tmp/scgi_temp;
       access_log /dev/stdout;
+      resolver 10.96.0.10 valid=20s ipv6=off;   # kube-dns of the kind clusters: the Grafana address is resolved per request, so the viewer starts without Grafana
 
       server {
         listen 8080;
@@ -31,6 +34,14 @@ data:
           add_header Cache-Control no-cache;
           add_header X-Content-Type-Options nosniff;
           add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'self'";
+        }
+        location = /_status/rules {
+          limit_except GET { deny all; }
+          set $grafana http://grafana.observability.svc.cluster.local;
+          include /secrets/*.conf;   # proxy_set_header Authorization "Bearer <token>";
+          proxy_pass $grafana/api/prometheus/grafana/api/v1/rules;
+          proxy_read_timeout 10s;
+          add_header Cache-Control no-store;
         }
         location /_list/ {
           alias /reports/;
@@ -97,6 +108,7 @@ spec:
             - {name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf}
             - {name: reports, mountPath: /reports, readOnly: true}
             - {name: ui, mountPath: /ui, readOnly: true}
+            - {name: grafana-auth, mountPath: /secrets, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: nginx-conf
@@ -105,6 +117,8 @@ spec:
           persistentVolumeClaim: {claimName: rca-reports, readOnly: true}
         - name: ui
           configMap: {name: rca-viewer-ui}
+        - name: grafana-auth
+          secret: {secretName: rca-viewer-grafana, optional: true}
         - name: tmp
           emptyDir: {}
 ---
