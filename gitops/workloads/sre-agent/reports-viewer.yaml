@@ -45,9 +45,17 @@ data:
           proxy_set_header Cookie "";
           # Grafana answers 401 with WWW-Authenticate when it has no token: hidden, so the browser does not show a login box for it
           proxy_hide_header WWW-Authenticate;
+          # and never a 401/403 to the browser (it may then drop the gateway login it had cached and ask again): answer 503, the page shows "unknown"
+          proxy_intercept_errors on;
+          error_page 401 403 =503 @status_unavailable;
           proxy_pass $grafana/api/prometheus/grafana/api/v1/rules;
           proxy_read_timeout 10s;
           add_header Cache-Control no-store;
+        }
+        location @status_unavailable {
+          default_type application/json;
+          add_header Cache-Control no-store;
+          return 503 '{"status":"unavailable"}';
         }
         location /_list/ {
           alias /reports/;
