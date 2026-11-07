@@ -468,8 +468,10 @@ def give_portal_access(present):
     if HUB not in present:
         return
     ensure_namespace(HUB, "portal")
-    old = {k: read_secret(HUB, "portal", "portal-secrets", k) for k in ("POSTGRES_PASSWORD", "BACKEND_SECRET", "GRAFANA_TOKEN", "ARGOCD_TOKEN")}
+    old = {k: read_secret(HUB, "portal", "portal-secrets", k) for k in ("POSTGRES_PASSWORD", "BACKEND_SECRET", "GRAFANA_TOKEN", "ARGOCD_TOKEN", "GITHUB_TOKEN")}
     data = {"POSTGRES_PASSWORD": old["POSTGRES_PASSWORD"] or secrets.token_urlsafe(18), "BACKEND_SECRET": old["BACKEND_SECRET"] or secrets.token_urlsafe(24)}
+    if old["GITHUB_TOKEN"]:
+        data["GITHUB_TOKEN"] = old["GITHUB_TOKEN"]   # added by hand for the self-service templates (docs/self-service.md): keep it
     for c in (HUB, *SPOKES):
         if c in present:
             kubectl(c, "apply", "-f", "-", stdin=PORTAL_ACCESS)
