@@ -144,6 +144,7 @@ def test_scale_down_proposes_floor_directly_when_metrics_are_low(monkeypatch):
     assert "candidate floor" in opened["operation"]
     assert review["candidate_floor"] == 2
     assert review["decision"] == "proposal"
+    assert "below their thresholds" in review["reason"]
 
 
 def test_capacity_review_report_is_visible_in_rca_viewer_format(monkeypatch, tmp_path):
