@@ -226,6 +226,7 @@
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
+      if (r.insights?.change?.likely) top.append(pill("Deploy", "deploy"));
       if (isCapacity) {
         const priority = top.querySelector(".p4"); if (priority) priority.remove();
         if (capacity.review_type === "weekly_floor") top.append(pill("Weekly floor", "ok"));
@@ -694,6 +695,7 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
+    if (r.insights?.change?.likely && !isCapacity) pills.append(pill("Deploy · " + (r.insights.change.revision || "").slice(0, 8), "deploy"));
     $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : "Capacity plan for ") + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
     $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.") : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
