@@ -17,7 +17,7 @@ spec:
   templates:
     - name: review
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-68bc1c54a1b1cb242489270eb00f236b0172c2f2
+        image: ghcr.io/krishnakant888/sre-agent:sha-9ef1b24727977bd639bf8b6de428a7cffa00ff34
         command: [python, -m, agent.steps, scale-down-review]
         env:
           - name: GITHUB_TOKEN
@@ -81,7 +81,7 @@ spec:
   templates:
     - name: review
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-68bc1c54a1b1cb242489270eb00f236b0172c2f2
+        image: ghcr.io/krishnakant888/sre-agent:sha-9ef1b24727977bd639bf8b6de428a7cffa00ff34
         command: [python, -m, agent.steps, weekly-floor-review]
         env:
           - name: GITHUB_TOKEN
