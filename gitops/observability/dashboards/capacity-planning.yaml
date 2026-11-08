@@ -12,10 +12,10 @@ data:
     {
       "uid": "capacity-planning",
       "title": "Capacity Planning & Actions",
-      "description": "Capacity plans, merged changes, post-change health evidence, and live resource headroom",
+      "description": "Operational capacity signals, safe sizing decisions, applied actions, and report-linked verification evidence. Live metrics follow Cluster and Namespace; report history is fleet-wide.",
       "tags": ["capacity", "sre-agent", "resources"],
       "schemaVersion": 39,
-      "version": 2,
+      "version": 3,
       "editable": true,
       "refresh": "30s",
       "time": {"from": "now-24h", "to": "now"},
@@ -54,32 +54,32 @@ data:
       },
       "panels": [
         {
-          "id": 1, "type": "stat", "title": "Reviews with no safe change (24h)",
-          "description": "Capacity reviews that held settings because the evidence did not support a safe reduction.",
+          "id": 1, "type": "stat", "title": "Reviews held by safety checks (24h)",
+          "description": "Fleet-wide count, independent of the Cluster and Namespace selectors. A held review is a protective decision, not a service fault. Open its report to see which safety check blocked a change.",
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}},
           "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | decision=\"skipped\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
-          "id": 2, "type": "stat", "title": "Workloads >80% memory",
-          "description": "Containers where working set exceeds 80% of their memory limit right now",
+          "id": 2, "type": "stat", "title": "Containers above 80% memory limit",
+          "description": "Number of selected containers above 80% of their configured memory limit now. Green means none; investigate any result above zero in the per-pod memory table.",
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}},
           "targets": [{"expr": "count(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"} / on(cluster,namespace,pod,container) kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"} > 0.8) or vector(0)", "refId": "A", "instant": true}]
         },
         {
-          "id": 3, "type": "stat", "title": "Workloads with CPU throttle >20%",
-          "description": "Containers where CPU throttle ratio exceeded 20% in the last 5 minutes",
+          "id": 3, "type": "stat", "title": "Containers throttled above 20%",
+          "description": "Selected containers with more than 20% of CPU scheduling periods throttled over 5 minutes. Green means none; inspect the CPU trend and consider a vertical CPU limit change when sustained.",
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}},
           "targets": [{"expr": "count(sum by (cluster,namespace,pod,container) (rate(container_cpu_cfs_throttled_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster,namespace,pod,container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) > 0.2) or vector(0)", "refId": "A", "instant": true}]
         },
         {
-          "id": 4, "type": "stat", "title": "Lowest memory headroom",
-          "description": "Lowest remaining memory headroom across individual pods. This exposes the tightest pod instead of hiding it in an average.",
+          "id": 4, "type": "stat", "title": "Lowest pod memory headroom",
+          "description": "The smallest remaining fraction of a pod memory limit. Green is at least 30% free, yellow is 10–30% free, and red is below 10% free. This is the tightest pod, not an average.",
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"unit": "percentunit", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}},
@@ -87,16 +87,26 @@ data:
         },
 
         {
+          "id": 21,
+          "type": "text",
+          "title": "How to read this dashboard",
+          "description": "Metric thresholds, scope, and next actions.",
+          "gridPos": {"h": 3, "w": 24, "x": 0, "y": 4},
+          "options": {
+            "mode": "markdown",
+            "content": "**Scope:** Live CPU, memory, and replica panels follow the Cluster and Namespace selectors above. Capacity report counts and history are fleet-wide.\n\n**Healthy signals:** no containers above 80% memory, no containers above 20% CPU throttling, and desired replicas match available replicas. Memory headroom is green at 30% or more free, yellow at 10% to 30%, and red below 10%.\n\n**Read resource values correctly:** memory requests reserve scheduler capacity; limits cap runtime use. A lower limit does not mean the pod uses less memory. Compare the observed 6h peak with the limit. CPU throttle is the fraction of scheduling periods blocked by the CPU limit, not CPU utilization.\n\n**When a signal needs attention:** inspect the affected pod trend and open its capacity report for the measured window, safety decision, PR, and post-change checks. A held review or unverified proposal is a workflow state, not by itself evidence of an outage."
+          }
+        },        {
           "id": 5,
           "type": "row",
           "title": "Memory",
           "collapsed": false,
-          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 4}
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 7}
         },
         {
-          "id": 6, "type": "timeseries", "title": "Memory utilization % (used / limit)",
-          "description": "Working set divided by the current memory limit. A safe limit reduction can raise this percentage while absolute usage stays flat; compare it with the peak and report evidence.",
-          "gridPos": {"h": 10, "w": 16, "x": 0, "y": 5},
+          "id": 6, "type": "timeseries", "title": "Memory use as a share of limit",
+          "description": "Per-pod working set divided by its configured memory limit. Green is below 60%, yellow 60–80%, red above 80%. A lower limit can raise this percentage even when MiB used is unchanged; compare absolute peak MiB before proposing a change.",
+          "gridPos": {"h": 10, "w": 16, "x": 0, "y": 8},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
             "defaults": {"unit": "percentunit", "min": 0, "custom": {"lineWidth": 2, "fillOpacity": 8},
@@ -109,9 +119,9 @@ data:
           ]
         },
         {
-          "id": 7, "type": "table", "title": "Memory headroom",
-          "description": "Current memory use, configured limit, 6h peak and utilization for each pod/container. Red = over 80%.",
-          "gridPos": {"h": 10, "w": 8, "x": 16, "y": 5},
+          "id": 7, "type": "table", "title": "Per-pod memory use and headroom (MiB)",
+          "description": "One row per pod/container. Used and 6h peak are observed MiB; Limit is the runtime ceiling (the request controls scheduling). Used % is color-coded: green <60%, yellow 60–80%, red >80%. Use the report link for the review decision and evidence.",
+          "gridPos": {"h": 10, "w": 8, "x": 16, "y": 8},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
             "defaults": {},
@@ -148,12 +158,12 @@ data:
           "type": "row",
           "title": "CPU",
           "collapsed": false,
-          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18}
         },
         {
-          "id": 9, "type": "timeseries", "title": "CPU throttle ratio",
-          "description": "Fraction of CPU scheduling periods where the container was throttled. >20% suggests the CPU limit is too low.",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "id": 9, "type": "timeseries", "title": "CPU periods throttled (%)",
+          "description": "Per-pod fraction of CPU scheduling periods throttled over 5 minutes. Green <20%, yellow 20–50%, red >50%. Sustained throttling with healthy demand can justify a vertical CPU limit increase; this ratio is not CPU utilization.",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
             "defaults": {"unit": "percentunit", "min": 0, "max": 1, "custom": {"lineWidth": 2, "fillOpacity": 10},
@@ -165,15 +175,15 @@ data:
           "targets": [{"expr": "sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))", "legendFormat": "{{namespace}}/{{pod}}/{{container}}", "refId": "A"}]
         },
         {
-          "id": 10, "type": "timeseries", "title": "Deployment replicas",
-          "description": "Desired replica count over time. Scale-out remediations appear as upward steps.",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "id": 10, "type": "timeseries", "title": "Desired vs available replicas",
+          "description": "Desired replicas are the deployment target; available replicas are currently serving. A gap means rollout or availability is not yet healthy. Scale actions appear as steps.",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
             "defaults": {"unit": "short", "min": 0, "decimals": 0, "custom": {"lineWidth": 2, "fillOpacity": 5, "staircase": true}}
           },
           "options": {"tooltip": {"mode": "multi"}},
-          "targets": [{"expr": "kube_deployment_spec_replicas{cluster=\"$cluster\", namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}}", "refId": "A"}]
+          "targets": [{"expr": "kube_deployment_spec_replicas{cluster=\"$cluster\", namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}} desired", "refId": "A"}, {"expr": "kube_deployment_status_replicas_available{cluster=\"$cluster\", namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}} available", "refId": "B"}]
         },
 
         {
@@ -181,48 +191,48 @@ data:
           "type": "row",
           "title": "Capacity plans and post-change verification",
           "collapsed": false,
-          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27}
         },
         {
-          "id": 16, "type": "stat", "title": "Capacity plans (24h)",
-          "description": "Capacity review reports written in the last 24 hours. Open a report from the table below.",
-          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 25},
+          "id": 16, "type": "stat", "title": "Capacity reviews written (24h)",
+          "description": "Fleet-wide reports written in the last 24 hours; these counts do not follow the Cluster/Namespace selectors. Every table row opens its specific capacity report.",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 28},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "blue", "value": null}]}}},
           "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
-          "id": 17, "type": "stat", "title": "Healthy after change (24h)",
-          "description": "Merged capacity actions whose post-merge checks passed.",
-          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 25},
+          "id": 17, "type": "stat", "title": "Post-change checks healthy (24h)",
+          "description": "Fleet-wide merged capacity actions with all recorded post-merge checks passing. Zero means none were recorded in the time window, not that a failure occurred.",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 28},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}},
           "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | post_merge_status=\"healthy\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
-          "id": 18, "type": "stat", "title": "Follow-up needed (24h)",
-          "description": "Merged actions where a post-change check reported a problem.",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 25},
+          "id": 18, "type": "stat", "title": "Post-change follow-up needed (24h)",
+          "description": "Fleet-wide merged actions whose post-change verification found a problem. Any nonzero value needs review; open the linked report for the failed check and evidence.",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 28},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
           "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | post_merge_status=\"needs_attention\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
-          "id": 19, "type": "stat", "title": "Not verified yet (24h)",
-          "description": "Capacity proposals not merged, or without enough post-merge evidence.",
-          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 25},
+          "id": 19, "type": "stat", "title": "Actions without completed verification (24h)",
+          "description": "Fleet-wide proposals not merged yet, not applicable to post-merge checks, or lacking conclusive evidence. This is a workflow state, not automatically a service health issue.",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 28},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}},
-          "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | post_merge_status=~\"not_merged|inconclusive\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
+          "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | post_merge_status=~\"not_merged|inconclusive|not_applicable\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
-          "id": 20, "type": "table", "title": "Capacity plans and applied actions",
-          "description": "Review history with decision, floor, merge state, PR link, and direct report link. Open a report for the complete change plan and evidence.",
-          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 29},
+          "id": 20, "type": "table", "title": "Capacity decisions and report links",
+          "description": "Fleet-wide capacity decisions with merge state and PR links. Each Open scoped report link selects one report; its detail page shows the recorded cluster, namespace, workload, decision, metrics, and verification evidence.",
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 32},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {}, "overrides": [
-            {"matcher": {"id": "byName", "options": "Report ID"}, "properties": [{"id": "links", "value": [{"title": "Open capacity report", "url": "https://reports.localhost:9443/#${__value.text}"}]}]},
-            {"matcher": {"id": "byName", "options": "Capacity report"}, "properties": [{"id": "links", "value": [{"title": "Open capacity report", "url": "${__value.text}"}]}]},
+            {"matcher": {"id": "byName", "options": "Report ID"}, "properties": [{"id": "links", "value": [{"title": "Open scoped report", "url": "https://reports.localhost:9443/#${__value.text}"}]}]},
+            {"matcher": {"id": "byName", "options": "Capacity report"}, "properties": [{"id": "links", "value": [{"title": "Open scoped report", "url": "${__value.text}"}]}]},
             {"matcher": {"id": "byName", "options": "Pull request"}, "properties": [{"id": "links", "value": [{"title": "Open pull request", "url": "${__value.text}"}]}]},
             {"matcher": {"id": "byName", "options": "Post-change status"}, "properties": [{"id": "custom.width", "value": 160}]},
             {"matcher": {"id": "byName", "options": "Capacity report"}, "properties": [{"id": "custom.width", "value": 240}]}
@@ -239,12 +249,12 @@ data:
           "type": "row",
           "title": "Incident remediation history",
           "collapsed": false,
-          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41}
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44}
         },
         {
           "id": 12, "type": "table", "title": "Automated incident remediations",
           "description": "Every remediation the SRE agent applied automatically. Each row is one merged PR. Workloads that keep appearing are outliers needing a permanent fix.",
-          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 42},
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 45},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {
             "defaults": {},
@@ -274,7 +284,7 @@ data:
         {
           "id": 13, "type": "timeseries", "title": "Memory limit vs observed 6h peak",
           "description": "Orange = current memory limit; blue = 6-hour rolling peak. After a limit reduction the limit line moves down; watch whether observed peak remains safely below it.",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 54},
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 57},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
             "defaults": {"unit": "bytes", "custom": {"lineWidth": 2}},
@@ -296,7 +306,7 @@ data:
         {
           "id": 14, "type": "logs", "title": "Capacity review and remediation events",
           "description": "Structured capacity review outcomes and remediation records, with evidence links in the action table above.",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 64},
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 67},
           "datasource": {"type": "loki", "uid": "loki"},
           "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none"},
           "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=~\"capacity report available|remediation taken\"", "refId": "A"}]

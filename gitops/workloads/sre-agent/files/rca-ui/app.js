@@ -531,7 +531,9 @@
     $("summary").textContent = isCapacity ? "Capacity review, change record, and post-change health evidence." : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
     if (isCapacity) {
-      fact(facts, "Workload", `${r.capacity.namespace || ""}${r.capacity.namespace ? " / " : ""}${r.service || ""}`);
+      fact(facts, "Cluster", r.capacity.cluster || "not recorded");
+      fact(facts, "Namespace", r.capacity.namespace || "not recorded");
+      fact(facts, "Workload", r.service || r.capacity.workload || "not recorded");
       fact(facts, "Decision", decision);
       fact(facts, "Replica floor", r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));
