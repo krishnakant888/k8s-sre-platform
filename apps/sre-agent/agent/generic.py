@@ -360,6 +360,35 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         cluster, ns, workload = "observability", "sre-agent", "alert-webhook"
         sig.update({"cluster": cluster, "namespace": ns, "workload": "sre-agent"})
         pods_and_events("alert-webhook", ns)
+
+        # Find the failed workflow by name from Argo metrics
+        wf_info = _q('argo_workflow_info{namespace="sre-agent",phase="Failed"}', 30)
+        failed_wf_name = next((s["labels"].get("name") for s in wf_info.get("series", []) if s["labels"].get("name")), None)
+        if not failed_wf_name:
+            wf_count = _q('argo_workflows_count{phase="Failed",namespace="sre-agent"}', 30)
+            failed_wf_name = next(
+                (s["labels"].get("workflowName") or s["labels"].get("workflow") for s in wf_count.get("series", []) if s.get("last", 0) > 0 or s.get("max", 0) > 0),
+                None,
+            )
+        sig["failed_workflow_name"] = failed_wf_name
+        if failed_wf_name:
+            add("mimir", 'argo_workflow_info{namespace="sre-agent",phase="Failed"}', f"failed workflow: {failed_wf_name}")
+
+        # Workflow step pod logs (container=main) — avoids picking up rca-viewer nginx access logs
+        wf_step_logs = tools.call_tool("query_logql", {
+            "query": '{cluster="observability", namespace="sre-agent", container="main"} |~ "(?i)traceback|Error|exception|failed"',
+            "minutes": lookback_minutes, "limit": 50,
+        })
+        raw["workflow_step_logs"] = wf_step_logs
+        sig["workflow_step_logs"] = wf_step_logs.get("top_messages", []) if "error" not in wf_step_logs else []
+        if sig["workflow_step_logs"]:
+            add("loki", '{namespace="sre-agent",container="main"}',
+                "workflow step errors: " + "; ".join(f"{m[:110]!r} x{c}" for m, c in sig["workflow_step_logs"][:3]))
+
+        # Check if a recent alert-webhook deploy preceded the failure (a rollout kills in-flight workflows)
+        deploys(["observability-sre-agent", "sre-agent"])
+
+        # Broad error log for overall context
         logs_for('cluster="observability", namespace="sre-agent"', "error lines of the investigation steps and the webhook")
         sig["ongoing"] = True
 
@@ -815,19 +844,59 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         msgs = _msgs(sig)
         auth = re.search(r"401|invalid x-api-key|authentication|api key", msgs)
         rbac = re.search(r"403|forbidden", msgs)
-        top = sig["top_log_messages"][0][0][:140] if sig.get("top_log_messages") else ""
+        # prefer step container logs over nginx access logs for the error description
+        step_msgs = sig.get("workflow_step_logs") or []
+        broad_msgs = sig.get("top_log_messages") or []
+        _is_nginx = lambda t: bool(re.match(r"\d+\.\d+\.\d+\.\d+\s+-\s+-\s+\[", t or ""))
+        top = next((m for m, _ in step_msgs if not _is_nginx(m)), None) \
+              or next((m for m, _ in broad_msgs if not _is_nginx(m)), None) \
+              or (broad_msgs[0][0] if broad_msgs else "")
+        top = (top or "")[:140]
+
+        wf_name = sig.get("failed_workflow_name") or ""
+        wf_label = f" `{wf_name}`" if wf_name else ""
+        wf_logs_cmd = (f"{_ctl('observability')} -n sre-agent logs {wf_name} -c main --tail=60"
+                       if wf_name else
+                       f"{_ctl('observability')} -n sre-agent logs -l workflows.argoproj.io/workflow -c main --tail=60")
+        wf_list_cmd = f"{_ctl('observability')} -n sre-agent get wf | grep -v Succeeded"
+
+        # check if a webhook rollout killed the workflow (Killing / ScalingReplicaSet events on alert-webhook)
+        kill_events = _ev(sig, "Killing", "ScalingReplicaSet")
+        webhook_killed = any(e.get("object", "").startswith("alert-webhook") for e in kill_events)
+        recent_deploy = sig.get("recent_deploy")
+
         if auth:
             return Diag("investigation_pipeline_failed", "application", "the Anthropic API key of the SRE agent", "high", "An investigation failed because the model API rejected the key.",
-                        f"An incident workflow ended in Failed: the agent's call to the model API was refused (`{top}`). Reports fall back to the rule-based analysis, which is less detailed, until the key is fixed.",
-                        ["error lines name an authentication failure", "the webhook accepts alerts and starts workflows"], [f"{_ctl('observability')} -n sre-agent get secret anthropic-api-key", "Replace the key: ANTHROPIC_API_KEY=... python3 bootstrap/bootstrap.py --only observability   (or delete the secret to run rule-based only)"],
-                        ["Alert on workflow failures (this alert) and rotate the key through the secret manager"], [f"{_ctl('observability')} -n sre-agent get wf  # new workflows Succeeded"], "Investigations lose their LLM analysis.")
+                        f"An incident workflow{wf_label} ended in Failed: the agent's call to the model API was refused (`{top}`). Reports fall back to the rule-based analysis, which is less detailed, until the key is fixed.",
+                        ["error lines name an authentication failure", "the webhook accepts alerts and starts workflows"],
+                        [f"{_ctl('observability')} -n sre-agent get secret anthropic-api-key", "Replace the key: ANTHROPIC_API_KEY=... python3 bootstrap/bootstrap.py --only observability   (or delete the secret to run rule-based only)"],
+                        ["Alert on workflow failures (this alert) and rotate the key through the secret manager"],
+                        [f"{_ctl('observability')} -n sre-agent get wf  # new workflows Succeeded"], "Investigations lose their LLM analysis.")
         if rbac:
             return Diag("investigation_pipeline_failed", "infrastructure", "read access of the SRE agent", "medium", "An investigation failed on a permission error.",
-                        f"An incident workflow ended in Failed with a permission error (`{top}`): the agent's service account or one of its read-only tokens lacks a right.", ["error lines contain 403 / forbidden"],
-                        [f"{_ctl('observability')} -n sre-agent logs -l workflows.argoproj.io/workflow --tail=40", "Check the ClusterRoles sre-agent-local-read (observability), sre-agent-read (platform) and sre-agent-hub-read (gitops)"], ["Test the agent's access after every cluster rebuild (bootstrap creates the tokens)"], ["next workflow Succeeded"], "Some investigations are incomplete.")
-        return Diag("investigation_pipeline_failed", "application", "an investigation workflow", "low", "An investigation workflow failed.",
-                    f"An incident workflow ended in Failed" + (f" with `{top}`" if top else "") + ". The alert that started it has no report until it is re-run.", ["the Argo Workflows metric counts a failed workflow"],
-                    [f"{_ctl('observability')} -n sre-agent get wf | grep -v Succeeded", f"{_ctl('observability')} -n sre-agent logs <failed workflow pod> -c main"], ["Keep the steps idempotent so a failed workflow can be resubmitted"], ["new workflows Succeeded"], "A report is missing.")
+                        f"An incident workflow{wf_label} ended in Failed with a permission error (`{top}`): the agent's service account or one of its read-only tokens lacks a right.",
+                        ["error lines contain 403 / forbidden"],
+                        [wf_logs_cmd, "Check the ClusterRoles sre-agent-local-read (observability), sre-agent-read (platform) and sre-agent-hub-read (gitops)"],
+                        ["Test the agent's access after every cluster rebuild (bootstrap creates the tokens)"],
+                        ["next workflow Succeeded"], "Some investigations are incomplete.")
+        if webhook_killed:
+            kill_msg = kill_events[0].get("message", "")[:100] if kill_events else ""
+            deploy_note = f" (deploy {recent_deploy['revision']} at {recent_deploy['deployed_at']})" if recent_deploy else ""
+            return Diag("investigation_pipeline_failed", "application", f"alert-webhook rollout{' during active workflow' if wf_name else ''}", "medium",
+                        f"A rolling restart of alert-webhook terminated workflow{wf_label} mid-run.",
+                        f"The alert-webhook deployment was restarted{deploy_note}: {kill_msg}. The in-flight investigation workflow{wf_label} was killed before it could finish — there is no graceful shutdown handler. No data is lost; the workflow can be re-submitted.",
+                        ["Killing / ScalingReplicaSet event on alert-webhook coincides with workflow failure", f"workflow{wf_label} phase is Failed"],
+                        [wf_list_cmd, wf_logs_cmd,
+                         f"{_ctl('observability')} -n sre-agent delete wf {wf_name}  # clean up, then re-trigger by re-firing the alert" if wf_name else f"{_ctl('observability')} -n sre-agent get wf  # find and delete the failed workflow"],
+                        ["Add a preStop hook on alert-webhook that waits for running workflow pods to complete before the container exits, so a rolling deploy drains in-flight investigations gracefully"],
+                        [f"{_ctl('observability')} -n sre-agent get wf  # new workflows Succeeded"],
+                        "Investigations started during a webhook rollout are silently lost.")
+        return Diag("investigation_pipeline_failed", "application", f"investigation workflow{wf_label or ''}", "low", f"Investigation workflow{wf_label} failed.",
+                    f"An incident workflow{wf_label} ended in Failed" + (f" with `{top}`" if top else "") + ". The alert that started it has no report until it is re-run.",
+                    ["the Argo Workflows metric counts a failed workflow"],
+                    [wf_list_cmd, wf_logs_cmd],
+                    ["Keep the steps idempotent so a failed workflow can be resubmitted"],
+                    ["new workflows Succeeded"], "A report is missing.")
 
     if family == "datasource":
         be = sig.get("datasource_backend", "mimir")
@@ -938,8 +1007,16 @@ def _gaps(ctx: dict, d: Diag) -> list[str]:
         gaps.append(f"No signal identified which backend caused the datasource alert; add `grafana_alerting_rule_evaluation_failures_total` and `grafana_datasource_request_duration_seconds` to the alert context so the agent can name the failing datasource and the first rule that broke")
     if sig["family"] == "telemetry" and d.category == "unknown":
         gaps.append(f"No log or metric pinpointed why telemetry delivery failed; add a counter on the collector for `loki_write_failed_lines_total` and `prometheus_remote_storage_failed_samples_total` broken down by `cluster` and `component` so the first failing step is visible")
-    if sig["family"] == "pipeline" and d.category == "unknown":
-        gaps.append(f"The investigation workflow failed but no structured error was found; add a `failed_step` label and `error_message` annotation to the workflow's exit handler so the next run names the step and the Python exception")
+    if sig["family"] == "pipeline":
+        step_msgs = sig.get("workflow_step_logs") or []
+        broad_msgs = sig.get("top_log_messages") or []
+        nginx_bleed = all(re.match(r"\d+\.\d+\.\d+\.\d+\s+-\s+-\s+\[", m) for m, _ in broad_msgs[:3]) if broad_msgs else False
+        if nginx_bleed and not step_msgs:
+            gaps.append("The error log query matched rca-viewer nginx access logs instead of the workflow step container output — no Python traceback was captured. Filter the Loki query to container=\"main\" to target only workflow step pods")
+        if not sig.get("failed_workflow_name"):
+            gaps.append("The failed workflow name was not found in `argo_workflow_info` metrics; expose the `name` label on that metric (or add a Loki structured log line in the exit-handler: `logger.error('workflow failed', extra={'workflow': name, 'step': step, 'error': msg})`) so the next report names the specific workflow")
+        if d.category == "unknown":
+            gaps.append("The investigation workflow failed but no structured error was found; add a `failed_step` label and `error_message` annotation to the workflow's exit handler so the next run names the step and the Python exception")
     if d.category == "unknown":
         evidence_sources = {e.get("source") for e in ctx.get("evidence", []) if isinstance(e, dict)}
         missing = [s for s in ("mimir", "loki", "tempo") if s not in evidence_sources]
