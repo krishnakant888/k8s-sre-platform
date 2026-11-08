@@ -102,6 +102,11 @@
       if (isCapacity && r.root_cause && r.root_cause.category === "capacity_review") r.root_cause.category = "";
       const verification = capacity.post_merge || (r.remediation && r.remediation.post_merge_verification);
       const verificationStatus = verification && verification.status;
+      if (isCapacity) {
+        b.classList.add("capacity-record");
+        if (verificationStatus === "healthy") b.classList.add("capacity-healthy");
+        else if (verificationStatus === "needs_attention") b.classList.add("capacity-attention");
+      }
       const capacityTitle = capacity.decision === "proposal" ? "Capacity plan" : "Capacity review";
       top.append(el("span", "item-title", isCapacity ? capacityTitle + " · " + (r.service || "workload") : (r.alert || r.id)));
       if (isCapacity) {

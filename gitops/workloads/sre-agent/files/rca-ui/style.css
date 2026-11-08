@@ -178,6 +178,11 @@ button, input, select { font: inherit; color: inherit; }
 .item .pill.big { font-size: 13.5px; padding: 3px 13px; }
 .item .item-action { margin-top: 4px; color: var(--text); font-weight: 650; }
 .item .item-action + .item-sub { font-family: var(--mono); font-size: 10.5px; }
+.item.capacity-record[aria-current="true"] { background: var(--panel-2); border-color: var(--line); }
+.item.capacity-healthy, .item.capacity-healthy[aria-current="true"] { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 42%, var(--line)); }
+.item.capacity-healthy .item-action { color: var(--ok); }
+.item.capacity-attention, .item.capacity-attention[aria-current="true"] { background: var(--p1-bg); border-color: color-mix(in srgb, var(--p1) 48%, var(--line)); }
+.item.capacity-attention .item-action { color: var(--p1); }
 .item.resolved[aria-current="true"] { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .item.resolved .item-sub { color: var(--ok); }
 
