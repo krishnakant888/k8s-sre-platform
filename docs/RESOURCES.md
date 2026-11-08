@@ -57,7 +57,7 @@ Add a VerticalPodAutoscaler in recommendation mode, or Goldilocks, to keep this 
 
 ## Safe scale-down review
 
-The SRE agent runs a daily, review-only scale-down check for `orders-api` and `frontend`. It requires 24 hours of metrics,
+The SRE agent runs a daily, guarded scale-down check for `orders-api` and `frontend`. It requires complete coverage of the 24-hour metric window,
 no matching active alert, no container restarts, all desired replicas available, and no deployment-file change in the last 24 hours.
 It proposes at most one step per workload per run and attempts to auto-merge after those checks; repository protections can keep the PR open.
 The workflow uses the read-only Grafana token in `rca-viewer-grafana`; if that Secret predates this check, run `python3 bootstrap/bootstrap.py --viewer-access` once to add its `token` key.
