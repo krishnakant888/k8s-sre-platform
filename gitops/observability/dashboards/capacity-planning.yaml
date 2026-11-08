@@ -15,7 +15,7 @@ data:
       "description": "Capacity plans, merged changes, post-change health evidence, and live resource headroom",
       "tags": ["capacity", "sre-agent", "resources"],
       "schemaVersion": 39,
-      "version": 1,
+      "version": 2,
       "editable": true,
       "refresh": "30s",
       "time": {"from": "now-24h", "to": "now"},
@@ -34,7 +34,7 @@ data:
             "multi": false,
             "refresh": 2,
             "sort": 1,
-            "current": {}
+            "current": {"selected": true, "text": "platform", "value": "platform"}
           },
           {
             "name": "namespace",
@@ -48,7 +48,7 @@ data:
             "allValue": ".+",
             "refresh": 2,
             "sort": 1,
-            "current": {}
+            "current": {"selected": true, "text": "demo", "value": "demo"}
           }
         ]
       },
@@ -75,15 +75,15 @@ data:
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}},
-          "targets": [{"expr": "count(sum by (cluster,namespace,container) (rate(container_cpu_cfs_throttled_seconds_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster,namespace,container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) > 0.2) or vector(0)", "refId": "A", "instant": true}]
+          "targets": [{"expr": "count(sum by (cluster,namespace,pod,container) (rate(container_cpu_cfs_throttled_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster,namespace,pod,container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) > 0.2) or vector(0)", "refId": "A", "instant": true}]
         },
         {
-          "id": 4, "type": "stat", "title": "Avg memory headroom",
-          "description": "Average free memory headroom across all containers in selected namespaces",
+          "id": 4, "type": "stat", "title": "Lowest memory headroom",
+          "description": "Lowest remaining memory headroom across individual pods. This exposes the tightest pod instead of hiding it in an average.",
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"unit": "percentunit", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}},
-          "targets": [{"expr": "1 - avg(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"} / on(cluster,namespace,pod,container) kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true}]
+          "targets": [{"expr": "min(1 - (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"} / on(cluster,namespace,pod,container) kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"}))", "refId": "A", "instant": true}]
         },
 
         {
@@ -105,12 +105,12 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}},
           "targets": [
-            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}) / on(namespace, container) min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}}", "refId": "A"}
+            {"expr": "max by (cluster, namespace, pod, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}) / on(cluster,namespace,pod,container) min by (cluster, namespace, pod, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{pod}}/{{container}}", "refId": "A"}
           ]
         },
         {
           "id": 7, "type": "table", "title": "Memory headroom",
-          "description": "Current memory use, limit, 6h peak and utilisation per container. Red = over 80%.",
+          "description": "Current memory use, configured limit, 6h peak and utilization for each pod/container. Red = over 80%.",
           "gridPos": {"h": 10, "w": 8, "x": 16, "y": 5},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -137,9 +137,9 @@ data:
             {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "cluster": true, "job": true, "instance": true}}}
           ],
           "targets": [
-            {"expr": "max by (namespace, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
-            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "B", "instant": true, "legendFormat": "{{namespace}} {{container}}"},
-            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "refId": "C", "instant": true, "legendFormat": "{{namespace}} {{container}}"}
+            {"expr": "max by (cluster, namespace, pod, container) (container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})", "refId": "A", "instant": true, "legendFormat": "{{namespace}} {{pod}} {{container}}"},
+            {"expr": "min by (cluster, namespace, pod, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "refId": "B", "instant": true, "legendFormat": "{{namespace}} {{pod}} {{container}}"},
+            {"expr": "max by (cluster, namespace, pod, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "refId": "C", "instant": true, "legendFormat": "{{namespace}} {{pod}} {{container}}"}
           ]
         },
 
@@ -162,7 +162,7 @@ data:
             }
           },
           "options": {"tooltip": {"mode": "multi"}},
-          "targets": [{"expr": "sum by (namespace, container) (rate(container_cpu_cfs_throttled_seconds_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (namespace, container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))", "legendFormat": "{{namespace}}/{{container}}", "refId": "A"}]
+          "targets": [{"expr": "sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m])) / sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_periods_total{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))", "legendFormat": "{{namespace}}/{{pod}}/{{container}}", "refId": "A"}]
         },
         {
           "id": 10, "type": "timeseries", "title": "Deployment replicas",
@@ -288,8 +288,8 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}},
           "targets": [
-            {"expr": "max by (namespace, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "legendFormat": "{{namespace}}/{{container}} peak 6h", "refId": "A"},
-            {"expr": "min by (namespace, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{container}} limit", "refId": "B"}
+            {"expr": "max by (cluster, namespace, pod, container) (max_over_time(container_memory_working_set_bytes{cluster=\"$cluster\", namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[6h]))", "legendFormat": "{{namespace}}/{{pod}}/{{container}} peak 6h", "refId": "A"},
+            {"expr": "min by (cluster, namespace, pod, container) (kube_pod_container_resource_limits{cluster=\"$cluster\", namespace=~\"$namespace\", resource=\"memory\", container!=\"\", container!=\"POD\"})", "legendFormat": "{{namespace}}/{{pod}}/{{container}} limit", "refId": "B"}
           ]
         },
 
