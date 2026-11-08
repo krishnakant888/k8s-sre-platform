@@ -293,9 +293,9 @@ def _write_capacity_report(review: dict) -> str:
         f"**Proposed change:** {proposed or 'none'}  \n"
         f"**Reason:** {review.get('reason', 'metrics satisfied the configured safety checks')}\n\n"
         "## Metrics\n\n"
-        f"{evidence_text}\n\n"
+        f"{evidence_text}\n\n" +
         ("## Weekly recommendation\n\n" if review_type == "weekly_floor" else "## Proposal\n\n") +
-        f"{summary}\n\n"
+        f"{summary}\n\n" +
         ("Weekly reports are advisory only; missing or insufficient evidence withholds a floor recommendation. No replica change is performed."
          if review_type == "weekly_floor" else
          "Scale-down requires adequate metric coverage, no active matching alert, no recent restarts, and all desired replicas available.") +

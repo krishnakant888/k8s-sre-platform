@@ -93,7 +93,7 @@ def _stub_scale_down(monkeypatch, manifest, metrics):
     monkeypatch.setattr(scale_down, "_load_manifest", lambda *a: (manifest, "blob"))
     monkeypatch.setattr(scale_down, "_metrics", lambda *a: metrics)
     monkeypatch.setattr(scale_down, "_active_alert", lambda *a: False)
-    monkeypatch.setattr(scale_down, "_verify_post_merge", lambda *a: {"status": "healthy", "checks": []})
+    monkeypatch.setattr(scale_down, "_verify_post_merge", lambda *a, **kwargs: {"status": "healthy", "checks": []})
     opened = {}
 
     def open_pr(*args):
@@ -143,7 +143,7 @@ def test_scale_down_proposes_floor_directly_when_metrics_are_low(monkeypatch):
     assert "memory: 512Mi" in opened["content"]
     assert opened["evidence"]["candidate_floor"] == 2
     assert "candidate floor" in opened["operation"]
-    assert review["configured_floor"] == 2
+    assert review["candidate_floor"] == 2
     assert review["decision"] == "proposal"
     assert "below their thresholds" in review["reason"]
 
@@ -183,7 +183,7 @@ def test_weekly_floor_review_requires_six_days_of_coverage_and_never_opens_pr(mo
     assert review["decision"] == "skipped"
     assert "Insufficient seven-day history" in review["reason"]
     assert review["configured_floor"] == 2
-    assert review["candidate_floor"] == 2
+    assert "candidate_floor" not in review
     assert "pr_url" not in review
 
 
