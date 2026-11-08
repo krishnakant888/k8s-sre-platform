@@ -442,7 +442,16 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
             reason = "Metrics do not support a safe replica-floor or resource-limit proposal."
         return skip(reason, metrics)
 
-    review.update(decision="proposal", proposed_change=operation,
+    if replicas > min_replicas and low_cpu and low_memory:
+        decision_reason = (
+            f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% are below their thresholds, "
+            f"and memory P99 is {memory_pct:.1f}%; proposing the configured floor."
+        )
+    elif operation.startswith("memory limit"):
+        decision_reason = f"Memory P99 is {memory_pct:.1f}% of the current limit; reducing one memory step at the replica floor."
+    else:
+        decision_reason = f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% support reducing one CPU step at the replica floor."
+    review.update(decision="proposal", reason=decision_reason, proposed_change=operation,
                   **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}))
     pr = _open_recommendation(repo, branch, head_sha, path, blob_sha, changed,
                               workload, operation, {
