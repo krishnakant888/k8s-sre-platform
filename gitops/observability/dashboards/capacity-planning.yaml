@@ -116,9 +116,9 @@ data:
           "fieldConfig": {
             "defaults": {},
             "overrides": [
-              {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
-              {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
-              {"matcher": {"id": "byName", "options": "Peak 6h"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "decmbytes"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "decmbytes"}, {"id": "custom.width", "value": 90}]},
+              {"matcher": {"id": "byName", "options": "Peak 6h"}, "properties": [{"id": "unit", "value": "decmbytes"}, {"id": "custom.width", "value": 90}]},
               {"matcher": {"id": "byName", "options": "Used %"}, "properties": [
                 {"id": "unit", "value": "percentunit"},
                 {"id": "custom.displayMode", "value": "color-background"},
