@@ -348,6 +348,18 @@
     const d = el("div"); d.append(el("dt", "", label), el("dd", "", value)); dl.append(d);
   }
 
+  function capacityActionOutcome(c) {
+    const verification = c.post_merge || {};
+    if (c.merged === true) {
+      if (verification.status === "healthy") return "Applied and verified healthy";
+      if (verification.status === "needs_attention") return "Applied; follow-up required";
+      if (verification.status === "inconclusive") return "Applied; verification inconclusive";
+      return "Applied; verification pending";
+    }
+    if (c.decision === "proposal") return "Proposed; awaiting merge";
+    if (c.decision === "error") return "Review failed";
+    return "No change proposed";
+  }
   function renderCapacityPlan(container, r) {
     const c = r.capacity || {};
     const remediation = r.remediation || {};
@@ -477,6 +489,7 @@
 
     const plan = section("Review basis", "capacity-basis-panel");
     const basis = el("dl", "capacity-basis");
+    fact(basis, "Action outcome", capacityActionOutcome(c));
     fact(basis, "Review decision", c.decision);
     fact(basis, "Replica floor", c.candidate_floor);
     fact(basis, "Review window", c.window);
@@ -522,7 +535,7 @@
     pills.append(badge, stamp);
     if (isCapacity) {
       const floor = r.capacity.candidate_floor;
-      stamp.textContent = `Decision: ${decision || "recorded"}${floor != null ? " · candidate floor " + floor : ""}`;
+      stamp.textContent = `Action outcome: ${capacityActionOutcome(r.capacity)}${floor != null ? " | candidate floor " + floor : ""}`;
       badge.title = "Stored result of the capacity review";
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
@@ -534,7 +547,8 @@
       fact(facts, "Cluster", r.capacity.cluster || "not recorded");
       fact(facts, "Namespace", r.capacity.namespace || "not recorded");
       fact(facts, "Workload", r.service || r.capacity.workload || "not recorded");
-      fact(facts, "Decision", decision);
+      fact(facts, "Action outcome", capacityActionOutcome(r.capacity));
+      fact(facts, "Review decision", decision);
       fact(facts, "Replica floor", r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));
     } else {
