@@ -169,24 +169,25 @@ button, input, select { font: inherit; color: inherit; }
 }
 .item:hover { background: var(--sb-2); }
 .item[aria-current="true"] { background: var(--sb-2); }
-/* severity-based card tint + left border — opaque color-mix anchored to slate-navy base */
-.item[data-sev="p1"] { border-left: 4px solid #ef4444; background: color-mix(in srgb, #ef4444 22%, #0f172a); }
-.item[data-sev="p2"] { border-left: 4px solid #f97316; background: color-mix(in srgb, #f97316 18%, #0f172a); }
-.item[data-sev="p3"] { border-left: 3px solid #eab308; background: color-mix(in srgb, #eab308 14%, #0f172a); }
-.item[data-sev="p4"] { border-left-color: #64748b; }
-.item[data-sev="p1"]:hover, .item[data-sev="p1"][aria-current="true"] { background: color-mix(in srgb, #ef4444 32%, #0f172a); }
-.item[data-sev="p2"]:hover, .item[data-sev="p2"][aria-current="true"] { background: color-mix(in srgb, #f97316 26%, #0f172a); }
-.item[data-sev="p3"]:hover, .item[data-sev="p3"][aria-current="true"] { background: color-mix(in srgb, #eab308 20%, #0f172a); }
+/* severity-based card tint — glassmorphism: gradient fade from severity color to near-black */
+.item[data-sev="p1"] { border-left: 4px solid #ef4444; background: linear-gradient(120deg, rgba(239,68,68,.30) 0%, rgba(8,8,12,.97) 58%); box-shadow: inset 0 1px 0 rgba(239,68,68,.18), inset 0 -1px 0 rgba(239,68,68,.06); }
+.item[data-sev="p2"] { border-left: 4px solid #f97316; background: linear-gradient(120deg, rgba(249,115,22,.26) 0%, rgba(8,8,12,.97) 58%); box-shadow: inset 0 1px 0 rgba(249,115,22,.16), inset 0 -1px 0 rgba(249,115,22,.05); }
+.item[data-sev="p3"] { border-left: 3px solid #eab308; background: linear-gradient(120deg, rgba(234,179,8,.22) 0%, rgba(8,8,12,.97) 58%); box-shadow: inset 0 1px 0 rgba(234,179,8,.14), inset 0 -1px 0 rgba(234,179,8,.04); }
+.item[data-sev="p4"] { border-left: 3px solid #64748b; background: linear-gradient(120deg, rgba(100,116,139,.18) 0%, rgba(8,8,12,.97) 58%); box-shadow: inset 0 1px 0 rgba(100,116,139,.10); }
+.item[data-sev="p1"]:hover, .item[data-sev="p1"][aria-current="true"] { background: linear-gradient(120deg, rgba(239,68,68,.44) 0%, rgba(8,8,12,.97) 65%); box-shadow: inset 0 1px 0 rgba(239,68,68,.28); }
+.item[data-sev="p2"]:hover, .item[data-sev="p2"][aria-current="true"] { background: linear-gradient(120deg, rgba(249,115,22,.38) 0%, rgba(8,8,12,.97) 65%); box-shadow: inset 0 1px 0 rgba(249,115,22,.22); }
+.item[data-sev="p3"]:hover, .item[data-sev="p3"][aria-current="true"] { background: linear-gradient(120deg, rgba(234,179,8,.32) 0%, rgba(8,8,12,.97) 65%); box-shadow: inset 0 1px 0 rgba(234,179,8,.18); }
+.item[data-sev="p4"]:hover, .item[data-sev="p4"][aria-current="true"] { background: linear-gradient(120deg, rgba(100,116,139,.28) 0%, rgba(8,8,12,.97) 65%); }
 /* firing: animated card glow by severity */
 .item[data-live="firing"][data-sev="p1"] { animation: item-fire-p1 1s ease-in-out infinite alternate; }
 .item[data-live="firing"][data-sev="p2"] { animation: item-fire-p2 1.4s ease-in-out infinite alternate; }
 .item[data-live="firing"] { border-left-color: #ef4444; animation: item-fire-p1 1s ease-in-out infinite alternate; }
-.item[data-live="resolved"] { border-left-color: #22c55e !important; background: rgb(34 197 94/.08) !important; }
+.item[data-live="resolved"] { border-left-color: #22c55e !important; background: linear-gradient(120deg, rgba(34,197,94,.26) 0%, rgba(8,8,12,.97) 58%) !important; box-shadow: inset 0 1px 0 rgba(34,197,94,.16) !important; }
 .item.capacity-healthy { border-left-color: #22c55e; }
 .item.capacity-attention { border-left-color: #ef4444; }
 .item.resolved[aria-current="true"] { border-left-color: #22c55e; }
-@keyframes item-fire-p1 { from { background: color-mix(in srgb, #ef4444 22%, #0f172a); } to { background: color-mix(in srgb, #ef4444 36%, #0f172a); box-shadow: inset 2px 0 0 #ef4444; } }
-@keyframes item-fire-p2 { from { background: color-mix(in srgb, #f97316 18%, #0f172a); } to { background: color-mix(in srgb, #f97316 30%, #0f172a); box-shadow: inset 2px 0 0 #f97316; } }
+@keyframes item-fire-p1 { from { background: linear-gradient(120deg, rgba(239,68,68,.30) 0%, rgba(8,8,12,.97) 58%); } to { background: linear-gradient(120deg, rgba(239,68,68,.55) 0%, rgba(8,8,12,.97) 65%); box-shadow: inset 2px 0 8px rgba(239,68,68,.3), inset 0 1px 0 rgba(239,68,68,.3); } }
+@keyframes item-fire-p2 { from { background: linear-gradient(120deg, rgba(249,115,22,.26) 0%, rgba(8,8,12,.97) 58%); } to { background: linear-gradient(120deg, rgba(249,115,22,.46) 0%, rgba(8,8,12,.97) 65%); box-shadow: inset 2px 0 8px rgba(249,115,22,.25), inset 0 1px 0 rgba(249,115,22,.25); } }
 /* live indicator dot (separate from unread dot — stays on after reading) */
 .item[data-live="firing"]::before {
   content: ""; position: absolute; top: 9px; right: 24px;
