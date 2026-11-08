@@ -175,6 +175,7 @@ button, input, select { font: inherit; color: inherit; }
 .item[data-sev="p3"] { border-left-color: #eab308; }
 .item[data-sev="p4"] { border-left-color: #64748b; }
 .item[data-live="firing"] { border-left-color: #ef4444; animation: item-urgent .9s ease-in-out infinite alternate; }
+.item[data-live="resolved"] { border-left-color: #22c55e !important; }
 .item.capacity-healthy { border-left-color: #22c55e; }
 .item.capacity-attention { border-left-color: #ef4444; }
 .item.resolved[aria-current="true"] { border-left-color: #22c55e; }

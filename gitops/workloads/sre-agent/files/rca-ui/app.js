@@ -173,7 +173,9 @@
       const b = el("button", "item");
       b.dataset.id = r.id;
       if (level(r)) b.dataset.sev = level(r).toLowerCase();
-      if (state.live[r.id] === "firing") b.dataset.live = "firing";
+      const liveState = state.live[r.id];
+      if (liveState === "firing") b.dataset.live = "firing";
+      else if (liveState === "resolved") b.dataset.live = "resolved";
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
