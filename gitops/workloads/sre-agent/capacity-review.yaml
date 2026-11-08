@@ -30,13 +30,19 @@ spec:
           - {name: SCALE_DOWN_WINDOW, value: 2m}
           - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "120"}
           - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "0"}
+          - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
         resources:
           requests: {cpu: 50m, memory: 128Mi}
           limits: {memory: 512Mi}
+        volumeMounts:
+          - {name: reports, mountPath: /reports}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
           capabilities: {drop: [ALL]}
+      volumes:
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow

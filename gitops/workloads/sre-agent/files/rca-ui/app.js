@@ -47,7 +47,8 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-        if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
+      if (r.report_type === "capacity") { state.live[r.id] = "capacity"; continue; }
+      if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
         if (s.state === "resolved") saveResolved(r.id, (s.at || new Date()).toISOString());
@@ -73,7 +74,8 @@
     return state.reports.filter((r) => {
       if (state.filter.size && !state.filter.has(level(r))) return false;
       if (!q) return true;
-      return [r.id, r.alert, r.service, r.summary, r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
+      return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
+        r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
     });
   };
 
@@ -94,6 +96,7 @@
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       const top = el("div", "item-top");
       top.append(el("span", "item-title", r.alert || r.id));
+      if (r.report_type === "capacity") top.append(pill("Capacity", "soft"));
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
@@ -270,6 +273,7 @@
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
     body.replaceChildren();
+    if (r.report_type === "capacity") { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
     const grid = el("dl", "facts");
@@ -327,14 +331,22 @@
     if (state.current !== id) return;
 
     const pills = $("pills"); pills.replaceChildren();
+    const isCapacity = r.report_type === "capacity";
     const lv = level(r);
     if (lv) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
-    const badge = pill("Checking Grafana…", "soft");
+    if (isCapacity) pills.append(pill("Capacity report", "soft"));
+    const decision = r.capacity && r.capacity.decision;
+    const badge = pill(isCapacity ? (decision === "proposal" ? "Proposal recorded" : "Review complete") : "Checking Grafana…", "soft");
     badge.id = "live-badge";
     const stamp = el("span", "stamp muted", "");
     pills.append(badge, stamp);
-    if (r.severity) pills.append(pill("alert severity " + r.severity, "soft"));
-    if (r.mode) pills.append(pill(words(r.mode), "soft"));
+    if (isCapacity) {
+      const floor = r.capacity.candidate_floor;
+      stamp.textContent = `Decision: ${decision || "recorded"}${floor != null ? " · candidate floor " + floor : ""}`;
+      badge.title = "Stored result of the capacity review";
+    }
+    if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
+    if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
     $("title").textContent = `${r.alert || id}${r.service ? " on " + r.service : ""}`;
     $("summary").textContent = r.summary || "";
     const facts = $("facts"); facts.replaceChildren();
@@ -344,6 +356,13 @@
     fact(facts, "Started", fmtTime(when(r.started_at)));
     fact(facts, "Report written", fmtTime(when(r.generated_at)));
     fact(facts, "Investigation ID", id);
+    if (isCapacity) {
+      fact(facts, "Review decision", decision);
+      fact(facts, "Current replicas", r.capacity.current_replicas);
+      fact(facts, "Candidate replica floor", r.capacity.candidate_floor);
+      fact(facts, "Proposed change", r.capacity.proposed_change);
+      fact(facts, "Pull request", r.capacity.pr_url);
+    }
 
     const actions = $("actions"); actions.replaceChildren();
     const link = (text, href) => { const a = el("a", "btn", text); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };
@@ -358,16 +377,19 @@
     buildToc(body);
     renderInsights(r);
     renderAlertDetails(r);
-    drawArchitecture(r, "unknown");
-    startLive(r, badge, stamp);
-    document.title = `${r.alert || id} · RCA reports`;
+    $("arch").closest(".arch-card").hidden = isCapacity;
+    if (!isCapacity) {
+      drawArchitecture(r, "unknown");
+      startLive(r, badge, stamp);
+    }
+    document.title = `${r.alert || id} · reports`;
     $("main").scrollTo({ top: 0 });
   }
 
   function route() {
     const id = decodeURIComponent(location.hash.slice(1));
     if (id && /^rca-[\w.-]+$/.test(id)) show(id);
-    else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "RCA reports"; renderList(); }
+    else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "RCA and capacity reports"; renderList(); }
   }
 
   // ---- wiring ------------------------------------------------------------------------------------------------

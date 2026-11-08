@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from agent import remediate, scale_down
@@ -96,7 +97,9 @@ def _stub_scale_down(monkeypatch, manifest, metrics):
 
     def open_pr(*args):
         opened["content"] = args[5]
-        opened["operation"] = args[6]
+        opened["workload"] = args[6]
+        opened["operation"] = args[7]
+        opened["evidence"] = args[8]
         return {"number": 8, "html_url": "https://example.test/pr/8", "_merged": True}
 
     monkeypatch.setattr(scale_down, "_open_recommendation", open_pr)
@@ -107,7 +110,7 @@ LOW = {
     "cpu_p95_cores": 0.01, "cpu_throttle": 0.0,
     "memory_p99_bytes": 100 * 1024 * 1024,
     "cpu_coverage_seconds": 86400.0, "memory_coverage_seconds": 86400.0,
-    "restarts_24h": 0.0, "available_replicas": 3.0,
+    "restarts_in_window": 0.0, "available_replicas": 3.0,
 }
 
 
@@ -127,14 +130,44 @@ def test_short_scale_down_window_uses_fine_query_steps(monkeypatch):
                for query in queries)
 
 
-def test_scale_down_reduces_replicas_one_step_above_floor(monkeypatch):
-    opened = _stub_scale_down(monkeypatch, DEPLOYMENT, LOW)
+def test_scale_down_proposes_floor_directly_when_metrics_are_low(monkeypatch):
+    five_replicas = DEPLOYMENT.replace("replicas: 3", "replicas: 5")
+    opened = _stub_scale_down(monkeypatch, five_replicas, {**LOW, "available_replicas": 5.0})
+    review = {}
 
-    pr = scale_down._propose_for_workload("owner/repo", "main", "head", "orders-api", "demo", "platform")
+    pr = scale_down._propose_for_workload("owner/repo", "main", "head", "orders-api", "demo", "platform", review)
 
     assert pr["_merged"] is True
     assert "replicas: 2" in opened["content"]
     assert "memory: 512Mi" in opened["content"]
+    assert opened["evidence"]["candidate_floor"] == 2
+    assert "candidate floor" in opened["operation"]
+    assert review["candidate_floor"] == 2
+    assert review["decision"] == "proposal"
+
+
+def test_capacity_review_report_is_visible_in_rca_viewer_format(monkeypatch, tmp_path):
+    monkeypatch.setattr(scale_down.config, "REPORTS_DIR", str(tmp_path))
+    review = {
+        "workload": "orders-api", "namespace": "demo", "cluster": "platform",
+        "window": "2m", "started_at": "2026-11-08T02:30:00Z",
+        "decision": "proposal", "reason": "CPU and memory evidence support the floor.",
+        "current_replicas": 5, "candidate_floor": 2,
+        "proposed_change": "replicas 5 to 2", "pr_number": 168,
+        "pr_url": "https://example.test/pr/168", "merged": True,
+        "metrics": LOW,
+    }
+
+    report_id = scale_down._write_capacity_report(review)
+    report_dir = tmp_path / report_id
+    report = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+
+    assert report_id.startswith("rca-capacity-")
+    assert report["report_type"] == "capacity"
+    assert report["capacity"]["candidate_floor"] == 2
+    assert report["remediation"]["pr_url"] == "https://example.test/pr/168"
+    assert "**Candidate replica floor:** 2" in (report_dir / "rca.md").read_text(encoding="utf-8")
+    assert scale_down._write_capacity_report(review) != report_id
 
 
 def test_scale_down_reduces_memory_at_replica_floor(monkeypatch):
