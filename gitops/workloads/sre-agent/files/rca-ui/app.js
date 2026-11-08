@@ -719,7 +719,7 @@
       // root cause callout — prominent above-fold anchor for incident responders
       const oldCallout = $("report").querySelector(".root-cause-callout");
       if (oldCallout) oldCallout.remove();
-      if (r.root_cause && r.root_cause.category) {
+      if (!isCapacity && r.root_cause && r.root_cause.category) {
         const callout = el("div", "root-cause-callout");
         const icon = el("span", "rc-icon", "🔍");
         const content = el("div");
