@@ -368,11 +368,19 @@
     const cpuMilli = typeof vmetrics.cpu_p95_cores === "number" ? vmetrics.cpu_p95_cores * 1000 : null;
     const expected = verification && verification.expected_replicas != null ? verification.expected_replicas : c.current_replicas;
     const available = vmetrics.available_replicas;
+    const beforeMetrics = c.metrics || {};
+    const changeText = String(c.proposed_change || "");
+    const memoryQuantities = [...changeText.matchAll(/(\d+(?:\.\d+)?)(Mi|Gi)/g)].map((m) => Number(m[1]) * (m[2] === "Gi" ? 1024 : 1));
+    const oldMemoryLimit = memoryQuantities.length > 1 ? memoryQuantities[0] : null;
+    const newMemoryLimit = (verification && verification.expected_memory_limit_mib) || (memoryQuantities.length > 1 ? memoryQuantities[1] : null);
+    const beforeMemMiB = typeof beforeMetrics.memory_p99_bytes === "number" ? beforeMetrics.memory_p99_bytes / 1048576 : null;
+    const beforeMemPct = typeof c.memory_pct === "number" ? c.memory_pct : (beforeMemMiB != null && oldMemoryLimit ? beforeMemMiB / oldMemoryLimit * 100 : null);
+    const afterMemPct = memMiB != null && newMemoryLimit ? memMiB / newMemoryLimit * 100 : null;
 
     const top = el("div", "capacity-plan-top");
     const overview = section("Capacity action", "capacity-action-panel");
     overview.append(el("p", "capacity-eyebrow", (c.namespace ? c.namespace + " / " : "") + (c.workload || r.service || "workload")));
-    overview.append(el("p", "capacity-change", c.proposed_change || "No configuration change proposed"));
+    overview.append(el("p", "capacity-change", String(c.proposed_change || "No configuration change proposed").replace(/`/g, "")));
     overview.append(el("p", "capacity-reason", c.reason || r.summary || "Capacity signals reviewed."));
     const actionMeta = el("div", "capacity-action-meta");
     if (remediation.pr_url || c.pr_url) {
@@ -395,7 +403,7 @@
     container.replaceChildren(top);
 
     if (verification && verification.metrics) {
-      const health = section("Health evidence", "capacity-health-panel");
+      const health = section("Verification evidence", "capacity-health-panel");
       const grid = el("div", "capacity-metrics");
       grid.append(
         metric("CPU P95", cpuMilli == null ? "—" : fmt(cpuMilli, 1) + "m", "cores"),
@@ -419,6 +427,48 @@
       }
       container.append(health);
     }
+
+    const delta = section("Before and after", "capacity-delta-panel");
+    const deltaGrid = el("div", "capacity-delta-grid");
+    const changeIsMemory = /memory limit/i.test(changeText) && oldMemoryLimit != null && newMemoryLimit != null;
+    if (changeIsMemory) {
+      const reduction = (1 - newMemoryLimit / oldMemoryLimit) * 100;
+      deltaGrid.append(metric("Memory limit", oldMemoryLimit + " → " + newMemoryLimit + " MiB", reduction.toFixed(0) + "% lower per replica"));
+      if (beforeMemMiB != null && memMiB != null) {
+        const usedDelta = (memMiB - beforeMemMiB) / beforeMemMiB * 100;
+        deltaGrid.append(metric("Memory P99", beforeMemMiB.toFixed(1) + " → " + memMiB.toFixed(1) + " MiB", (usedDelta <= 0 ? Math.abs(usedDelta).toFixed(1) + "% lower" : usedDelta.toFixed(1) + "% higher") + " observed"));
+      }
+    } else if (/CPU limit/i.test(changeText)) {
+      const cpuQuantities = [...changeText.matchAll(/(\d+(?:\.\d+)?)m/g)].map((m) => Number(m[1]));
+      if (cpuQuantities.length > 1) deltaGrid.append(metric("CPU limit", cpuQuantities[0] + " → " + cpuQuantities[1] + "m", (1 - cpuQuantities[1] / cpuQuantities[0] > 0 ? ((1 - cpuQuantities[1] / cpuQuantities[0]) * 100).toFixed(0) + "% lower per replica" : "limit change")));
+    } else if (/replicas/i.test(changeText)) {
+      const replicas = [...changeText.matchAll(/replicas\s+`?(\d+)`?\s*(?:→|->)\s*`?(\d+)/gi)].map((m) => [Number(m[1]), Number(m[2])]);
+      if (replicas.length) deltaGrid.append(metric("Replica plan", replicas[0][0] + " → " + replicas[0][1], "configured floor retained"));
+    }
+    if (typeof beforeMetrics.cpu_p95_cores === "number" && typeof vmetrics.cpu_p95_cores === "number") {
+      deltaGrid.append(metric("CPU P95", beforeMetrics.cpu_p95_cores.toFixed(4) + " → " + vmetrics.cpu_p95_cores.toFixed(4) + " cores", "before → after"));
+    }
+    if (typeof beforeMetrics.cpu_throttle === "number" && typeof vmetrics.cpu_throttle === "number") {
+      deltaGrid.append(metric("CPU throttling", (beforeMetrics.cpu_throttle * 100).toFixed(3) + "% → " + (vmetrics.cpu_throttle * 100).toFixed(3) + "%", "before → after"));
+    }
+    if (available != null && expected != null) deltaGrid.append(metric("Availability", fmt(available, 0) + " / " + expected, "all expected replicas available"));
+    if (deltaGrid.childElementCount) delta.append(deltaGrid);
+    if (changeIsMemory && beforeMemPct != null && afterMemPct != null) {
+      const bars = el("div", "capacity-compare-bars");
+      [["Before", beforeMemPct, beforeMemMiB, oldMemoryLimit], ["After", afterMemPct, memMiB, newMemoryLimit]].forEach(([label, pct, used, limit]) => {
+        const row = el("div", "capacity-compare-row");
+        const topLine = el("div", "capacity-compare-label");
+        topLine.append(el("strong", "", label), el("span", "", used.toFixed(1) + " / " + limit + " MiB · " + pct.toFixed(1) + "% used"));
+        const track = el("div", "capacity-meter");
+        const fill = el("span", "capacity-meter-fill"); fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        track.append(fill); row.append(topLine, track); bars.append(row);
+      });
+      const perPodDrop = oldMemoryLimit - newMemoryLimit;
+      const totalCeilingDrop = expected == null ? null : perPodDrop * Number(expected);
+      const note = "The configured memory ceiling fell by " + perPodDrop + " MiB per pod" + (totalCeilingDrop == null ? "." : " (" + totalCeilingDrop + " MiB across " + expected + " replicas).") + " The 256Mi request and replica floor stayed in place; the request still drives scheduling, while the limit caps runtime use.";
+      delta.append(bars, el("p", "capacity-delta-note", note));
+    }
+    if (delta.childElementCount) container.append(delta);
 
     const plan = section("Review basis", "capacity-basis-panel");
     const basis = el("dl", "capacity-basis");

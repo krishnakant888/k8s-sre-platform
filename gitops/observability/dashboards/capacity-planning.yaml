@@ -54,12 +54,12 @@ data:
       },
       "panels": [
         {
-          "id": 1, "type": "stat", "title": "Resource exhaustion investigations (24h)",
-          "description": "RCA reports where root cause was resource_exhaustion",
+          "id": 1, "type": "stat", "title": "Reviews with no safe change (24h)",
+          "description": "Capacity reviews that held settings because the evidence did not support a safe reduction.",
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}},
-          "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"rca report\" | root_cause=\"resource_exhaustion\" [24h]))", "queryType": "instant", "refId": "A"}]
+          "targets": [{"expr": "sum(count_over_time({namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\" | decision=\"skipped\" [24h])) or vector(0)", "queryType": "instant", "refId": "A"}]
         },
         {
           "id": 2, "type": "stat", "title": "Workloads >80% memory",
@@ -95,7 +95,7 @@ data:
         },
         {
           "id": 6, "type": "timeseries", "title": "Memory utilization % (used / limit)",
-          "description": "How full each container's memory limit is. 100% = OOMKill imminent. After a memory-raise remediation PR merges the line drops.",
+          "description": "Working set divided by the current memory limit. A safe limit reduction can raise this percentage while absolute usage stays flat; compare it with the peak and report evidence.",
           "gridPos": {"h": 10, "w": 16, "x": 0, "y": 5},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -217,32 +217,32 @@ data:
         },
         {
           "id": 20, "type": "table", "title": "Capacity plans and applied actions",
-          "description": "One row per capacity report, including the proposed action, PR, post-change status, and direct report link.",
+          "description": "Review history with decision, floor, merge state, PR link, and direct report link. Open a report for the complete change plan and evidence.",
           "gridPos": {"h": 12, "w": 24, "x": 0, "y": 29},
           "datasource": {"type": "loki", "uid": "loki"},
           "fieldConfig": {"defaults": {}, "overrides": [
             {"matcher": {"id": "byName", "options": "Report ID"}, "properties": [{"id": "links", "value": [{"title": "Open capacity report", "url": "https://reports.localhost:9443/#${__value.text}"}]}]},
             {"matcher": {"id": "byName", "options": "Capacity report"}, "properties": [{"id": "links", "value": [{"title": "Open capacity report", "url": "${__value.text}"}]}]},
             {"matcher": {"id": "byName", "options": "Pull request"}, "properties": [{"id": "links", "value": [{"title": "Open pull request", "url": "${__value.text}"}]}]},
-            {"matcher": {"id": "byName", "options": "post_merge_status"}, "properties": [{"id": "custom.width", "value": 160}]},
-            {"matcher": {"id": "byName", "options": "proposed_change"}, "properties": [{"id": "custom.width", "value": 320}]}
+            {"matcher": {"id": "byName", "options": "Post-change status"}, "properties": [{"id": "custom.width", "value": 160}]},
+            {"matcher": {"id": "byName", "options": "Capacity report"}, "properties": [{"id": "custom.width", "value": 240}]}
           ]},
           "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
           "transformations": [
             {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "decision": "Decision", "candidate_floor": "Replica floor", "proposed_change": "Action", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
+            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "decision": "Decision", "candidate_floor": "Replica floor", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
           ],
           "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\"", "refId": "A"}]
         },
         {
           "id": 11,
           "type": "row",
-          "title": "Remediation history",
+          "title": "Incident remediation history",
           "collapsed": false,
           "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41}
         },
         {
-          "id": 12, "type": "table", "title": "Automated remediations",
+          "id": 12, "type": "table", "title": "Automated incident remediations",
           "description": "Every remediation the SRE agent applied automatically. Each row is one merged PR. Workloads that keep appearing are outliers needing a permanent fix.",
           "gridPos": {"h": 12, "w": 24, "x": 0, "y": 42},
           "datasource": {"type": "loki", "uid": "loki"},
@@ -273,7 +273,7 @@ data:
 
         {
           "id": 13, "type": "timeseries", "title": "Memory limit vs observed 6h peak",
-          "description": "Orange band = current memory limit; blue = 6-hour rolling peak. When blue approaches orange an OOM kill is imminent. After remediation the orange line should jump up.",
+          "description": "Orange = current memory limit; blue = 6-hour rolling peak. After a limit reduction the limit line moves down; watch whether observed peak remains safely below it.",
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 54},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -294,12 +294,12 @@ data:
         },
 
         {
-          "id": 14, "type": "logs", "title": "Remediation and investigation logs",
-          "description": "Live sre-agent logs filtered to resource exhaustion investigations",
+          "id": 14, "type": "logs", "title": "Capacity review and remediation events",
+          "description": "Structured capacity review outcomes and remediation records, with evidence links in the action table above.",
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 64},
           "datasource": {"type": "loki", "uid": "loki"},
           "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none"},
-          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=~\"remediation taken|rca report\" | root_cause=~\"resource_exhaustion|\"", "refId": "A"}]
+          "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=~\"capacity report available|remediation taken\"", "refId": "A"}]
         }
       ]
     }

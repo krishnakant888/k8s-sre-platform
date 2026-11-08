@@ -176,6 +176,8 @@ button, input, select { font: inherit; color: inherit; }
 
 /* list: bigger priority badge; green for a resolved report, and green when it is the selected one */
 .item .pill.big { font-size: 13.5px; padding: 3px 13px; }
+.item .item-action { margin-top: 4px; color: var(--text); font-weight: 650; }
+.item .item-action + .item-sub { font-family: var(--mono); font-size: 10.5px; }
 .item.resolved[aria-current="true"] { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .item.resolved .item-sub { color: var(--ok); }
 
@@ -234,6 +236,18 @@ button, input, select { font: inherit; color: inherit; }
 .capacity-result-title { font-size: 18px; }
 .capacity-result-copy { margin: 5px 0 0; color: var(--muted); }
 .capacity-checked-at { margin-top: 9px; color: var(--muted); font-size: 12px; }
+.capacity-delta-panel { margin-top: 16px; }
+.capacity-delta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.capacity-delta-grid .capacity-metric { background: var(--panel-2); }
+.capacity-compare-bars { display: grid; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.capacity-compare-row { min-width: 0; }
+.capacity-compare-label { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.capacity-compare-label strong { font-size: 13px; }
+.capacity-compare-label span { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.capacity-meter { height: 11px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.capacity-meter-fill { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: linear-gradient(90deg, #22c55e, #84cc16); transition: width .4s ease; }
+.capacity-compare-row:last-child .capacity-meter-fill { background: linear-gradient(90deg, #16a34a, #4ade80); }
+.capacity-delta-note { margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--accent); border-radius: 0 9px 9px 0; background: var(--accent-soft); color: var(--muted); font-size: 13px; }
 .capacity-health-panel { margin-top: 16px; }
 .capacity-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .capacity-metric { min-width: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--bg); }
@@ -261,4 +275,5 @@ button, input, select { font: inherit; color: inherit; }
   .capacity-metrics { grid-template-columns: 1fr 1fr; gap: 7px; }
   .capacity-metric { padding: 10px; }
   .capacity-metric-value { font-size: 17px; }
+  .capacity-compare-label { align-items: flex-start; flex-direction: column; gap: 1px; }
 }
