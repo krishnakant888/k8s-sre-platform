@@ -263,7 +263,7 @@ data:
           "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
           "transformations": [
             {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "decision": "Decision", "candidate_floor": "Replica floor", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
+            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "review_type": "Review cadence", "decision": "Decision", "candidate_floor": "Replica floor", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
           ],
           "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\"", "refId": "A"}]
         },

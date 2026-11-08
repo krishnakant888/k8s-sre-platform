@@ -142,7 +142,7 @@ def test_scale_down_proposes_floor_directly_when_metrics_are_low(monkeypatch):
     assert "memory: 512Mi" in opened["content"]
     assert opened["evidence"]["candidate_floor"] == 2
     assert "candidate floor" in opened["operation"]
-    assert review["candidate_floor"] == 2
+    assert review["configured_floor"] == 2
     assert review["decision"] == "proposal"
     assert "below their thresholds" in review["reason"]
 
@@ -169,6 +169,56 @@ def test_capacity_review_report_is_visible_in_rca_viewer_format(monkeypatch, tmp
     assert report["remediation"]["pr_url"] == "https://example.test/pr/168"
     assert "**Candidate replica floor:** 2" in (report_dir / "rca.md").read_text(encoding="utf-8")
     assert scale_down._write_capacity_report(review) != report_id
+
+
+def test_weekly_floor_review_requires_six_days_of_coverage_and_never_opens_pr(monkeypatch):
+    monkeypatch.setattr(scale_down, "_load_manifest", lambda *a: (DEPLOYMENT, "blob"))
+    monkeypatch.setattr(scale_down, "_metrics", lambda *a: {
+        **LOW, "cpu_coverage_seconds": 12 * 60 * 60, "memory_coverage_seconds": 12 * 60 * 60,
+    })
+    review = scale_down._review_replica_floor("orders-api", "demo", "platform")
+
+    assert review["review_type"] == "weekly_floor"
+    assert review["decision"] == "skipped"
+    assert "Insufficient seven-day history" in review["reason"]
+    assert review["configured_floor"] == 2
+    assert review["candidate_floor"] == 2
+    assert "pr_url" not in review
+
+
+def test_weekly_floor_review_is_read_only_and_keeps_the_configured_floor(monkeypatch):
+    manifest = DEPLOYMENT.replace("replicas: 3", "replicas: 2")
+    monkeypatch.setattr(scale_down, "_load_manifest", lambda *a: (manifest, "blob"))
+    monkeypatch.setattr(scale_down, "_metrics", lambda *a: {
+        **LOW, "cpu_coverage_seconds": 7 * 24 * 60 * 60,
+        "memory_coverage_seconds": 7 * 24 * 60 * 60, "available_replicas": 2,
+    })
+    monkeypatch.setattr(scale_down, "_active_alert", lambda *a: False)
+    review = scale_down._review_replica_floor("orders-api", "demo", "platform")
+
+    assert review["decision"] == "recommendation"
+    assert review["candidate_floor"] == 2
+    assert review["proposed_change"].startswith("Retain the configured floor")
+    assert "pr_url" not in review
+
+
+def test_weekly_floor_report_uses_capacity_report_identity_and_recommendation_copy(monkeypatch, tmp_path):
+    monkeypatch.setattr(scale_down.config, "REPORTS_DIR", str(tmp_path))
+    review = {
+        "review_type": "weekly_floor", "workload": "orders-api", "namespace": "demo",
+        "cluster": "platform", "window": "7d", "decision": "recommendation",
+        "candidate_floor": 2, "proposed_change": "Retain floor of 2 replicas",
+        "reason": "Healthy weekly evidence supports keeping the policy floor.", "metrics": LOW,
+    }
+
+    report_id = scale_down._write_capacity_report(review)
+    report = json.loads((tmp_path / report_id / "report.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / report_id / "rca.md").read_text(encoding="utf-8")
+
+    assert report["report_type"] == "capacity"
+    assert report["capacity"]["review_type"] == "weekly_floor"
+    assert "Weekly recommendation" in markdown
+    assert "no scaling change or pull request was made" in report["summary"]
 
 
 def test_scale_down_reduces_memory_at_replica_floor(monkeypatch):

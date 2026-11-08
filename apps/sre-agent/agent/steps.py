@@ -48,8 +48,12 @@ def scale_down_review() -> None:
     scale_down.run_daily_review()
 
 
+def weekly_floor_review() -> None:
+    scale_down.run_weekly_floor_review()
+
+
 STEPS = {"collect": collect, "analyze": analyze, "store": store, "notify": notify,
-         "scale-down-review": scale_down_review}
+         "scale-down-review": scale_down_review, "weekly-floor-review": weekly_floor_review}
 
 
 def main(argv: list[str]) -> int:

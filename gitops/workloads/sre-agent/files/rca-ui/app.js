@@ -123,15 +123,17 @@
       if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
       if (isCapacity) {
         const priority = top.querySelector(".p4"); if (priority) priority.remove();
+        if (capacity.review_type === "weekly_floor") top.append(pill("Weekly floor", "ok"));
         const action = (capacity.proposed_change || capacity.reason || r.summary || "No change proposed").replace(/`/g, "");
         b.append(top, el("div", "item-sub item-action", action), el("div", "item-sub", "ID: " + r.id));
       } else b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
       if (isCapacity) {
-        if (capacity.candidate_floor != null) m.append(el("span", "", "floor " + capacity.candidate_floor));
+        if (capacity.candidate_floor != null) m.append(el("span", "", (capacity.review_type === "weekly_floor" ? "candidate " : "floor ") + capacity.candidate_floor));
         if (verificationStatus === "healthy") m.append(el("span", "", "post-change checks passed"));
         else if (verificationStatus === "needs_attention") m.append(el("span", "", "check results need review"));
+        else if (capacity.review_type === "weekly_floor") m.append(el("span", "", "recommendation only"));
         else if (!verificationStatus && capacity.decision) m.append(el("span", "", words(capacity.decision)));
       }
       if (r.root_cause && r.root_cause.category) m.append(el("span", "", "· " + words(r.root_cause.category)));
@@ -349,6 +351,7 @@
   }
 
   function capacityActionOutcome(c) {
+    if (c.review_type === "weekly_floor") return "Recommendation only; no scaling change was applied";
     const verification = c.post_merge || {};
     if (c.merged === true) {
       if (verification.status === "healthy") return "Applied and verified healthy";
@@ -364,14 +367,16 @@
     const c = r.capacity || {};
     const remediation = r.remediation || {};
     const verification = c.post_merge || remediation.post_merge_verification || null;
+    const weeklyFloor = c.review_type === "weekly_floor";
     const checks = verification && Array.isArray(verification.checks) ? verification.checks : [];
     const status = verification && verification.status;
-    const statusText = status === "healthy" ? "Healthy after change"
+    const statusText = weeklyFloor ? "Weekly recommendation; no action applied"
+      : status === "healthy" ? "Healthy after change"
       : status === "needs_attention" ? "Follow-up needed"
       : status === "inconclusive" ? "Verification inconclusive"
       : status === "not_merged" ? "Waiting for merge"
       : remediation.merged ? "Verification pending" : "Plan recorded";
-    const statusClass = status === "healthy" ? "healthy" : status === "needs_attention" ? "attention" : "pending";
+    const statusClass = status === "healthy" || (weeklyFloor && c.decision === "recommendation") ? "healthy" : status === "needs_attention" ? "attention" : "pending";
     const section = (title, cls) => { const s = el("section", "capacity-panel " + (cls || "")); s.append(el("h3", "capacity-section-title", title)); return s; };
     const metric = (label, value, detail) => {
       const item = el("div", "capacity-metric");
@@ -395,7 +400,7 @@
     const afterMemPct = memMiB != null && newMemoryLimit ? memMiB / newMemoryLimit * 100 : null;
 
     const top = el("div", "capacity-plan-top");
-    const overview = section("Capacity action", "capacity-action-panel");
+    const overview = section(weeklyFloor ? "Weekly replica-floor recommendation" : "Capacity action", "capacity-action-panel");
     overview.append(el("p", "capacity-eyebrow", (c.namespace ? c.namespace + " / " : "") + (c.workload || r.service || "workload")));
     overview.append(el("p", "capacity-change", String(c.proposed_change || "No configuration change proposed").replace(/`/g, "")));
     overview.append(el("p", "capacity-reason", c.reason || r.summary || "Capacity signals reviewed."));
@@ -407,10 +412,12 @@
     }
     actionMeta.append(el("span", "capacity-status " + statusClass, statusText));
     overview.append(actionMeta);
-    const result = section("Post-change result", "capacity-result-panel " + statusClass);
+    const result = section(weeklyFloor ? "Weekly review outcome" : "Post-change result", "capacity-result-panel " + statusClass);
     result.append(el("span", "capacity-result-mark", status === "healthy" ? "✓" : status === "needs_attention" ? "!" : "·"));
     result.append(el("strong", "capacity-result-title", statusText));
-    result.append(el("p", "capacity-result-copy", status === "healthy"
+    result.append(el("p", "capacity-result-copy", weeklyFloor
+      ? "This is a read-only recommendation based on the weekly telemetry window. It did not change replicas, edit Git, or create a pull request."
+      : status === "healthy"
       ? "The proposed settings are active and the workload passed its " + (verification.window || "post-merge") + " health checks."
       : status === "needs_attention" ? "The change was applied, but one or more health checks need follow-up."
       : status === "not_merged" ? "The pull request has not merged, so post-change health has not been checked."
@@ -491,7 +498,9 @@
     const basis = el("dl", "capacity-basis");
     fact(basis, "Action outcome", capacityActionOutcome(c));
     fact(basis, "Review decision", c.decision);
-    fact(basis, "Replica floor", c.candidate_floor);
+    fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review" : "Daily scale-down review");
+    if (weeklyFloor) fact(basis, "Configured minimum", c.configured_floor);
+    fact(basis, weeklyFloor ? "Candidate replica count" : "Replica floor", c.candidate_floor);
     fact(basis, "Review window", c.window);
     fact(basis, "Review metrics", c.metrics ? "Captured" : "Unavailable");
     plan.append(basis);
@@ -522,7 +531,8 @@
     }
     const decision = r.capacity && r.capacity.decision;
     const postMergeStatus = isCapacity && r.capacity.post_merge && r.capacity.post_merge.status;
-    const capacityBadge = postMergeStatus === "healthy" ? "Merged · healthy"
+    const capacityBadge = isCapacity && r.capacity.review_type === "weekly_floor" ? "Weekly floor review · recommendation only"
+      : postMergeStatus === "healthy" ? "Merged · healthy"
       : postMergeStatus === "needs_attention" ? "Merged · needs attention"
       : postMergeStatus === "inconclusive" ? "Merged · verification inconclusive"
       : postMergeStatus === "not_merged" ? "PR open · not verified"
@@ -540,16 +550,18 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
-    $("title").textContent = isCapacity ? "Capacity plan for " + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
-    $("summary").textContent = isCapacity ? "Capacity review, change record, and post-change health evidence." : (r.summary || "");
+    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : "Capacity plan for ") + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
+    $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.") : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
     if (isCapacity) {
       fact(facts, "Cluster", r.capacity.cluster || "not recorded");
       fact(facts, "Namespace", r.capacity.namespace || "not recorded");
       fact(facts, "Workload", r.service || r.capacity.workload || "not recorded");
       fact(facts, "Action outcome", capacityActionOutcome(r.capacity));
+      fact(facts, "Review type", r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review" : "Daily scale-down review");
       fact(facts, "Review decision", decision);
-      fact(facts, "Replica floor", r.capacity.candidate_floor);
+      fact(facts, r.capacity.review_type === "weekly_floor" ? "Configured minimum" : "Replica floor",
+        r.capacity.review_type === "weekly_floor" ? r.capacity.configured_floor : r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));
     } else {
       fact(facts, "Where", r.fault_domain && r.fault_domain.layer ? `${r.fault_domain.layer} level` : "");
