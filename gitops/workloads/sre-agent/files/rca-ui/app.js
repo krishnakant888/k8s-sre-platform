@@ -465,7 +465,7 @@
       });
       const perPodDrop = oldMemoryLimit - newMemoryLimit;
       const totalCeilingDrop = expected == null ? null : perPodDrop * Number(expected);
-      const note = "The configured memory ceiling fell by " + perPodDrop + " MiB per pod" + (totalCeilingDrop == null ? "." : " (" + totalCeilingDrop + " MiB across " + expected + " replicas).") + " The 256Mi request and replica floor stayed in place; the request still drives scheduling, while the limit caps runtime use.";
+      const note = "Memory limit reduced by " + perPodDrop + " MiB per pod" + (totalCeilingDrop == null ? "." : " (" + totalCeilingDrop + " MiB across " + expected + " replicas).") + " The 256Mi request and replica floor stayed unchanged. Scheduling still uses the request; this trims runtime memory headroom without claiming additional schedulable node capacity.";
       delta.append(bars, el("p", "capacity-delta-note", note));
     }
     if (delta.childElementCount) container.append(delta);
