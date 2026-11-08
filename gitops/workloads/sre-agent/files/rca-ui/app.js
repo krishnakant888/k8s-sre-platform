@@ -172,6 +172,8 @@
       const li = el("li");
       const b = el("button", "item");
       b.dataset.id = r.id;
+      if (level(r)) b.dataset.sev = level(r).toLowerCase();
+      if (state.live[r.id] === "firing") b.dataset.live = "firing";
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
@@ -355,6 +357,22 @@
     const evald = live.evaluated && !isNaN(live.evaluated) ? " · rule last evaluated " + clock(live.evaluated) : "";
     const next = live.state === "resolved" ? "" : ` · checks again every ${every(r, live.state) / 1000} s (${level(r) || "no priority"})`;
     stamp.textContent = asked + evald + next;
+    // incident firing banner — sticky at top of main, unmissable for P1/P2
+    let banner = $("incident-banner");
+    if (!banner) { banner = el("div", "incident-banner"); banner.id = "incident-banner"; banner.hidden = true; $("main").prepend(banner); }
+    const rh = $("report")?.querySelector(".report-head");
+    if (rh) rh.dataset.live = live.state;
+    if (live.state === "firing" || live.state === "pending") {
+      const lv = level(r);
+      const since = live.since && !isNaN(live.since) ? " since " + live.since.toLocaleTimeString(undefined, { timeStyle: "short" }) : "";
+      banner.className = "incident-banner " + (lv.toLowerCase() || "p3");
+      banner.hidden = false;
+      const closeBtn = el("button", "banner-dismiss", "×");
+      closeBtn.addEventListener("click", () => { banner.hidden = true; });
+      banner.replaceChildren(el("span", "banner-pulse"), el("strong", "", live.state === "firing" ? "FIRING" : "PENDING"), el("span", "banner-sep", "·"), el("span", "", r.alert || r.id), ...(lv ? [el("span", "banner-pill", lv)] : []), ...(since ? [el("span", "banner-since", since)] : []), closeBtn);
+    } else {
+      banner.hidden = true;
+    }
   }
 
   const EVERY = { P1: 10, P2: 30, P3: 60, P4: 120 };
@@ -379,7 +397,20 @@
     body.replaceChildren();
     card.hidden = !i || !i.chain;
     if (card.hidden) return;
-    const block = (title, items) => { if (!items || !items.length) return; const d = el("div", "ins"); d.append(el("b", "", title)); const ul = el("ul"); for (const t of items) ul.append(el("li", "", t)); d.append(ul); body.append(d); };
+    const INS_ICONS = { "What else is affected": "💥", "Was it a change?": "🔀", "How sure is this": "🎯", "Other possible causes": "🔎", "Dependency chain": "🔗", "How long and which way": "⏱", "Seen before": "🔁", "Related alerts in the same window": "🔔", "Confirming the fix": "✅" };
+    const grid = el("div", "insights-grid");
+    body.append(grid);
+    const block = (title, items) => {
+      if (!items || !items.length) return;
+      const d = el("div", "ins");
+      const head = el("div", "ins-head");
+      head.append(el("span", "ins-icon", INS_ICONS[title] || "·"), el("span", "ins-title", title));
+      d.append(head);
+      const ul = el("ul");
+      for (const t of items) ul.append(el("li", "", t));
+      d.append(ul);
+      grid.append(d);
+    };
     block("What else is affected", i.blast_radius);
     block("Was it a change?", [i.change.note]);
     block("How sure is this", [words(i.confidence.level) + " confidence, evidence from " + (i.confidence.agreeing_sources.join(", ") || "nothing usable"), ...i.confidence.check_next]);
@@ -398,7 +429,7 @@
     if (r.report_type === "capacity") { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
-    const grid = el("dl", "facts");
+    const grid = el("dl", "facts-grid");
     const add = (k, v) => { if (!v) return; const w = el("div"); w.append(el("dt", "", k), el("dd", "", v)); grid.append(w); };
     add("Alert", d.alertname); add("State when it fired", d.status); add("Severity", d.severity); add("Started", fmtTime(when(d.starts_at)));
     add("Cluster", d.cluster); add("Namespace", d.namespace);
@@ -658,16 +689,28 @@
       fact(facts, "Started", fmtTime(when(r.started_at)));
       fact(facts, "Report written", fmtTime(when(r.generated_at)));
       fact(facts, "Investigation ID", id);
+      // root cause callout — prominent above-fold anchor for incident responders
+      const oldCallout = $("report").querySelector(".root-cause-callout");
+      if (oldCallout) oldCallout.remove();
+      if (r.root_cause && r.root_cause.category) {
+        const callout = el("div", "root-cause-callout");
+        const icon = el("span", "rc-icon", "🔍");
+        const content = el("div");
+        content.append(el("span", "rc-label", "Root cause"), el("p", "rc-text", words(r.root_cause.category) + (r.root_cause.confidence ? " · " + r.root_cause.confidence + " confidence" : "")));
+        if (r.root_cause.description) content.append(el("p", "rc-desc", r.root_cause.description));
+        callout.append(icon, content);
+        facts.after(callout);
+      }
     }
 
     const actions = $("actions"); actions.replaceChildren();
     const link = (text, href) => { const a = el("a", "btn", text); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };
-    const copy = el("button", "btn", "Copy link"); copy.type = "button";
+    const copy = el("button", "btn btn-primary", "Copy link"); copy.type = "button";
     copy.addEventListener("click", () => navigator.clipboard.writeText(location.href.split("#")[0] + "#" + id).then(() => toast("Link copied")));
     const print = el("button", "btn", "Print / PDF"); print.type = "button"; print.addEventListener("click", () => window.print());
     // dismiss from report view
     const isDismissed = state.dismissed.has(id);
-    const dimBtn = el("button", "btn", isDismissed ? "Restore" : "Dismiss");
+    const dimBtn = el("button", "btn" + (isDismissed ? "" : " btn-danger"), isDismissed ? "Restore" : "Dismiss");
     dimBtn.type = "button";
     dimBtn.addEventListener("click", () => {
       if (state.dismissed.has(id)) {
@@ -704,6 +747,11 @@
       startLive(r, badge, stamp);
     }
     document.title = `${r.alert || id} · reports`;
+    const rHead = $("report").querySelector(".report-head");
+    if (rHead) { rHead.dataset.sev = isCapacity ? "capacity" : (level(r).toLowerCase() || "none"); delete rHead.dataset.live; }
+    // remove stale firing banner when navigating to a new report
+    const staleBanner = $("incident-banner");
+    if (staleBanner) staleBanner.hidden = true;
     $("main").scrollTo({ top: 0 });
     if (isCapacity) document.title = "Capacity plan | " + (r.service || "workload");
   }
