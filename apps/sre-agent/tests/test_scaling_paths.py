@@ -93,6 +93,7 @@ def _stub_scale_down(monkeypatch, manifest, metrics):
     monkeypatch.setattr(scale_down, "_load_manifest", lambda *a: (manifest, "blob"))
     monkeypatch.setattr(scale_down, "_metrics", lambda *a: metrics)
     monkeypatch.setattr(scale_down, "_active_alert", lambda *a: False)
+    monkeypatch.setattr(scale_down, "_verify_post_merge", lambda *a: {"status": "healthy", "checks": []})
     opened = {}
 
     def open_pr(*args):
