@@ -111,6 +111,18 @@ LOW = {
 }
 
 
+def test_short_scale_down_window_uses_fine_coverage_steps(monkeypatch):
+    queries = []
+    monkeypatch.setattr(scale_down, "WINDOW", "2m")
+    monkeypatch.setattr(scale_down, "_query", lambda query: queries.append(query) or 1.0)
+
+    scale_down._metrics("platform", "demo", "orders-api")
+
+    assert any("timestamp(rate(" in query and "[2m:1m]" in query for query in queries)
+    assert any("timestamp(container_memory_working_set_bytes" in query and "[2m:1m]" in query
+               for query in queries)
+
+
 def test_scale_down_reduces_replicas_one_step_above_floor(monkeypatch):
     opened = _stub_scale_down(monkeypatch, DEPLOYMENT, LOW)
 
