@@ -81,10 +81,10 @@ def _metrics(cluster: str, namespace: str, workload: str) -> dict[str, float | N
             f"max(quantile_over_time(0.99, {memory}[{WINDOW}]))"
         ),
         "cpu_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{WINDOW}:5m]))"
+            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{WINDOW}:1m]))"
         ),
         "memory_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp({memory}))[{WINDOW}:5m]))"
+            f"min(time() - min_over_time((timestamp({memory}))[{WINDOW}:1m]))"
         ),
         "restarts_24h": _query(
             f"sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{WINDOW}]))"
