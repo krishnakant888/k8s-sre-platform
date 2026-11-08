@@ -503,8 +503,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
         return None
 
     path = f"gitops/workloads/{workload}/deployment.yaml"
-    if _has_hpa(repo, branch, workload):
-        return skip("An HPA is managing replicas for this workload; scale-down review is not applicable.")
+    hpa_active = _has_hpa(repo, branch, workload)
     if _has_open_recommendation(repo, workload, branch):
         return skip("An earlier scale-down recommendation is still open.")
     if _recent_commit(repo, path):
@@ -550,7 +549,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
                   low_cpu=low_cpu, low_memory=low_memory)
 
     changed = None
-    if replicas > min_replicas and low_cpu and low_memory:
+    if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
         changed = _replace_replicas(content, replicas, min_replicas)
         operation = f"replicas `{replicas}` → `{min_replicas}` (candidate floor)"
     elif low_memory and memory_limit - memory_request >= 128:
@@ -576,7 +575,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
             reason = "Metrics do not support a safe replica-floor or resource-limit proposal."
         return skip(reason, metrics)
 
-    if replicas > min_replicas and low_cpu and low_memory:
+    if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
         decision_reason = (
             f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% are below their thresholds, "
             f"and memory P99 is {memory_pct:.1f}%; proposing the configured floor."
@@ -586,12 +585,12 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
     else:
         decision_reason = f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% support reducing one CPU step at the replica floor."
     review.update(decision="proposal", reason=decision_reason, proposed_change=operation,
-                  **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}))
+                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}))
     pr = _open_recommendation(repo, branch, head_sha, path, blob_sha, changed,
                               workload, operation, {
                                   "cpu_pct": cpu_pct, "throttle_pct": throttle_pct,
                                   "memory_pct": memory_pct,
-                                  **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}),
+                                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}),
                               })
     review.update(pr_number=pr.get("number"), pr_url=pr.get("html_url"), merged=pr.get("_merged", False))
     if review["merged"]:
