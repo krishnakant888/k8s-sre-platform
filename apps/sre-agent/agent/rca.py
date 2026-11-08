@@ -187,9 +187,32 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     recent = [d for d in deploys.get("history", []) if d.get("deployed_at") and parse_ts(d["deployed_at"]) > started - 3600]
     sig["recent_deploy"] = recent[0] if recent else None
     if "error" in deploys:
-        add("argocd", f"history {svc}", f"no Argo CD application named {svc} could be read ({deploys['error'][:80]})")
+        # named-app lookup failed — scan all apps in the namespace for any recent deploy
+        ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 120})
+        raw["ns_deploys"] = ns_deploys
+        ns_apps = ns_deploys.get("apps", [])
+        if ns_apps:
+            # find the closest deploy to the alert window (within 2h before)
+            closest = ns_apps[0]
+            add("argocd", f"history {svc}", f"no app named '{svc}' in Argo CD; namespace {ns} had a deploy of {closest['application']} at {closest['history'][0]['deployed_at']} ({len(ns_apps)} app(s) deployed recently)")
+            sig["recent_deploy"] = closest["history"][0]
+            sig["recent_deploy_app"] = closest["application"]
+        else:
+            add("argocd", f"history {svc}", f"no Argo CD application named {svc} and no deploys to namespace {ns} in the past 2 hours")
     else:
-        add("argocd", f"history {svc}", f"deploy {recent[0]['revision']} at {recent[0]['deployed_at']}" if recent else "no deploy in the hour before the alert")
+        if recent:
+            add("argocd", f"history {svc}", f"deploy {recent[0]['revision']} at {recent[0]['deployed_at']}")
+        else:
+            # named app found but no deploy in the 1h window — also scan namespace for related deploys
+            ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 120})
+            raw["ns_deploys"] = ns_deploys
+            ns_apps = [a for a in ns_deploys.get("apps", []) if a["application"] != deploys.get("application")]
+            if ns_apps:
+                closest = ns_apps[0]
+                add("argocd", f"history {svc}", f"no deploy of {svc} in the hour before the alert; related deploy of {closest['application']} at {closest['history'][0]['deployed_at']} (paths: {', '.join(closest['paths'][:3]) or 'unknown'})")
+                sig["related_deploy"] = {"app": closest["application"], "deploy": closest["history"][0]}
+            else:
+                add("argocd", f"history {svc}", "no deploy in the hour before the alert, and no related namespace deploys found")
 
     return {"service": svc, "namespace": ns, "started": started, "now": now, "signals": sig, "evidence": evidence, "raw": raw}
 
