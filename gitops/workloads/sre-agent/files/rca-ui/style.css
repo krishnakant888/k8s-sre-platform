@@ -26,7 +26,7 @@
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 .muted { color: var(--muted); }
 .app { display: grid; grid-template-columns: 372px minmax(0, 1fr); height: 100vh; }
 
@@ -42,6 +42,9 @@ button, input { font: inherit; color: inherit; }
 .controls { padding: 6px 16px 10px; }
 #q { width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); outline: none; }
 #q:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.filter-label { display: block; margin-top: 9px; font-size: 12px; color: var(--muted); }
+#report-type { width: 100%; margin-top: 3px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--text); }
+#report-type:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 2px 11px; font-size: 12.5px; cursor: pointer; color: var(--muted); }
 .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }

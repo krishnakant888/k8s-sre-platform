@@ -16,6 +16,12 @@
     </header>
     <div class="controls">
       <input id="q" type="search" placeholder="Search alert, service, cause…" autocomplete="off" aria-label="Search reports">
+      <label class="filter-label" for="report-type">Report type</label>
+      <select id="report-type" aria-label="Filter by report type">
+        <option value="all">All reports</option>
+        <option value="incident">RCA reports</option>
+        <option value="capacity">Capacity reports</option>
+      </select>
       <div class="chips" id="chips" role="group" aria-label="Filter by priority"></div>
     </div>
     <ul class="list" id="list" aria-label="Reports"></ul>

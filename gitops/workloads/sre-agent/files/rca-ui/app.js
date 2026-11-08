@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 
-  const state = { reports: [], filter: new Set(), query: "", current: null, loaded: false, liveTimer: null, live: {} };
+  const state = { reports: [], filter: new Set(), query: "", type: "all", current: null, loaded: false, liveTimer: null, live: {} };
   const meta = new Map(); // id -> report.json
 
   // ---- theme -------------------------------------------------------------------------------------------------
@@ -73,6 +73,8 @@
     const q = state.query.trim().toLowerCase();
     return state.reports.filter((r) => {
       if (state.filter.size && !state.filter.has(level(r))) return false;
+      const type = r.report_type === "capacity" ? "capacity" : "incident";
+      if (state.type !== "all" && state.type !== type) return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
         r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
@@ -394,6 +396,7 @@
 
   // ---- wiring ------------------------------------------------------------------------------------------------
   $("q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); });
+  $("report-type").addEventListener("change", (e) => { state.type = e.target.value; renderList(); });
   $("back").addEventListener("click", () => { location.hash = ""; });
   addEventListener("hashchange", route);
   addEventListener("keydown", (e) => {
