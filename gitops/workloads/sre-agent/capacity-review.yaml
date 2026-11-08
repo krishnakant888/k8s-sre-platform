@@ -17,7 +17,7 @@ spec:
   templates:
     - name: review
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-8ef8e17117b4392ad2d18030c1fb15f652e077ad
+        image: ghcr.io/krishnakant888/sre-agent:sha-a4139eff6b025065fa70b89a0a7ffc5fb569a567
         command: [python, -m, agent.steps, scale-down-review]
         env:
           - name: GITHUB_TOKEN
