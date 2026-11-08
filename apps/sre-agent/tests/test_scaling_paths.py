@@ -111,15 +111,19 @@ LOW = {
 }
 
 
-def test_short_scale_down_window_uses_fine_coverage_steps(monkeypatch):
+def test_short_scale_down_window_uses_fine_query_steps(monkeypatch):
     queries = []
     monkeypatch.setattr(scale_down, "WINDOW", "2m")
+    monkeypatch.setattr(scale_down, "CPU_SUBQUERY_STEP", scale_down._subquery_step("2m", "15s", "5m"))
+    monkeypatch.setattr(scale_down, "COVERAGE_SUBQUERY_STEP", scale_down._subquery_step("2m", "15s", "1m"))
     monkeypatch.setattr(scale_down, "_query", lambda query: queries.append(query) or 1.0)
 
     scale_down._metrics("platform", "demo", "orders-api")
 
-    assert any("timestamp(rate(" in query and "[2m:1m]" in query for query in queries)
-    assert any("timestamp(container_memory_working_set_bytes" in query and "[2m:1m]" in query
+    assert any("quantile_over_time(0.95" in query and "[2m:15s]" in query for query in queries)
+    assert any("max_over_time((rate(" in query and "[2m:15s]" in query for query in queries)
+    assert any("timestamp(rate(" in query and "[135s:15s]" in query for query in queries)
+    assert any("timestamp(container_memory_working_set_bytes" in query and "[135s:15s]" in query
                for query in queries)
 
 

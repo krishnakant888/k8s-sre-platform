@@ -29,6 +29,31 @@ GRAFANA_URL = getattr(config, "GRAFANA_URL", "http://grafana.observability.svc.c
 GRAFANA_API_TOKEN = getattr(config, "GRAFANA_API_TOKEN", "")
 
 
+def _duration_seconds(value: str) -> float | None:
+    if not re.fullmatch(r"(?:\d+(?:ms|s|m|h|d|w|y))+", value):
+        return None
+    units = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400,
+             "w": 604800, "y": 31536000}
+    return sum(int(amount) * units[unit] for amount, unit in re.findall(r"(\d+)(ms|s|m|h|d|w|y)", value))
+
+
+def _subquery_step(window: str, short_step: str, long_step: str) -> str:
+    seconds = _duration_seconds(window)
+    return short_step if seconds is not None and seconds < 300 else long_step
+
+
+def _coverage_window(window: str, step: str) -> str:
+    window_seconds = _duration_seconds(window)
+    step_seconds = _duration_seconds(step)
+    if window_seconds is None or step_seconds is None:
+        return f"{window}{step}"
+    return f"{window_seconds + step_seconds:g}s"
+
+
+CPU_SUBQUERY_STEP = _subquery_step(WINDOW, "15s", "5m")
+COVERAGE_SUBQUERY_STEP = _subquery_step(WINDOW, "15s", "1m")
+
+
 def _get(path: str, **kw) -> Any:
     r = httpx.get(f"https://api.github.com/{path}", headers=_headers(), timeout=15, **kw)
     r.raise_for_status()
@@ -69,22 +94,23 @@ def _metrics(cluster: str, namespace: str, workload: str) -> dict[str, float | N
     sel = _selectors(cluster, namespace, workload)
     cpu = f'container_cpu_usage_seconds_total{{{sel}}}'
     memory = f'container_memory_working_set_bytes{{{sel}}}'
+    coverage_window = _coverage_window(WINDOW, COVERAGE_SUBQUERY_STEP)
     return {
         "cpu_p95_cores": _query(
-            f"max(quantile_over_time(0.95, rate({cpu}[5m])[{WINDOW}:5m]))"
+            f"max(quantile_over_time(0.95, rate({cpu}[5m])[{WINDOW}:{CPU_SUBQUERY_STEP}]))"
         ),
         "cpu_throttle": _query(
             f"max(max_over_time((rate(container_cpu_cfs_throttled_periods_total{{{sel}}}[5m]) / "
-            f"rate(container_cpu_cfs_periods_total{{{sel}}}[5m]))[{WINDOW}:5m]))"
+            f"rate(container_cpu_cfs_periods_total{{{sel}}}[5m]))[{WINDOW}:{CPU_SUBQUERY_STEP}]))"
         ),
         "memory_p99_bytes": _query(
             f"max(quantile_over_time(0.99, {memory}[{WINDOW}]))"
         ),
         "cpu_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{WINDOW}:1m]))"
+            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{coverage_window}:{COVERAGE_SUBQUERY_STEP}]))"
         ),
         "memory_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp({memory}))[{WINDOW}:1m]))"
+            f"min(time() - min_over_time((timestamp({memory}))[{coverage_window}:{COVERAGE_SUBQUERY_STEP}]))"
         ),
         "restarts_24h": _query(
             f"sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{WINDOW}]))"
