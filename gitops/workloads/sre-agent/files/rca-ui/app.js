@@ -97,14 +97,38 @@
       b.dataset.id = r.id;
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       const top = el("div", "item-top");
-      top.append(el("span", "item-title", r.alert || r.id));
-      if (r.report_type === "capacity") top.append(pill("Capacity", "soft"));
+      const isCapacity = r.report_type === "capacity";
+      const capacity = r.capacity || {};
+      if (isCapacity && r.root_cause && r.root_cause.category === "capacity_review") r.root_cause.category = "";
+      const verification = capacity.post_merge || (r.remediation && r.remediation.post_merge_verification);
+      const verificationStatus = verification && verification.status;
+      const capacityTitle = capacity.decision === "proposal" ? "Capacity plan" : "Capacity review";
+      top.append(el("span", "item-title", isCapacity ? capacityTitle + " · " + (r.service || "workload") : (r.alert || r.id)));
+      if (isCapacity) {
+        top.append(pill("Capacity", "soft"));
+        if (verificationStatus) {
+          const label = verificationStatus === "healthy" ? "Healthy"
+            : verificationStatus === "needs_attention" ? "Follow-up"
+            : verificationStatus === "not_merged" ? "PR open" : "Pending";
+          top.append(pill(label, verificationStatus === "healthy" ? "ok" : verificationStatus === "needs_attention" ? "p1" : "soft"));
+        }
+      }
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
-      b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
+      if (isCapacity) {
+        const priority = top.querySelector(".p4"); if (priority) priority.remove();
+        const action = (capacity.proposed_change || capacity.reason || r.summary || "No change proposed").replace(/`/g, "");
+        b.append(top, el("div", "item-sub item-action", action), el("div", "item-sub", "ID: " + r.id));
+      } else b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
+      if (isCapacity) {
+        if (capacity.candidate_floor != null) m.append(el("span", "", "floor " + capacity.candidate_floor));
+        if (verificationStatus === "healthy") m.append(el("span", "", "post-change checks passed"));
+        else if (verificationStatus === "needs_attention") m.append(el("span", "", "check results need review"));
+        else if (!verificationStatus && capacity.decision) m.append(el("span", "", words(capacity.decision)));
+      }
       if (r.root_cause && r.root_cause.category) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
@@ -470,7 +494,7 @@
     const copy = el("button", "btn", "Copy link"); copy.type = "button";
     copy.addEventListener("click", () => navigator.clipboard.writeText(location.href.split("#")[0] + "#" + id).then(() => toast("Link copied")));
     const print = el("button", "btn", "Print / PDF"); print.type = "button"; print.addEventListener("click", () => window.print());
-    actions.append(copy, link("Markdown", `/${id}/rca.md`), link("JSON", `/${id}/report.json`), print);
+    actions.append(copy, link(isCapacity ? "Capacity plan" : "Markdown", `/${id}/rca.md`), link(isCapacity ? "Report data" : "JSON", `/${id}/report.json`), print);
 
     const body = $("body");
     const toc = $("toc");
