@@ -8,24 +8,35 @@
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
+<nav class="topnav" aria-label="Site navigation">
+  <div class="topnav-brand">
+    <span class="logo" aria-hidden="true"></span>
+    <span class="topnav-name">SRE Reports</span>
+  </div>
+  <div class="topnav-tabs" id="type-tabs" role="tablist" aria-label="Report type">
+    <button class="tab" role="tab" data-type="all"          aria-selected="true">All<span class="tab-ct" id="tc-all"></span></button>
+    <button class="tab" role="tab" data-type="incident"     aria-selected="false">Incidents<span class="tab-ct" id="tc-incident"></span></button>
+    <button class="tab" role="tab" data-type="capacity"     aria-selected="false">Capacity<span class="tab-ct" id="tc-capacity"></span></button>
+    <button class="tab" role="tab" data-type="weekly_floor" aria-selected="false">Floor reviews<span class="tab-ct" id="tc-weekly_floor"></span></button>
+  </div>
+  <div class="topnav-end">
+    <button class="icon-btn" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+  </div>
+</nav>
 <div class="app" id="app">
   <aside class="side" id="side">
     <header class="side-head">
-      <div class="brand"><span class="logo" aria-hidden="true"></span><div><h1>SRE Reports</h1><p id="count" class="muted">loading…</p></div></div>
-      <button class="icon-btn" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+      <p id="count" class="muted count-line">loading…</p>
     </header>
     <div class="controls">
       <input id="q" type="search" placeholder="Search alert, service, cause…" autocomplete="off" aria-label="Search reports">
-      <label class="filter-label" for="report-type">Report type</label>
-      <select id="report-type" aria-label="Filter by report type">
-        <option value="all">All reports</option>
-        <option value="incident">RCA reports</option>
-        <option value="capacity">Capacity reports</option>
-      </select>
       <div class="chips" id="chips" role="group" aria-label="Filter by priority"></div>
     </div>
     <ul class="list" id="list" aria-label="Reports"></ul>
-    <footer class="side-foot muted">j / k move · / search · the list refreshes every 30 s</footer>
+    <div class="side-foot">
+      <button class="dismissed-toggle" id="dismissed-toggle" hidden></button>
+      <span class="muted foot-hint">j / k navigate · / search · refreshes every 30 s</span>
+    </div>
   </aside>
   <main class="main" id="main" tabindex="-1">
     <button class="back" id="back" aria-label="Back to the list">← Reports</button>
