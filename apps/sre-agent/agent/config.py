@@ -25,11 +25,15 @@ REPORTS_DIR = os.getenv("REPORTS_DIR", "/reports")
 # remediation: open a draft PR when the agent diagnoses a sizing OOM
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITOPS_REPO = os.getenv("GITOPS_REPO", "krishnakant888/k8s-sre-platform")
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://grafana.observability.svc.cluster.local:3000")
+GRAFANA_API_TOKEN = os.getenv("GRAFANA_API_TOKEN", "")
 NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 # scale-out cap: escalates to CPU vertical scale-up when reached
 MAX_REPLICAS = int(os.getenv("MAX_REPLICAS", "5"))
 # CPU vertical scale-up ceiling in millicores; above this the agent opens a PR but flags for human review
 MAX_CPU_LIMIT_M = int(os.getenv("MAX_CPU_LIMIT_M", "2000"))
+# Memory vertical scale-up ceiling in MiB; at the ceiling, scale out only when CPU metrics also show load pressure
+MAX_MEMORY_LIMIT_MIB = int(os.getenv("MAX_MEMORY_LIMIT_MIB", "4096"))
 
 # services whose failures users feel, used to decide priority
 USER_FACING_SERVICES = {s.strip() for s in os.getenv("USER_FACING_SERVICES", "orders-api,frontend").split(",") if s.strip()}

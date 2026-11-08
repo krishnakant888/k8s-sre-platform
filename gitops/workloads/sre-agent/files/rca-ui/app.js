@@ -97,7 +97,7 @@
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
-      b.append(top, el("div", "item-sub", r.service || r.id));
+      b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
       if (r.root_cause && r.root_cause.category) m.append(el("span", "", "· " + words(r.root_cause.category)));
@@ -343,7 +343,7 @@
     fact(facts, "Root cause", r.root_cause && r.root_cause.category ? `${words(r.root_cause.category)}${r.root_cause.confidence ? " (" + r.root_cause.confidence + " confidence)" : ""}` : "");
     fact(facts, "Started", fmtTime(when(r.started_at)));
     fact(facts, "Report written", fmtTime(when(r.generated_at)));
-    fact(facts, "Report id", id);
+    fact(facts, "Investigation ID", id);
 
     const actions = $("actions"); actions.replaceChildren();
     const link = (text, href) => { const a = el("a", "btn", text); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };

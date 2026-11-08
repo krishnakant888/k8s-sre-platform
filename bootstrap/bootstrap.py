@@ -455,7 +455,7 @@ def give_viewer_access(present):
         return
     ensure_namespace(AGENT, "sre-agent")
     manifest = json.dumps({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "rca-viewer-grafana", "namespace": "sre-agent"}, "type": "Opaque",
-                           "stringData": {"grafana-auth.conf": f'set $grafana_auth "Bearer {token}";\n'}})
+                           "stringData": {"grafana-auth.conf": f'set $grafana_auth "Bearer {token}";\n', "token": token}})
     kubectl(AGENT, "apply", "-f", "-", stdin=manifest)
     print("rca-viewer-grafana written in the observability cluster (read-only Grafana token for the report viewer)")
     # nginx reads the token only when it starts: a viewer that is already running would keep answering without it

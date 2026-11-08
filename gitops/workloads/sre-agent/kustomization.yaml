@@ -9,6 +9,7 @@ resources:
   - reports-viewer.yaml
   - agent.yaml
   - workflow-template.yaml
+  - capacity-review.yaml
 configMapGenerator:
   - name: rca-viewer-ui
     namespace: sre-agent

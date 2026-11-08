@@ -1,16 +1,16 @@
-"""Automated remediation: raise memory limits (OOMKill) or replicas (CPU saturation).
+"""Automated remediation: use metrics to choose horizontal or vertical capacity changes.
 
 Conditions (all must hold):
   - root_cause.category == "resource_exhaustion"
   - GITHUB_TOKEN is configured
   - The workload has an Argo CD source directory with a YAML that has the target field
 
-OOM path  (OOMKill evidence):
-  New limit = max_over_time(container_memory_working_set_bytes[6h]) × 1.25, rounded to
-  128Mi / 0.5Gi. Falls back to 1.5× the current limit when Mimir has no data.
+Memory path  (OOMKill evidence):
+  Raise memory to max_over_time(container_memory_working_set_bytes[6h]) × 1.25, capped at
+  MAX_MEMORY_LIMIT_MIB. At that cap, scale out only when CPU throttling also indicates load pressure.
 
 Scale-out path  (CPU throttling, no OOM evidence):
-  New replicas = ceil(current × 1.5), capped at MAX_REPLICAS (default 10).
+  New replicas = ceil(current × 1.5), capped at MAX_REPLICAS (default 5).
   Falls back to current + 1 when Mimir has no CPU data.
 
 CPU vertical scale-up  (CPU throttling, already at MAX_REPLICAS):
@@ -35,6 +35,7 @@ log = logging.getLogger("sre-agent")
 _API = "https://api.github.com"
 MAX_REPLICAS = int(getattr(config, "MAX_REPLICAS", 5))
 MAX_CPU_LIMIT_M = int(getattr(config, "MAX_CPU_LIMIT_M", 2000))
+MAX_MEMORY_LIMIT_MIB = int(getattr(config, "MAX_MEMORY_LIMIT_MIB", 4096))
 
 
 def _headers() -> dict[str, str]:
@@ -103,6 +104,31 @@ def _bump_memory_formula(limit: str) -> str | None:
     return f"{new}Mi"
 
 
+def _memory_limit_mib(limit: str) -> int | None:
+    m = re.fullmatch(r"(\d+)(Mi|Gi)", limit)
+    if not m:
+        return None
+    value = int(m.group(1))
+    return value * 1024 if m.group(2) == "Gi" else value
+
+
+def _cap_memory_limit(limit: str) -> str | None:
+    mib = _memory_limit_mib(limit)
+    if mib is None:
+        return None
+    return f"{MAX_MEMORY_LIMIT_MIB}Mi" if mib > MAX_MEMORY_LIMIT_MIB else limit
+
+
+def _memory_scaling_mode(current_limit: str, cpu_throttle: float | None) -> str:
+    """Use vertical memory headroom first; at its cap, scale out only with CPU load evidence."""
+    current_mib = _memory_limit_mib(current_limit)
+    if current_mib is None:
+        return "review"
+    if current_mib < MAX_MEMORY_LIMIT_MIB:
+        return "vertical"
+    return "horizontal" if cpu_throttle is not None and cpu_throttle >= 0.25 else "review"
+
+
 # ── CPU vertical scale-up helpers ────────────────────────────────────────────
 
 def _query_cpu_p95_cores(ns: str, wl: str) -> float | None:
@@ -150,12 +176,12 @@ def _bump_cpu_formula(limit: str) -> str | None:
 # ── scale-out helpers ─────────────────────────────────────────────────────────
 
 def _query_cpu_throttle_ratio(ns: str, wl: str) -> float | None:
-    """Return the 6h average CPU throttle ratio (0–1) for the workload, or None."""
+    """Return the worst pod's 5m throttled-period ratio (0–1), using the alert's metric."""
     query = (
-        f'avg(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{ns}",'
-        f'pod=~"{wl}-[a-z0-9]+-[a-z0-9]+"}}[6h])) / '
-        f'avg(rate(container_cpu_cfs_periods_total{{namespace="{ns}",'
-        f'pod=~"{wl}-[a-z0-9]+-[a-z0-9]+"}}[6h]))'
+        f'max(max by (pod, container) (rate(container_cpu_cfs_throttled_periods_total{{namespace="{ns}",'
+        f'pod=~"{wl}-[a-z0-9]+-[a-z0-9]+",container!=""}}[5m]) / '
+        f'rate(container_cpu_cfs_periods_total{{namespace="{ns}",'
+        f'pod=~"{wl}-[a-z0-9]+-[a-z0-9]+",container!=""}}[5m])))'
     )
     try:
         r = httpx.get(f"{config.MIMIR_URL}/api/v1/query", params={"query": query}, timeout=10)
@@ -171,7 +197,7 @@ def _query_cpu_throttle_ratio(ns: str, wl: str) -> float | None:
 def _new_replicas(current: int, throttle_ratio: float | None) -> int:
     """Scale replicas to absorb the observed throttling, capped at MAX_REPLICAS."""
     if throttle_ratio and throttle_ratio > 0:
-        # If 40% of CPU time is throttled the workload needs ~1.67× as many pods
+        # If 40% of scheduling periods are throttled, the workload needs ~1.67× as many pods.
         needed = math.ceil(current / (1 - min(throttle_ratio, 0.9)))
     else:
         needed = current + 1
@@ -235,6 +261,10 @@ def _open_and_merge_pr(
 def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: str) -> dict | None:
     sig = ctx["signals"]
     wl, ns = sig["workload"], sig["namespace"]
+    growth = sig.get("mem_growth")
+    if growth is not None and growth > 1.3:
+        log.warning("remediate: memory grows %.1fx for %s; likely leak, refusing a sizing change", growth, wl)
+        return None
     source_files = sig.get("source_files") or []
     if not source_files:
         return None
@@ -257,14 +287,26 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
         return None
     old_limit = m.group(1) or m.group(2)
 
+    old_limit_mib = _memory_limit_mib(old_limit)
+    if old_limit_mib is None:
+        return None
+    if old_limit_mib >= MAX_MEMORY_LIMIT_MIB:
+        throttle = _query_cpu_throttle_ratio(ns, wl)
+        if _memory_scaling_mode(old_limit, throttle) == "horizontal":
+            log.info("remediate: memory cap reached for %s and CPU throttling is %.0f%%; scaling out", wl, throttle * 100)
+            return _remediate_scaleout(ctx, report, repo, default_branch, head_sha,
+                                       reason="memory pressure at memory limit cap", escalate_cpu=False)
+        log.warning("remediate: memory cap reached for %s without CPU evidence for load-driven pressure; human review needed", wl)
+        return None
+
     sizing_method = "observed_peak"
     peak_bytes = _query_peak_bytes(ns, wl)
     if peak_bytes and peak_bytes > 0:
-        new_limit = _bytes_to_limit(peak_bytes)
+        new_limit = _cap_memory_limit(_bytes_to_limit(peak_bytes))
         peak_mib = peak_bytes / (1024 * 1024)
         sizing_note = f"Observed 6h peak: {peak_mib:.0f} Mi × 1.25 headroom = {new_limit}."
     else:
-        new_limit = _bump_memory_formula(old_limit)
+        new_limit = _cap_memory_limit(_bump_memory_formula(old_limit) or "")
         sizing_method = "formula_1.5x"
         peak_mib = None
         sizing_note = f"No Mimir data for `{wl}` in `{ns}`; used 1.5× formula."
@@ -290,16 +332,17 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
         f"fix(ops): raise memory limit of {wl} in {ns} from {old_limit} to {new_limit}\n\n"
         f"Automated remediation triggered by RCA {report.id}.\n"
         f"Sizing: {sizing_note}\n"
-        f"The pod was OOMKilled; raising the limit to stop the restarts.\n"
+        f"Memory pressure was diagnosed; raising the limit to give the workload measured headroom.\n"
     )
     pr_title = f"fix(ops): raise {wl} memory limit {old_limit} → {new_limit} ({ns})"
+    cap_note = f" Capped at MAX_MEMORY_LIMIT_MIB={MAX_MEMORY_LIMIT_MIB}Mi." if _memory_limit_mib(new_limit) == MAX_MEMORY_LIMIT_MIB else ""
     pr_body = (
-        f"## Automated remediation — OOMKill\n\n"
+        f"## Automated remediation — memory pressure\n\n"
         f"**RCA:** `{report.id}`  \n"
         f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
         f"**Change:** `{file_path}` — `limits.memory` `{old_limit}` → `{new_limit}`\n\n"
-        f"**Sizing:** {sizing_note}\n\n"
-        f"The agent diagnosed the pod as OOMKilled. Merge to let Argo CD apply the new limit.\n\n"
+        f"**Sizing:** {sizing_note}{cap_note}\n\n"
+        f"Merge to let Argo CD apply the measured memory limit.\n\n"
         f"**Verify:** `container_memory_working_set_bytes` for `{wl}` stays below 80% of `{new_limit}`."
     )
 
@@ -328,7 +371,8 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
 
 # ── scale-out remediation ─────────────────────────────────────────────────────
 
-def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_sha: str) -> dict | None:
+def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_sha: str,
+                        reason: str = "CPU saturation", escalate_cpu: bool = True) -> dict | None:
     sig = ctx["signals"]
     wl, ns = sig["workload"], sig["namespace"]
     source_files = sig.get("source_files") or []
@@ -349,6 +393,9 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
     throttle = _query_cpu_throttle_ratio(ns, wl)
     new_replicas = _new_replicas(old_replicas, throttle)
     if new_replicas <= old_replicas:
+        if not escalate_cpu:
+            log.warning("remediate: replica cap reached while scaling out for %s; human review needed", wl)
+            return None
         log.info("remediate: replica cap (%d) reached for %s; escalating to CPU vertical scale-up", MAX_REPLICAS, wl)
         return _remediate_cpu_scaleup(ctx, report, repo, default_branch, head_sha)
 
@@ -375,9 +422,13 @@ def _remediate_scaleout(ctx: dict, report, repo: str, default_branch: str, head_
         f"Sizing: {sizing_note}\n"
     )
     pr_title = f"fix(ops): scale {wl} {old_replicas} → {new_replicas} replicas ({ns})"
-    capped_note = f"\n\n**Cap:** `MAX_REPLICAS={MAX_REPLICAS}`. If throttling persists at cap, the agent will escalate to CPU vertical scale-up." if new_replicas == MAX_REPLICAS else ""
+    if new_replicas == MAX_REPLICAS:
+        next_step = "CPU vertical scale-up" if escalate_cpu else "human review; replicas are capped"
+        capped_note = f"\n\n**Cap:** `MAX_REPLICAS={MAX_REPLICAS}`. If pressure persists at cap, next step: {next_step}."
+    else:
+        capped_note = ""
     pr_body = (
-        f"## Automated remediation — CPU saturation\n\n"
+        f"## Automated remediation — {reason}\n\n"
         f"**RCA:** `{report.id}`  \n"
         f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
         f"**Change:** `{file_path}` — `replicas` `{old_replicas}` → `{new_replicas}`\n\n"
@@ -543,15 +594,16 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
         str(e.get("finding", "")) for e in ctx.get("evidence", []) if isinstance(e, dict)
     ).lower()
     is_oom = "oomkill" in evidence_text or "oom" in evidence_text or "exit code 137" in evidence_text
+    is_memory_pressure = is_oom or report.alert in ("ContainerMemoryNearLimit", "PodOOMKilled")
 
-    if is_oom:
+    if is_memory_pressure:
         return _remediate_oom(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
 
     # CPU saturation: throttled under load — fix is horizontal (more replicas)
     cpu_throttled = (
         sig.get("cpu_throttled")
         or "throttl" in evidence_text
-        or "cpu" in evidence_text
+        or report.alert == "ContainerCpuThrottled"
     )
     if cpu_throttled:
         return _remediate_scaleout(ctx, report, config.GITOPS_REPO, default_branch, head_sha)

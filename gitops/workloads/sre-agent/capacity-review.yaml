@@ -1,0 +1,52 @@
+# Daily, guarded capacity reductions. The worker refuses to change Git when
+# metrics, alert state, rollout state, or the 24h cooldown cannot be verified.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: capacity-review
+  namespace: sre-agent
+spec:
+  entrypoint: review
+  serviceAccountName: sre-agent
+  activeDeadlineSeconds: 600
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 14400
+  templates:
+    - name: review
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-3b23c40042d57415847506a0ba3ef8b8c55cbbd0
+        command: [python, -m, agent.steps, scale-down-review]
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
+          - name: GRAFANA_API_TOKEN
+            valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
+          - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local:3000"}
+          - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo,frontend:demo"}
+          - {name: SCALE_DOWN_CLUSTER, value: platform}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: sre-capacity-review
+  namespace: sre-agent
+spec:
+  schedules: ["30 6 * * *"]
+  timezone: Asia/Kolkata
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    workflowTemplateRef:
+      name: capacity-review

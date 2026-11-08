@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from agent import activities, incident
+from agent import activities, incident, scale_down
 from agent.logging_setup import setup_logging
 
 IN_DIR = Path(os.getenv("STEP_IN_DIR", "/tmp/in"))
@@ -44,7 +44,12 @@ def notify() -> None:
     activities.notify(_read("report.json"))
 
 
-STEPS = {"collect": collect, "analyze": analyze, "store": store, "notify": notify}
+def scale_down_review() -> None:
+    scale_down.run_daily_review()
+
+
+STEPS = {"collect": collect, "analyze": analyze, "store": store, "notify": notify,
+         "scale-down-review": scale_down_review}
 
 
 def main(argv: list[str]) -> int:

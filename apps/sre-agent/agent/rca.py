@@ -3,6 +3,7 @@
 gather() runs a fixed playbook of read-only queries around the alert. analyze_rules() turns that
 evidence into an RcaReport without a model. The LLM path (agent/llm.py) starts from the same evidence.
 """
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -589,8 +590,9 @@ def analyze_rules(alert: dict, ctx: dict, now: float | None = None) -> RcaReport
     domain = fault_domain(category, sig, ctx)
     priority = decide_priority(alert, sig, category, domain, svc)
     gaps = observability_gaps(category, sig, ctx)
+    run_id = re.sub(r"[^a-z0-9-]+", "-", os.getenv("WORKFLOW_NAME", "").lower()).strip("-") or str(int(now * 1_000_000))
     report = RcaReport(
-        id=f"rca-{svc}-{datetime.fromtimestamp(started, timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        id=f"rca-{svc}-{datetime.fromtimestamp(started, timezone.utc).strftime('%Y%m%d-%H%M%S')}-{run_id}",
         alert=alertname,
         service=svc,
         severity=severity,

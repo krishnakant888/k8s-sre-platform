@@ -54,3 +54,14 @@ max by (pod, container) (max_over_time(container_memory_working_set_bytes{contai
 ```
 
 Add a VerticalPodAutoscaler in recommendation mode, or Goldilocks, to keep this honest instead of re-reading the table by hand.
+
+## Safe scale-down review
+
+The SRE agent runs a daily, review-only scale-down check for `orders-api` and `frontend`. It requires 24 hours of metrics,
+no matching active alert, no container restarts, all desired replicas available, and no deployment-file change in the last 24 hours.
+It proposes at most one step per workload per run and attempts to auto-merge after those checks; repository protections can keep the PR open.
+The workflow uses the read-only Grafana token in `rca-viewer-grafana`; if that Secret predates this check, run `python3 bootstrap/bootstrap.py --viewer-access` once to add its `token` key.
+
+- Replicas decrease one at a time only when CPU P95 is below 50% of capacity, throttling is below 1%, and memory P99 is below 60% of its limit. User-facing services stay at 2 or more replicas.
+- At the replica floor, memory limits can decrease by 128Mi or 512Mi steps, never below the request. CPU limits can decrease by 50m, never below the request.
+- Missing telemetry, an active alert, a recent restart, or an unstable rollout means no recommendation.

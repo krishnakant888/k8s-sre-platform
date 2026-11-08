@@ -127,6 +127,7 @@ spec:
             valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
           - {name: MAX_REPLICAS, value: "5"}        # scale-out ceiling; escalates to CPU vertical scale-up when reached
           - {name: MAX_CPU_LIMIT_M, value: "2000"}  # CPU vertical ceiling in millicores (2 cores); opens PR but flags for human review
+          - {name: MAX_MEMORY_LIMIT_MIB, value: "4096"} # memory vertical ceiling (4Gi); scale out at cap only when CPU metrics show load pressure
         resources:
           requests: {cpu: 100m, memory: 512Mi}
           limits: {memory: 1536Mi}

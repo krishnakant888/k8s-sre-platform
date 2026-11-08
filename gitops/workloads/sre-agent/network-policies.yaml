@@ -15,6 +15,14 @@ spec:
         - {port: 8080, protocol: TCP}   # mimir
         - {port: 3100, protocol: TCP}   # loki
         - {port: 3200, protocol: TCP}   # tempo
+    # daily scale-down reviews check for active alerts before suggesting a reduction
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports:
+        - {port: 3000, protocol: TCP}
     # kubernetes API of this cluster (workflows, Argo CD applications) and of the platform cluster (pods, events, over the Docker network)
     - ports:
         - {port: 443, protocol: TCP}
