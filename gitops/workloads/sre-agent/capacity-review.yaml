@@ -24,7 +24,7 @@ spec:
             valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
           - name: GRAFANA_API_TOKEN
             valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
-          - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local:3000"}
+          - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
           - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo"}
           - {name: SCALE_DOWN_CLUSTER, value: platform}
           - {name: SCALE_DOWN_WINDOW, value: 5m}
