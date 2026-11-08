@@ -277,7 +277,7 @@ def get_recent_deploys(application: str) -> dict:
                 raise
     else:
         raise LookupError(f"no Argo CD application platform-{application}, observability-{application}, gitops-{application} or {application}")
-    history = app.get("status", {}).get("history", [])[-6:]
+    history = app.get("status", {}).get("history", [])[-20:]
     spec = app.get("spec", {})
     files = []
     for src in spec.get("sources") or [spec.get("source", {})]:
@@ -294,6 +294,46 @@ def get_recent_deploys(application: str) -> dict:
             ],
         }
     )
+
+
+def list_namespace_deploys(namespace: str, cluster: str = "platform", minutes: int = 120) -> dict:
+    """All Argo CD applications that target a namespace and their recent sync history.
+
+    Useful when the alert service has no matching named ArgoCD app, or when you want
+    to find any deploy in the namespace (ingress, config, shared infra) that could
+    have caused the incident.
+    """
+    cutoff_epoch = __import__("time").time() - minutes * 60
+    all_apps = _k8s_get("/apis/argoproj.io/v1alpha1/namespaces/argocd/applications", cluster="gitops")
+    results = []
+    for app in all_apps.get("items", []):
+        spec = app.get("spec", {})
+        dest = spec.get("destination", {})
+        dest_ns = dest.get("namespace", "")
+        dest_cluster = dest.get("name") or dest.get("server", "")
+        # match namespace directly, or apps that target the cluster and use the namespace in sources
+        if dest_ns != namespace and cluster not in dest_cluster:
+            continue
+        if dest_ns and dest_ns != namespace:
+            continue
+        history = app.get("status", {}).get("history", [])[-20:]
+        recent = []
+        for h in reversed(history):
+            ts = h.get("deployedAt", "")
+            try:
+                from datetime import datetime, timezone
+                t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            if t >= cutoff_epoch:
+                recent.append({"deployed_at": ts, "revision": _deployed_revision(h), "id": h.get("id")})
+        if recent:
+            app_name = app["metadata"]["name"]
+            sources = spec.get("sources") or [spec.get("source", {})]
+            paths = [s.get("path") for s in sources if s.get("path")]
+            results.append({"application": app_name, "destination_namespace": dest_ns, "paths": paths, "history": recent})
+    results.sort(key=lambda x: x["history"][0]["deployed_at"] if x["history"] else "", reverse=True)
+    return _trim({"namespace": namespace, "cluster": cluster, "minutes": minutes, "apps": results})
 
 
 def get_argocd_app(name: str) -> dict:
@@ -403,6 +443,21 @@ TOOLS = {
         {
             "description": "Argo CD sync history for an application, to see whether a deploy preceded the incident.",
             "input_schema": {"type": "object", "properties": {"application": {"type": "string"}}, "required": ["application"]},
+        },
+    ),
+    "list_namespace_deploys": (
+        list_namespace_deploys,
+        {
+            "description": "All Argo CD applications that target a namespace and their recent sync history. Use when get_recent_deploys finds no deploy, or to find any related deploys (ingress, config, shared infra) in the same namespace.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string"},
+                    "cluster": {"type": "string", "description": "platform (default), observability or gitops"},
+                    "minutes": {"type": "integer", "description": "look-back window in minutes, default 120"},
+                },
+                "required": ["namespace"],
+            },
         },
     ),
 }

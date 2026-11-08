@@ -9,6 +9,7 @@
     reports: [], filter: new Set(), query: "", type: "all",
     current: null, loaded: false, liveTimer: null, live: {},
     dismissed: new Set(), showDismissed: false,
+    read: new Set(), notifOpen: false,
   };
   const meta = new Map(); // id -> report.json
 
@@ -30,12 +31,31 @@
     } catch (_) {}
     // sync the active tab to the restored type
     document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.type === state.type)));
+    loadRead();
   }
   function saveFilter() {
     try { localStorage.setItem("rca-filter", JSON.stringify({ type: state.type, query: state.query, filter: [...state.filter] })); } catch (_) {}
   }
   function saveDismissed() {
     try { localStorage.setItem("rca-dismissed", JSON.stringify([...state.dismissed])); } catch (_) {}
+  }
+  function loadRead() {
+    try { const r = JSON.parse(localStorage.getItem("rca-read") || "[]"); state.read = new Set(r); } catch (_) {}
+  }
+  function saveRead() {
+    try { localStorage.setItem("rca-read", JSON.stringify([...state.read])); } catch (_) {}
+  }
+  function markRead(id) {
+    if (!state.read.has(id)) { state.read.add(id); saveRead(); updateNotifBadge(); renderList(); }
+  }
+  function markAllRead() {
+    state.reports.forEach((r) => state.read.add(r.id));
+    saveRead(); updateNotifBadge(); renderList(); renderNotifList();
+  }
+  function updateNotifBadge() {
+    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && r.report_type !== "capacity").length;
+    const badge = $("notif-badge");
+    if (badge) { badge.hidden = unread === 0; badge.textContent = unread > 9 ? "9+" : unread; }
   }
 
   // ---- theme -------------------------------------------------------------------------------------------------
@@ -112,7 +132,9 @@
     } catch (_) { for (const r of state.reports) if (savedResolved(r.id)) state.live[r.id] = "resolved"; }
     renderChips();
     updateTabCounts();
+    updateNotifBadge();
     renderList();
+    renderNotifList();
   }
 
   function renderChips() {
@@ -173,7 +195,10 @@
       const b = el("button", "item");
       b.dataset.id = r.id;
       if (level(r)) b.dataset.sev = level(r).toLowerCase();
-      if (state.live[r.id] === "firing") b.dataset.live = "firing";
+      const liveState = state.live[r.id];
+      if (liveState === "firing") b.dataset.live = "firing";
+      else if (liveState === "resolved") b.dataset.live = "resolved";
+      if (!state.read.has(r.id) && r.report_type !== "capacity") b.dataset.unread = level(r).toLowerCase() || "p4";
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
@@ -749,6 +774,8 @@
     document.title = `${r.alert || id} · reports`;
     const rHead = $("report").querySelector(".report-head");
     if (rHead) { rHead.dataset.sev = isCapacity ? "capacity" : (level(r).toLowerCase() || "none"); delete rHead.dataset.live; }
+    markRead(id);
+    renderNotifList();
     // remove stale firing banner when navigating to a new report
     const staleBanner = $("incident-banner");
     if (staleBanner) staleBanner.hidden = true;
@@ -761,6 +788,66 @@
     if (id && /^rca-[\w.-]+$/.test(id)) show(id);
     else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "SRE Reports"; renderList(); }
   }
+
+  // ---- notification panel ------------------------------------------------------------------------------------
+  function renderNotifList() {
+    const list = $("notif-list");
+    if (!list) return;
+    const sorted = [...state.reports]
+      .filter((r) => r.report_type !== "capacity" && !state.dismissed.has(r.id))
+      .sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id)));
+    if (!sorted.length) { list.replaceChildren(el("li", "notif-empty", "No reports yet.")); return; }
+    list.replaceChildren(...sorted.map((r) => {
+      const li = el("li", "notif-item" + (state.read.has(r.id) ? "" : " unread"));
+      const dot = el("span", "notif-dot");
+      const body = el("div", "notif-body");
+      body.append(el("span", "notif-name", r.alert || r.id));
+      const metaRow = el("div", "notif-meta");
+      const d = when(r.started_at || r.generated_at);
+      metaRow.append(el("span", "", ago(d)));
+      if (level(r)) metaRow.append(pill(level(r), level(r).toLowerCase()));
+      if (r.root_cause && r.root_cause.category) metaRow.append(el("span", "", words(r.root_cause.category)));
+      body.append(metaRow);
+      li.append(dot, body);
+      li.addEventListener("click", () => { closeNotif(); location.hash = r.id; });
+      return li;
+    }));
+  }
+
+  function openNotif() {
+    let panel = $("notif-panel");
+    if (!panel) {
+      panel = el("div", "notif-panel"); panel.id = "notif-panel";
+      const head = el("div", "notif-head");
+      const title = el("span", "notif-head-title");
+      title.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> Notifications`;
+      const markAll = el("button", "notif-mark-all", "Mark all read");
+      markAll.addEventListener("click", markAllRead);
+      head.append(title, markAll);
+      const list = el("ul", "notif-list"); list.id = "notif-list";
+      panel.append(head, list);
+      document.body.append(panel);
+      renderNotifList();
+    }
+    panel.hidden = false;
+    state.notifOpen = true;
+    $("notif-btn").setAttribute("aria-expanded", "true");
+  }
+
+  function closeNotif() {
+    const panel = $("notif-panel");
+    if (panel) panel.hidden = true;
+    state.notifOpen = false;
+    $("notif-btn").setAttribute("aria-expanded", "false");
+  }
+
+  $("notif-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.notifOpen ? closeNotif() : openNotif();
+  });
+  document.addEventListener("click", (e) => {
+    if (state.notifOpen && !e.target.closest("#notif-panel") && !e.target.closest("#notif-btn")) closeNotif();
+  });
 
   // ---- wiring ------------------------------------------------------------------------------------------------
   $("q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); saveFilter(); });
