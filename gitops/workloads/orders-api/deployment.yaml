@@ -12,7 +12,7 @@ metadata:
   namespace: demo
   labels: {app.kubernetes.io/name: orders-api, app.kubernetes.io/version: "1.0.0", team: platform}
 spec:
-  replicas: 3
+  replicas: 2
   revisionHistoryLimit: 5
   strategy:
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
