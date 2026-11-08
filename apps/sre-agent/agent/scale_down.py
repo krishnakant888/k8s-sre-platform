@@ -19,11 +19,12 @@ from agent import config
 from agent.remediate import _headers
 
 log = logging.getLogger("sre-agent")
-WINDOW = "24h"
+WINDOW = os.getenv("SCALE_DOWN_WINDOW", "24h")
 CPU_P95_MAX = 0.50
 CPU_THROTTLE_MAX = 0.01
 MEMORY_P99_MAX = 0.60
-COOLDOWN_SECONDS = 24 * 60 * 60
+MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_MIN_COVERAGE_SECONDS", str(24 * 60 * 60)))
+COOLDOWN_SECONDS = int(os.getenv("SCALE_DOWN_COOLDOWN_SECONDS", str(24 * 60 * 60)))
 GRAFANA_URL = getattr(config, "GRAFANA_URL", "http://grafana.observability.svc.cluster.local:3000")
 GRAFANA_API_TOKEN = getattr(config, "GRAFANA_API_TOKEN", "")
 
@@ -66,16 +67,24 @@ def _selectors(cluster: str, namespace: str, workload: str) -> str:
 
 def _metrics(cluster: str, namespace: str, workload: str) -> dict[str, float | None]:
     sel = _selectors(cluster, namespace, workload)
+    cpu = f'container_cpu_usage_seconds_total{{{sel}}}'
+    memory = f'container_memory_working_set_bytes{{{sel}}}'
     return {
         "cpu_p95_cores": _query(
-            f"max(quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{{{sel}}}[5m])[{WINDOW}:5m]))"
+            f"max(quantile_over_time(0.95, rate({cpu}[5m])[{WINDOW}:5m]))"
         ),
         "cpu_throttle": _query(
             f"max(max_over_time((rate(container_cpu_cfs_throttled_periods_total{{{sel}}}[5m]) / "
             f"rate(container_cpu_cfs_periods_total{{{sel}}}[5m]))[{WINDOW}:5m]))"
         ),
         "memory_p99_bytes": _query(
-            f"max(quantile_over_time(0.99, container_memory_working_set_bytes{{{sel}}}[{WINDOW}]))"
+            f"max(quantile_over_time(0.99, {memory}[{WINDOW}]))"
+        ),
+        "cpu_coverage_seconds": _query(
+            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{WINDOW}:5m]))"
+        ),
+        "memory_coverage_seconds": _query(
+            f"min(time() - min_over_time((timestamp({memory}))[{WINDOW}:5m]))"
         ),
         "restarts_24h": _query(
             f"sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{WINDOW}]))"
@@ -241,6 +250,9 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
 
     metrics = _metrics(cluster, namespace, workload)
     if any(metrics[k] is None for k in metrics) or _active_alert(workload, namespace):
+        return None
+    if (metrics["cpu_coverage_seconds"] < MIN_COVERAGE_SECONDS
+            or metrics["memory_coverage_seconds"] < MIN_COVERAGE_SECONDS):
         return None
     if metrics["restarts_24h"] > 0 or metrics["available_replicas"] < replicas:
         return None

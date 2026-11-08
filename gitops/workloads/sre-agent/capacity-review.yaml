@@ -25,8 +25,11 @@ spec:
           - name: GRAFANA_API_TOKEN
             valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
           - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local:3000"}
-          - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo,frontend:demo"}
+          - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo"}
           - {name: SCALE_DOWN_CLUSTER, value: platform}
+          - {name: SCALE_DOWN_WINDOW, value: 15m}
+          - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "900"}
+          - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "0"}
         resources:
           requests: {cpu: 50m, memory: 128Mi}
           limits: {memory: 512Mi}
