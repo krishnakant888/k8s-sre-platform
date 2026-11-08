@@ -5,16 +5,45 @@
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 
-  const state = { reports: [], filter: new Set(), query: "", type: "all", current: null, loaded: false, liveTimer: null, live: {} };
+  const state = {
+    reports: [], filter: new Set(), query: "", type: "all",
+    current: null, loaded: false, liveTimer: null, live: {},
+    dismissed: new Set(), showDismissed: false,
+  };
   const meta = new Map(); // id -> report.json
 
+  // ---- persistence -------------------------------------------------------------------------------------------
+  function loadPrefs() {
+    try {
+      const t = localStorage.getItem("rca-theme");
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (_) {}
+    try {
+      const f = JSON.parse(localStorage.getItem("rca-filter") || "{}");
+      if (f.type) state.type = f.type;
+      if (f.query) { state.query = f.query; $("q").value = f.query; }
+      if (Array.isArray(f.filter)) state.filter = new Set(f.filter);
+    } catch (_) {}
+    try {
+      const d = JSON.parse(localStorage.getItem("rca-dismissed") || "[]");
+      state.dismissed = new Set(d);
+    } catch (_) {}
+    // sync the active tab to the restored type
+    document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.type === state.type)));
+  }
+  function saveFilter() {
+    try { localStorage.setItem("rca-filter", JSON.stringify({ type: state.type, query: state.query, filter: [...state.filter] })); } catch (_) {}
+  }
+  function saveDismissed() {
+    try { localStorage.setItem("rca-dismissed", JSON.stringify([...state.dismissed])); } catch (_) {}
+  }
+
   // ---- theme -------------------------------------------------------------------------------------------------
-  const root = document.documentElement;
-  try { const t = localStorage.getItem("rca-theme"); if (t) root.dataset.theme = t; } catch (_) { /* storage can be blocked */ }
   $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
     const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
     root.dataset.theme = dark ? "light" : "dark";
-    try { localStorage.setItem("rca-theme", root.dataset.theme); } catch (_) { /* ignore */ }
+    try { localStorage.setItem("rca-theme", root.dataset.theme); } catch (_) {}
   });
 
   // ---- helpers -----------------------------------------------------------------------------------------------
@@ -31,9 +60,36 @@
   const level = (r) => (r.priority && r.priority.level) || "";
   const pill = (text, cls) => { const p = el("span", `pill ${cls || ""}`); p.append(el("span", "dot"), document.createTextNode(text)); return p; };
   const words = (s) => String(s || "").replace(/_/g, " ");
-  function toast(text) { const t = el("div", "toast", text); document.body.append(t); setTimeout(() => t.remove(), 1600); }
+  function toast(text, undoFn) {
+    const t = el("div", "toast");
+    t.textContent = text;
+    if (undoFn) {
+      const u = el("button", "", " Undo");
+      u.style.cssText = "border:0;background:none;color:inherit;cursor:pointer;text-decoration:underline;margin-left:6px;font:inherit;";
+      u.addEventListener("click", () => { undoFn(); t.remove(); });
+      t.append(u);
+    }
+    document.body.append(t);
+    setTimeout(() => t.remove(), undoFn ? 4000 : 1600);
+  }
   const getJson = async (url) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
   const getText = async (url) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.text(); };
+  const reportType = (r) => {
+    if (r.report_type !== "capacity") return "incident";
+    if (r.capacity && r.capacity.review_type === "weekly_floor") return "weekly_floor";
+    return "capacity";
+  };
+
+  // ---- tab counts --------------------------------------------------------------------------------------------
+  function updateTabCounts() {
+    const active = state.reports.filter((r) => !state.dismissed.has(r.id));
+    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0 };
+    for (const r of active) counts[reportType(r)] = (counts[reportType(r)] || 0) + 1;
+    for (const [type, n] of Object.entries(counts)) {
+      const ct = $("tc-" + type);
+      if (ct) ct.textContent = n > 0 ? n : "";
+    }
+  }
 
   // ---- the list ----------------------------------------------------------------------------------------------
   async function loadList() {
@@ -47,14 +103,15 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-      if (r.report_type === "capacity") { state.live[r.id] = "capacity"; continue; }
-      if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
+        if (r.report_type === "capacity") { state.live[r.id] = "capacity"; continue; }
+        if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
         if (s.state === "resolved") saveResolved(r.id, (s.at || new Date()).toISOString());
       }
     } catch (_) { for (const r of state.reports) if (savedResolved(r.id)) state.live[r.id] = "resolved"; }
     renderChips();
+    updateTabCounts();
     renderList();
   }
 
@@ -64,7 +121,10 @@
     box.replaceChildren(...present.map((p) => {
       const b = el("button", "chip", p);
       b.setAttribute("aria-pressed", String(state.filter.has(p)));
-      b.addEventListener("click", () => { state.filter.has(p) ? state.filter.delete(p) : state.filter.add(p); renderChips(); renderList(); });
+      b.addEventListener("click", () => {
+        state.filter.has(p) ? state.filter.delete(p) : state.filter.add(p);
+        renderChips(); renderList(); saveFilter();
+      });
       return b;
     }));
   }
@@ -72,9 +132,12 @@
   const visible = () => {
     const q = state.query.trim().toLowerCase();
     return state.reports.filter((r) => {
+      if (!state.showDismissed && state.dismissed.has(r.id)) return false;
       if (state.filter.size && !state.filter.has(level(r))) return false;
-      const type = r.report_type === "capacity" ? "capacity" : "incident";
-      if (state.type !== "all" && state.type !== type) return false;
+      const rt = reportType(r);
+      if (state.type === "incident" && rt !== "incident") return false;
+      if (state.type === "capacity" && rt !== "capacity") return false;
+      if (state.type === "weekly_floor" && rt !== "weekly_floor") return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
         r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
@@ -83,7 +146,21 @@
 
   function renderList() {
     const shown = visible();
-    $("count").textContent = `${state.reports.length} report${state.reports.length === 1 ? "" : "s"}${shown.length !== state.reports.length ? `, ${shown.length} shown` : ""}`;
+    const total = state.reports.filter((r) => !state.dismissed.has(r.id)).length;
+    const dismissedCount = state.dismissed.size;
+    $("count").textContent = `${total} report${total === 1 ? "" : "s"}${shown.length !== total ? `, ${shown.length} shown` : ""}`;
+
+    // dismissed toggle
+    const dtoggle = $("dismissed-toggle");
+    if (dismissedCount > 0) {
+      dtoggle.hidden = false;
+      dtoggle.textContent = state.showDismissed
+        ? `Hide ${dismissedCount} dismissed`
+        : `${dismissedCount} dismissed — show`;
+    } else {
+      dtoggle.hidden = true;
+    }
+
     const list = $("list");
     list.replaceChildren();
     if (!shown.length) { list.append(el("li", "none", state.loaded ? "No report matches." : "Loading…")); return; }
@@ -96,6 +173,7 @@
       const b = el("button", "item");
       b.dataset.id = r.id;
       if (state.current === r.id) b.setAttribute("aria-current", "true");
+      if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
       const isCapacity = r.report_type === "capacity";
       const capacity = r.capacity || {};
@@ -112,10 +190,10 @@
       if (isCapacity) {
         top.append(pill("Capacity", "soft"));
         if (verificationStatus) {
-          const label = verificationStatus === "healthy" ? "Healthy"
+          const label2 = verificationStatus === "healthy" ? "Healthy"
             : verificationStatus === "needs_attention" ? "Follow-up"
             : verificationStatus === "not_merged" ? "PR open" : "Pending";
-          top.append(pill(label, verificationStatus === "healthy" ? "ok" : verificationStatus === "needs_attention" ? "p1" : "soft"));
+          top.append(pill(label2, verificationStatus === "healthy" ? "ok" : verificationStatus === "needs_attention" ? "p1" : "soft"));
         }
       }
       const done = state.live[r.id] === "resolved";
@@ -139,6 +217,26 @@
       if (r.root_cause && r.root_cause.category) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
+
+      // dismiss button
+      const dismiss = el("button", "item-dismiss", "×");
+      dismiss.type = "button";
+      dismiss.title = state.dismissed.has(r.id) ? "Restore report" : "Dismiss report";
+      dismiss.setAttribute("aria-label", state.dismissed.has(r.id) ? "Restore report" : "Dismiss report");
+      dismiss.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const wasDismissed = state.dismissed.has(r.id);
+        if (wasDismissed) {
+          state.dismissed.delete(r.id);
+          toast("Report restored");
+        } else {
+          state.dismissed.add(r.id);
+          if (state.current === r.id) location.hash = "";
+          toast("Report dismissed", () => { state.dismissed.delete(r.id); saveDismissed(); updateTabCounts(); renderList(); });
+        }
+        saveDismissed(); updateTabCounts(); renderList();
+      });
+      b.append(dismiss);
       li.append(b);
       list.append(li);
     }
@@ -148,7 +246,6 @@
   marked.setOptions({ gfm: true, breaks: false });
 
   function enhance(body) {
-    // timeline: "- 2026-...Z: text" lines become a vertical timeline
     for (const h of body.querySelectorAll("h2")) {
       if (/^timeline/i.test(h.textContent)) {
         const ul = h.nextElementSibling;
@@ -160,14 +257,12 @@
           }
         }
       }
-      // long evidence goes under a fold
       if (/^evidence/i.test(h.textContent)) {
         const nodes = []; let n = h.nextElementSibling;
         while (n && n.tagName !== "H2") { nodes.push(n); n = n.nextElementSibling; }
         if (nodes.length) { const d = el("details"); const s = el("summary", "", `Evidence (${nodes.filter((x) => x.tagName === "UL").reduce((a, u) => a + u.children.length, 0) || nodes.length} items)`); d.append(s, ...nodes); h.after(d); }
       }
     }
-    // copy buttons on code blocks, and a copy button for the commands in the fix steps
     for (const pre of body.querySelectorAll("pre")) {
       const b = el("button", "copy", "Copy"); b.type = "button";
       b.addEventListener("click", () => navigator.clipboard.writeText(pre.innerText.replace(/\nCopy$/, "")).then(() => toast("Copied")));
@@ -216,12 +311,10 @@
     heads.forEach((h) => obs.observe(h));
   }
 
-  // ---- live status: is the alert of this report still firing? --------------------------------------------------
-  // One request to /_status/rules (Grafana's rule states, read-only) matches the report to an alert instance by the alert name and the service.
-  // A resolved report is remembered in this browser and not asked about again: if the problem comes back, the agent writes a new report.
+  // ---- live status -------------------------------------------------------------------------------------------
   const RESOLVED_KEY = (id) => "rca-resolved:" + id;
   function savedResolved(id) { try { return localStorage.getItem(RESOLVED_KEY(id)); } catch (_) { return null; } }
-  function saveResolved(id, at) { try { localStorage.setItem(RESOLVED_KEY(id), at); } catch (_) { /* ignore */ } }
+  function saveResolved(id, at) { try { localStorage.setItem(RESOLVED_KEY(id), at); } catch (_) {} }
 
   async function liveStatus(r) {
     const saved = savedResolved(r.id);
@@ -264,8 +357,6 @@
     stamp.textContent = asked + evald + next;
   }
 
-  // how often an open report is checked while it fires, is pending or its state is unknown: the higher the priority, the sooner a change shows.
-  // Unknown (Grafana cannot be asked) backs off to twice the interval so a broken proxy is not hammered. Resolved reports are not checked at all.
   const EVERY = { P1: 10, P2: 30, P3: 60, P4: 120 };
   const every = (r, st) => (EVERY[level(r)] || 60) * (st === "unknown" ? 2 : 1) * 1000;
 
@@ -277,13 +368,12 @@
       if (state.current !== r.id) return;
       paintLive(r, live, badge, stamp);
       drawArchitecture(r, live.state);
-      if (live.state === "resolved") { if (!live.cached) saveResolved(r.id, live.at.toISOString()); return; }   // resolved: no more checks
+      if (live.state === "resolved") { if (!live.cached) saveResolved(r.id, live.at.toISOString()); return; }
       state.liveTimer = setTimeout(run, every(r, live.state));
     };
     run();
   }
 
-  // what the rules worked out beyond the cause: blast radius, change, confidence, competing causes, chain, trend, recurrence, related alerts
   function renderInsights(r) {
     const card = document.getElementById("insights-card"), body = document.getElementById("insights-body"), i = r.insights;
     body.replaceChildren();
@@ -301,7 +391,6 @@
     block("Confirming the fix", [i.verification.resolves_when]);
   }
 
-  // the alert that started the investigation, as the agent recorded it (reports written before this have none)
   function renderAlertDetails(r) {
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
@@ -325,10 +414,8 @@
   }
 
   function drawArchitecture(r, live) {
-    // resolved: two pictures, the problem as it was and the recovered state now; otherwise the one picture
     const { svg, analysis, nameOf } = RcaDiagram.draw(r, live === "resolved" ? "unknown" : live, live === "resolved");
     if (live === "resolved") {
-      // the problem picture stays (animated, as it was); the recovered state is one green line under it, no second diagram
       const fig = el("figure", "arch-fig"); fig.append(el("figcaption", "", "When it happened: the problem and what it affected"), svg);
       $("arch").replaceChildren(fig, el("div", "arch-now", "✓ Now: the alert is no longer firing, everything is healthy."));
     } else {
@@ -363,6 +450,7 @@
     if (c.decision === "error") return "Review failed";
     return "No change proposed";
   }
+
   function renderCapacityPlan(container, r) {
     const c = r.capacity || {};
     const remediation = r.remediation || {};
@@ -577,7 +665,23 @@
     const copy = el("button", "btn", "Copy link"); copy.type = "button";
     copy.addEventListener("click", () => navigator.clipboard.writeText(location.href.split("#")[0] + "#" + id).then(() => toast("Link copied")));
     const print = el("button", "btn", "Print / PDF"); print.type = "button"; print.addEventListener("click", () => window.print());
-    actions.append(copy, link(isCapacity ? "Capacity plan" : "Markdown", `/${id}/rca.md`), link(isCapacity ? "Report data" : "JSON", `/${id}/report.json`), print);
+    // dismiss from report view
+    const isDismissed = state.dismissed.has(id);
+    const dimBtn = el("button", "btn", isDismissed ? "Restore" : "Dismiss");
+    dimBtn.type = "button";
+    dimBtn.addEventListener("click", () => {
+      if (state.dismissed.has(id)) {
+        state.dismissed.delete(id);
+        toast("Report restored");
+      } else {
+        state.dismissed.add(id);
+        toast("Report dismissed", () => { state.dismissed.delete(id); saveDismissed(); updateTabCounts(); renderList(); });
+      }
+      saveDismissed(); updateTabCounts(); renderList();
+      // re-render action bar to reflect new state
+      show(id);
+    });
+    actions.append(copy, link(isCapacity ? "Capacity plan" : "Markdown", `/${id}/rca.md`), link(isCapacity ? "Report data" : "JSON", `/${id}/report.json`), print, dimBtn);
 
     const body = $("body");
     const toc = $("toc");
@@ -585,8 +689,7 @@
       toc.replaceChildren(); toc.hidden = true;
       body.parentElement.classList.add("capacity-grid");
       renderCapacityPlan(body, r);
-    }
-    else {
+    } else {
       toc.hidden = false;
       body.parentElement.classList.remove("capacity-grid");
       body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
@@ -612,9 +715,19 @@
   }
 
   // ---- wiring ------------------------------------------------------------------------------------------------
-  $("q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); });
-  $("report-type").addEventListener("change", (e) => { state.type = e.target.value; renderList(); });
+  $("q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); saveFilter(); });
   $("back").addEventListener("click", () => { location.hash = ""; });
+  $("dismissed-toggle").addEventListener("click", () => { state.showDismissed = !state.showDismissed; renderList(); });
+
+  // type tabs
+  $("type-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    state.type = tab.dataset.type;
+    document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b === tab)));
+    renderList(); saveFilter();
+  });
+
   addEventListener("hashchange", route);
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") { if (e.key === "Escape") e.target.blur(); return; }
@@ -625,6 +738,7 @@
     if (next) location.hash = next.id;
   });
 
+  loadPrefs();
   loadList().then(route).catch((e) => { $("count").textContent = "Could not load the reports"; $("list").replaceChildren(el("li", "none", String(e.message))); });
   setInterval(() => loadList().catch(() => {}), 30000);
 })();
