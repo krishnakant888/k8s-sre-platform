@@ -27,3 +27,4 @@ spec:
       backoff: {duration: 30s, factor: 2, maxDuration: 5m}
     syncOptions:
       - SkipDryRunOnMissingResource=true   # WorkflowTemplate: its CRD comes from the argo-workflows app (wave 0)
+      - ServerSideApply=true               # ConfigMap annotation size limit: rca-viewer-ui exceeds 256KB with client-side apply
