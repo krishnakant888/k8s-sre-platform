@@ -31,7 +31,7 @@ spec:
           - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "86400"}
           - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "86400"}
           - {name: SCALE_DOWN_POST_MERGE_WINDOW, value: 15m}
-          - {name: SCALE_DOWN_POST_MERGE_WAIT_SECONDS, value: "900"}
+          - {name: SCALE_DOWN_POST_MERGE_WAIT_SECONDS, value: "1800"}
           - {name: SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS, value: "720"}
           - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
         resources:

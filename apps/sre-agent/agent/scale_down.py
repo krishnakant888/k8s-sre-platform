@@ -424,6 +424,23 @@ def _recent_commit(repo: str, path: str) -> bool:
     return time.time() - at < COOLDOWN_SECONDS
 
 
+def _has_hpa(repo: str, branch: str, workload: str) -> bool:
+    """Return True if any HPA targeting the workload exists in its GitOps directory."""
+    try:
+        entries = _get(f"repos/{repo}/contents/gitops/workloads/{workload}", params={"ref": branch})
+        for entry in entries:
+            if entry.get("type") != "file":
+                continue
+            loaded = _load_manifest(repo, branch, entry["path"])
+            if not loaded:
+                continue
+            if re.search(r"\bkind:\s*HorizontalPodAutoscaler\b", loaded[0]):
+                return True
+    except Exception as exc:
+        log.debug("scale-down: HPA check failed for %s: %s", workload, exc)
+    return False
+
+
 def _has_open_recommendation(repo: str, workload: str, branch: str) -> bool:
     pulls = _get(f"repos/{repo}/pulls", params={"state": "open", "per_page": 100})
     prefix = f"recommend/scale-down-{workload}-"
@@ -486,6 +503,8 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
         return None
 
     path = f"gitops/workloads/{workload}/deployment.yaml"
+    if _has_hpa(repo, branch, workload):
+        return skip("An HPA is managing replicas for this workload; scale-down review is not applicable.")
     if _has_open_recommendation(repo, workload, branch):
         return skip("An earlier scale-down recommendation is still open.")
     if _recent_commit(repo, path):
