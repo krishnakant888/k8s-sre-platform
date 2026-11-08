@@ -29,9 +29,11 @@ CPU_THROTTLE_MAX = 0.01
 MEMORY_P99_MAX = 0.60
 MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_MIN_COVERAGE_SECONDS", str(24 * 60 * 60)))
 COOLDOWN_SECONDS = int(os.getenv("SCALE_DOWN_COOLDOWN_SECONDS", str(24 * 60 * 60)))
-POST_MERGE_WINDOW = os.getenv("SCALE_DOWN_POST_MERGE_WINDOW", "1m")
-POST_MERGE_WAIT_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_WAIT_SECONDS", "0"))
-POST_MERGE_MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS", "45"))
+POST_MERGE_WINDOW = os.getenv("SCALE_DOWN_POST_MERGE_WINDOW", "15m")
+POST_MERGE_WAIT_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_WAIT_SECONDS", "900"))
+POST_MERGE_MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS", "720"))
+WEEKLY_FLOOR_WINDOW = os.getenv("WEEKLY_FLOOR_WINDOW", "7d")
+WEEKLY_FLOOR_MIN_COVERAGE_SECONDS = int(os.getenv("WEEKLY_FLOOR_MIN_COVERAGE_SECONDS", str(6 * 24 * 60 * 60)))
 GRAFANA_URL = getattr(config, "GRAFANA_URL", "http://grafana.observability.svc.cluster.local:3000")
 GRAFANA_API_TOKEN = getattr(config, "GRAFANA_API_TOKEN", "")
 
@@ -135,7 +137,7 @@ def _metrics(cluster: str, namespace: str, workload: str, window: str | None = N
 def _verify_post_merge(workload: str, namespace: str, cluster: str,
                        expected_replicas: int, expected_memory_mib: int | None,
                        expected_cpu_millicores: int | None) -> dict:
-    """Collect a short health snapshot after a capacity PR merges."""
+    """Wait for and collect sustained health evidence after a capacity PR merges."""
     wait_seconds = max(0, POST_MERGE_WAIT_SECONDS)
     if wait_seconds:
         time.sleep(wait_seconds)
@@ -232,7 +234,13 @@ def _write_capacity_report(review: dict) -> str:
     report_id = f"rca-capacity-{now:%Y%m%dT%H%M%SZ}-{workload}-{uuid4().hex[:8]}"
     proposed = review.get("proposed_change")
     post_merge = review.get("post_merge")
-    if decision == "proposal":
+    review_type = review.get("review_type", "daily")
+    report_title = "Weekly replica-floor review" if review_type == "weekly_floor" else "Capacity plan"
+    displayed_decision = "recommendation only" if review_type == "weekly_floor" else decision
+    if review_type == "weekly_floor":
+        summary = (f"Weekly replica-floor review for {workload}: {proposed}. "
+                   f"Recommendation only; no scaling change or pull request was made. {review.get('reason', '')}")
+    elif decision == "proposal":
         summary = f"Capacity review for {workload} proposed: {proposed}."
         if review.get("pr_url"):
             summary += f" PR #{review.get('pr_number')} was {'merged' if review.get('merged') else 'opened'}: {review['pr_url']}"
@@ -277,17 +285,20 @@ def _write_capacity_report(review: dict) -> str:
             "CPU P95 and memory P99 below 80% of the proposed limits, and CPU throttling below its threshold."
         )
     markdown = (
-        f"# Capacity review: {workload}\n\n"
-        f"**Decision:** {decision.replace('_', ' ')}  \n"
+        f"# {report_title}: {workload}\n\n"
+        f"**Decision:** {displayed_decision}  \n"
         f"**Window:** {review.get('window', WINDOW)}  \n"
+        f"**Configured minimum floor:** {review.get('configured_floor', 'not evaluated')}  \n"
         f"**Candidate replica floor:** {review.get('candidate_floor', 'not evaluated')}  \n"
         f"**Proposed change:** {proposed or 'none'}  \n"
         f"**Reason:** {review.get('reason', 'metrics satisfied the configured safety checks')}\n\n"
         "## Metrics\n\n"
-        f"{evidence_text}\n\n"
-        "## Proposal\n\n"
-        f"{summary}\n\n"
-        "Scale-down requires adequate metric coverage, no active matching alert, no recent restarts, and all desired replicas available."
+        f"{evidence_text}\n\n" +
+        ("## Weekly recommendation\n\n" if review_type == "weekly_floor" else "## Proposal\n\n") +
+        f"{summary}\n\n" +
+        ("Weekly reports are advisory only; missing or insufficient evidence withholds a floor recommendation. No replica change is performed."
+         if review_type == "weekly_floor" else
+         "Scale-down requires adequate metric coverage, no active matching alert, no recent restarts, and all desired replicas available.") +
         f"{post_merge_text}"
     )
     report_evidence = [Evidence(source="mimir", query=f"SCALE_DOWN_WINDOW={review.get('window', WINDOW)} for {review.get('cluster', 'platform')}",
@@ -313,7 +324,10 @@ def _write_capacity_report(review: dict) -> str:
                                  reasoning=[review.get("reason", "Capacity metrics reviewed.")], confidence="medium"),
         impact=Impact(slo="not evaluated", summary=(
                           f"Capacity PR merged; post-merge health verification is {(post_merge or {}).get('status', 'inconclusive')}."
-                          if review.get("merged") else "Capacity review; service health was checked before any proposal."),
+                          if review.get("merged") else
+                          "Weekly replica-floor recommendation only; no scaling change was applied."
+                          if review_type == "weekly_floor" else
+                          "Capacity review; service health was checked before any proposal."),
                       availability_replicas=metrics.get("available_replicas")),
         timeline=[TimelineEntry(time=started_at, event="Capacity review started"),
                   TimelineEntry(time=generated_at, event=summary)],
@@ -410,6 +424,23 @@ def _recent_commit(repo: str, path: str) -> bool:
     return time.time() - at < COOLDOWN_SECONDS
 
 
+def _has_hpa(repo: str, branch: str, workload: str) -> bool:
+    """Return True if any HPA targeting the workload exists in its GitOps directory."""
+    try:
+        entries = _get(f"repos/{repo}/contents/gitops/workloads/{workload}", params={"ref": branch})
+        for entry in entries:
+            if entry.get("type") != "file":
+                continue
+            loaded = _load_manifest(repo, branch, entry["path"])
+            if not loaded:
+                continue
+            if re.search(r"\bkind:\s*HorizontalPodAutoscaler\b", loaded[0]):
+                return True
+    except Exception as exc:
+        log.debug("scale-down: HPA check failed for %s: %s", workload, exc)
+    return False
+
+
 def _has_open_recommendation(repo: str, workload: str, branch: str) -> bool:
     pulls = _get(f"repos/{repo}/pulls", params={"state": "open", "per_page": 100})
     prefix = f"recommend/scale-down-{workload}-"
@@ -472,6 +503,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
         return None
 
     path = f"gitops/workloads/{workload}/deployment.yaml"
+    hpa_active = _has_hpa(repo, branch, workload)
     if _has_open_recommendation(repo, workload, branch):
         return skip("An earlier scale-down recommendation is still open.")
     if _recent_commit(repo, path):
@@ -517,7 +549,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
                   low_cpu=low_cpu, low_memory=low_memory)
 
     changed = None
-    if replicas > min_replicas and low_cpu and low_memory:
+    if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
         changed = _replace_replicas(content, replicas, min_replicas)
         operation = f"replicas `{replicas}` → `{min_replicas}` (candidate floor)"
     elif low_memory and memory_limit - memory_request >= 128:
@@ -543,7 +575,7 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
             reason = "Metrics do not support a safe replica-floor or resource-limit proposal."
         return skip(reason, metrics)
 
-    if replicas > min_replicas and low_cpu and low_memory:
+    if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
         decision_reason = (
             f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% are below their thresholds, "
             f"and memory P99 is {memory_pct:.1f}%; proposing the configured floor."
@@ -553,12 +585,12 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
     else:
         decision_reason = f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% support reducing one CPU step at the replica floor."
     review.update(decision="proposal", reason=decision_reason, proposed_change=operation,
-                  **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}))
+                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}))
     pr = _open_recommendation(repo, branch, head_sha, path, blob_sha, changed,
                               workload, operation, {
                                   "cpu_pct": cpu_pct, "throttle_pct": throttle_pct,
                                   "memory_pct": memory_pct,
-                                  **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}),
+                                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}),
                               })
     review.update(pr_number=pr.get("number"), pr_url=pr.get("html_url"), merged=pr.get("_merged", False))
     if review["merged"]:
@@ -614,7 +646,7 @@ def run_daily_review() -> None:
             errors.append(workload)
         try:
             report_id = _write_capacity_report(review)
-            log.info("capacity report available", extra={"workload": workload, "report_id": report_id,
+            log.info("capacity report available", extra={"workload": workload, "review_type": "daily", "report_id": report_id,
                                                            "decision": review.get("decision"),
                                                            "candidate_floor": review.get("candidate_floor"),
                                                            "pr_number": review.get("pr_number"),
@@ -626,3 +658,113 @@ def run_daily_review() -> None:
             errors.append(workload)
     if errors:
         raise RuntimeError("scale-down review failed for: " + ", ".join(errors))
+
+
+def _review_replica_floor(workload: str, namespace: str, cluster: str) -> dict:
+    """Review a service's configured replica floor from a week of telemetry; never mutate Git or scale."""
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    floor = 2 if workload in config.USER_FACING_SERVICES else 1
+    review = {"review_type": "weekly_floor", "workload": workload, "namespace": namespace,
+              "cluster": cluster, "window": WEEKLY_FLOOR_WINDOW, "started_at": started_at,
+              "configured_floor": floor, "decision": "skipped", "metrics": {},
+              "proposed_change": f"Maintain a minimum of {floor} replicas",
+              "reason": "Weekly review did not complete; no scaling action is taken by this review."}
+    try:
+        loaded = _load_manifest(config.GITOPS_REPO, "main", f"gitops/workloads/{workload}/deployment.yaml")
+        if not loaded:
+            review["reason"] = "Deployment manifest unavailable; floor recommendation withheld."
+            return review
+        content, _ = loaded
+        replicas_match = re.search(r"\breplicas:\s*(\d+)", content)
+        if not replicas_match:
+            review["reason"] = "Deployment replica count unavailable; floor recommendation withheld."
+            return review
+        replicas = int(replicas_match.group(1))
+        review["current_replicas"] = replicas
+        requests, limits = _quantity_values(content, "requests"), _quantity_values(content, "limits")
+        cpu_capacity = _cpu_millicores(limits.get("cpu") or requests.get("cpu"))
+        memory_limit = _memory_mib(limits.get("memory"))
+        if not cpu_capacity or not memory_limit:
+            review["reason"] = "CPU or memory capacity could not be parsed; floor recommendation withheld."
+            return review
+        metrics = _metrics(cluster, namespace, workload, WEEKLY_FLOOR_WINDOW)
+        review["metrics"] = metrics
+        missing = [key for key, value in metrics.items() if value is None]
+        if missing:
+            review["reason"] = "Insufficient telemetry; unavailable metrics: " + ", ".join(missing)
+            return review
+        if (metrics["cpu_coverage_seconds"] < WEEKLY_FLOOR_MIN_COVERAGE_SECONDS
+                or metrics["memory_coverage_seconds"] < WEEKLY_FLOOR_MIN_COVERAGE_SECONDS):
+            review["reason"] = (f"Insufficient seven-day history: at least {WEEKLY_FLOOR_MIN_COVERAGE_SECONDS}s "
+                                 "of CPU and memory coverage is required; no lower floor is recommended.")
+            return review
+        if _active_alert(workload, namespace):
+            review["reason"] = "A matching alert is active; retain the current floor and investigate first."
+            return review
+        if metrics["restarts_in_window"] > 0:
+            review["reason"] = "Restarts occurred in the weekly window; retain the current floor."
+            return review
+        if metrics["available_replicas"] < replicas:
+            review["reason"] = "Not all desired replicas are available; retain the current floor."
+            return review
+        cpu_pct = 100 * metrics["cpu_p95_cores"] * 1000 / cpu_capacity
+        throttle_pct = 100 * metrics["cpu_throttle"]
+        memory_pct = 100 * metrics["memory_p99_bytes"] / (memory_limit * 1024 * 1024)
+        low_cpu = cpu_pct < CPU_P95_MAX * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
+        low_memory = memory_pct < MEMORY_P99_MAX * 100
+        review.update(cpu_pct=cpu_pct, throttle_pct=throttle_pct, memory_pct=memory_pct)
+        if replicas <= floor:
+            review["decision"] = "recommendation"
+            review["candidate_floor"] = floor
+            review["reason"] = (f"The service is already at its configured {floor}-replica floor and the "
+                                 "week-long availability and resource signals do not justify lowering it.")
+            review["proposed_change"] = f"Retain the configured floor of {floor} replicas; do not scale below it"
+            return review
+        if low_cpu and low_memory:
+            review["decision"] = "recommendation"
+            review["candidate_floor"] = floor
+            review["proposed_change"] = (f"Consider reducing replicas from {replicas} to the configured floor of {floor}; "
+                                          "recommendation only, no reduction applied")
+            review["reason"] = (f"Seven-day CPU P95 used {cpu_pct:.1f}% of capacity, throttling was {throttle_pct:.2f}%, "
+                                f"and memory P99 used {memory_pct:.1f}% of its limit. All replicas remained available "
+                                "with no restarts or matching alerts; evidence supports reviewing a change to the "
+                                f"configured {floor}-replica floor.")
+            return review
+        review["decision"] = "recommendation"
+        review["candidate_floor"] = replicas
+        review["proposed_change"] = f"Retain {replicas} replicas; configured minimum remains {floor}"
+        review["reason"] = (f"The weekly signals do not support reducing {replicas} replicas to the configured "
+                            f"{floor}-replica floor (CPU P95 {cpu_pct:.1f}%, throttling {throttle_pct:.2f}%, "
+                            f"memory P99 {memory_pct:.1f}%). Retain the current replica count and review again next week.")
+        return review
+    except Exception as exc:
+        review["decision"] = "error"
+        review["reason"] = f"Weekly floor review failed: {exc}"
+        return review
+
+
+def run_weekly_floor_review() -> None:
+    """Publish read-only weekly floor reports for each configured service."""
+    reports_dir = Path(config.REPORTS_DIR)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    workloads = [item.strip() for item in os.getenv("WEEKLY_FLOOR_WORKLOADS", "orders-api:demo,frontend:demo").split(",") if item.strip()]
+    cluster = os.getenv("WEEKLY_FLOOR_CLUSTER", "platform")
+    errors = []
+    for item in workloads:
+        workload, sep, namespace = item.partition(":")
+        if not sep or not workload or not namespace:
+            raise ValueError(f"invalid WEEKLY_FLOOR_WORKLOADS entry: {item!r}")
+        review = _review_replica_floor(workload, namespace, cluster)
+        try:
+            report_id = _write_capacity_report(review)
+            log.info("capacity report available", extra={"workload": workload, "review_type": "weekly_floor",
+                                                           "report_id": report_id, "decision": review["decision"],
+                                                           "candidate_floor": review["candidate_floor"],
+                                                           "report_url": f"https://reports.localhost:9443/#{report_id}"})
+            if review["decision"] == "error":
+                errors.append(workload)
+        except Exception as exc:
+            log.exception("weekly capacity report could not be written for %s: %s", workload, exc)
+            errors.append(workload)
+    if errors:
+        raise RuntimeError("weekly floor review/report failed for: " + ", ".join(errors))

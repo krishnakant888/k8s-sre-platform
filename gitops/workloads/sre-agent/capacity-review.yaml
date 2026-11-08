@@ -8,7 +8,7 @@ metadata:
 spec:
   entrypoint: review
   serviceAccountName: sre-agent
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: 1800
   podGC:
     strategy: OnWorkflowCompletion
   ttlStrategy:
@@ -27,12 +27,12 @@ spec:
           - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
           - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo"}
           - {name: SCALE_DOWN_CLUSTER, value: platform}
-          - {name: SCALE_DOWN_WINDOW, value: 2m}
-          - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "120"}
-          - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "0"}
-          - {name: SCALE_DOWN_POST_MERGE_WINDOW, value: 1m}
-          - {name: SCALE_DOWN_POST_MERGE_WAIT_SECONDS, value: "60"}
-          - {name: SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS, value: "45"}
+          - {name: SCALE_DOWN_WINDOW, value: 24h}
+          - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "86400"}
+          - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "86400"}
+          - {name: SCALE_DOWN_POST_MERGE_WINDOW, value: 15m}
+          - {name: SCALE_DOWN_POST_MERGE_WAIT_SECONDS, value: "1800"}
+          - {name: SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS, value: "720"}
           - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
         resources:
           requests: {cpu: 50m, memory: 128Mi}
@@ -62,3 +62,63 @@ spec:
   workflowSpec:
     workflowTemplateRef:
       name: capacity-review
+---
+# Weekly floor evidence is read-only and never edits manifests or opens PRs.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: weekly-capacity-floor-review
+  namespace: sre-agent
+spec:
+  entrypoint: review
+  serviceAccountName: sre-agent
+  activeDeadlineSeconds: 1800
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 14400
+  templates:
+    - name: review
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-e7a1233cffd8e2d30406161a522bb63885bb00d3
+        command: [python, -m, agent.steps, weekly-floor-review]
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
+          - name: GRAFANA_API_TOKEN
+            valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
+          - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
+          - {name: WEEKLY_FLOOR_WORKLOADS, value: "orders-api:demo,frontend:demo"}
+          - {name: WEEKLY_FLOOR_CLUSTER, value: platform}
+          - {name: WEEKLY_FLOOR_WINDOW, value: 7d}
+          - {name: WEEKLY_FLOOR_MIN_COVERAGE_SECONDS, value: "518400"}
+          - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts:
+          - {name: reports, mountPath: /reports}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+      volumes:
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: sre-weekly-capacity-floor-review
+  namespace: sre-agent
+spec:
+  schedules: ["0 7 * * 1"]
+  timezone: Asia/Kolkata
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    workflowTemplateRef:
+      name: weekly-capacity-floor-review

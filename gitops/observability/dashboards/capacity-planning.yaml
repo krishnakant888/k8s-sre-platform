@@ -79,7 +79,7 @@ data:
         },
         {
           "id": 4, "type": "stat", "title": "Lowest pod memory headroom",
-          "description": "The smallest remaining fraction of a pod memory limit. Green is at least 30% free, yellow is 10–30% free, and red is below 10% free. This is the tightest pod, not an average.",
+          "description": "The smallest remaining fraction of a pod memory limit. Green is at least 30% free, yellow is 10â€“30% free, and red is below 10% free. This is the tightest pod, not an average.",
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {"defaults": {"unit": "percentunit", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}},
@@ -128,7 +128,7 @@ data:
         },
         {
           "id": 6, "type": "timeseries", "title": "Memory use as a share of limit",
-          "description": "Per-pod working set divided by its configured memory limit. Green is below 60%, yellow 60–80%, red above 80%. A lower limit can raise this percentage even when MiB used is unchanged; compare absolute peak MiB before proposing a change.",
+          "description": "Per-pod working set divided by its configured memory limit. Green is below 60%, yellow 60â€“80%, red above 80%. A lower limit can raise this percentage even when MiB used is unchanged; compare absolute peak MiB before proposing a change.",
           "gridPos": {"h": 10, "w": 16, "x": 0, "y": 11},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -143,7 +143,7 @@ data:
         },
         {
           "id": 7, "type": "table", "title": "Per-pod memory use and headroom (MiB)",
-          "description": "One row per pod/container. Used and 6h peak are observed MiB; Limit is the runtime ceiling (the request controls scheduling). Used % is color-coded: green <60%, yellow 60–80%, red >80%. Use the report link for the review decision and evidence.",
+          "description": "One row per pod/container. Used and 6h peak are observed MiB; Limit is the runtime ceiling (the request controls scheduling). Used % is color-coded: green <60%, yellow 60â€“80%, red >80%. Use the report link for the review decision and evidence.",
           "gridPos": {"h": 10, "w": 8, "x": 16, "y": 11},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -185,7 +185,7 @@ data:
         },
         {
           "id": 9, "type": "timeseries", "title": "CPU periods throttled (%)",
-          "description": "Per-pod fraction of CPU scheduling periods throttled over 5 minutes. Green <20%, yellow 20–50%, red >50%. Sustained throttling with healthy demand can justify a vertical CPU limit increase; this ratio is not CPU utilization.",
+          "description": "Per-pod fraction of CPU scheduling periods throttled over 5 minutes. Green <20%, yellow 20â€“50%, red >50%. Sustained throttling with healthy demand can justify a vertical CPU limit increase; this ratio is not CPU utilization.",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
           "datasource": {"type": "prometheus", "uid": "mimir"},
           "fieldConfig": {
@@ -263,7 +263,7 @@ data:
           "options": {"sortBy": [{"displayName": "Time", "desc": true}]},
           "transformations": [
             {"id": "extractFields", "options": {"source": "Line", "format": "json"}},
-            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "decision": "Decision", "candidate_floor": "Replica floor", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
+            {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "labelTypes": true, "tsNs": true, "id": true, "msg": true, "level": true, "caller": true, "ts": true, "trace_id": true, "service": true, "version": true, "pod": true, "logger": true, "cluster": true, "job": true, "instance": true, "namespace": true, "container": true, "node": true}, "renameByName": {"report_id": "Report ID", "workload": "Workload", "review_type": "Review cadence", "decision": "Decision", "candidate_floor": "Replica floor", "pr_number": "PR #", "pr_url": "Pull request", "post_merge_status": "Post-change status", "report_url": "Capacity report"}}}
           ],
           "targets": [{"expr": "{namespace=\"sre-agent\", service=\"sre-agent\"} | json | msg=\"capacity report available\"", "refId": "A"}]
         },
