@@ -29,6 +29,9 @@ CPU_THROTTLE_MAX = 0.01
 MEMORY_P99_MAX = 0.60
 MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_MIN_COVERAGE_SECONDS", str(24 * 60 * 60)))
 COOLDOWN_SECONDS = int(os.getenv("SCALE_DOWN_COOLDOWN_SECONDS", str(24 * 60 * 60)))
+POST_MERGE_WINDOW = os.getenv("SCALE_DOWN_POST_MERGE_WINDOW", "1m")
+POST_MERGE_WAIT_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_WAIT_SECONDS", "0"))
+POST_MERGE_MIN_COVERAGE_SECONDS = int(os.getenv("SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS", "45"))
 GRAFANA_URL = getattr(config, "GRAFANA_URL", "http://grafana.observability.svc.cluster.local:3000")
 GRAFANA_API_TOKEN = getattr(config, "GRAFANA_API_TOKEN", "")
 
@@ -94,36 +97,99 @@ def _selectors(cluster: str, namespace: str, workload: str) -> str:
             f'pod=~"{workload}-[a-z0-9]+-[a-z0-9]+",container!=""')
 
 
-def _metrics(cluster: str, namespace: str, workload: str) -> dict[str, float | None]:
+def _metrics(cluster: str, namespace: str, workload: str, window: str | None = None) -> dict[str, float | None]:
     sel = _selectors(cluster, namespace, workload)
+    window = window or WINDOW
+    cpu_step = _subquery_step(window, "15s", "5m")
+    coverage_step = _subquery_step(window, "15s", "1m")
     cpu = f'container_cpu_usage_seconds_total{{{sel}}}'
     memory = f'container_memory_working_set_bytes{{{sel}}}'
-    coverage_window = _coverage_window(WINDOW, COVERAGE_SUBQUERY_STEP)
+    coverage_window = _coverage_window(window, coverage_step)
     return {
         "cpu_p95_cores": _query(
-            f"max(quantile_over_time(0.95, rate({cpu}[5m])[{WINDOW}:{CPU_SUBQUERY_STEP}]))"
+            f"max(quantile_over_time(0.95, rate({cpu}[5m])[{window}:{cpu_step}]))"
         ),
         "cpu_throttle": _query(
             f"max(max_over_time((rate(container_cpu_cfs_throttled_periods_total{{{sel}}}[5m]) / "
-            f"rate(container_cpu_cfs_periods_total{{{sel}}}[5m]))[{WINDOW}:{CPU_SUBQUERY_STEP}]))"
+            f"rate(container_cpu_cfs_periods_total{{{sel}}}[5m]))[{window}:{cpu_step}]))"
         ),
         "memory_p99_bytes": _query(
-            f"max(quantile_over_time(0.99, {memory}[{WINDOW}]))"
+            f"max(quantile_over_time(0.99, {memory}[{window}]))"
         ),
         "cpu_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{coverage_window}:{COVERAGE_SUBQUERY_STEP}]))"
+            f"min(time() - min_over_time((timestamp(rate({cpu}[5m])))[{coverage_window}:{coverage_step}]))"
         ),
         "memory_coverage_seconds": _query(
-            f"min(time() - min_over_time((timestamp({memory}))[{coverage_window}:{COVERAGE_SUBQUERY_STEP}]))"
+            f"min(time() - min_over_time((timestamp({memory}))[{coverage_window}:{coverage_step}]))"
         ),
         "restarts_in_window": _query(
-            f"sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{WINDOW}]))"
+            f"sum(increase(kube_pod_container_status_restarts_total{{{sel}}}[{window}]))"
         ),
         "available_replicas": _query(
             f'min(kube_deployment_status_replicas_available{{cluster="{cluster}",'
             f'namespace="{namespace}",deployment="{workload}"}})'
         ),
     }
+
+
+def _verify_post_merge(workload: str, namespace: str, cluster: str,
+                       expected_replicas: int, expected_memory_mib: int | None,
+                       expected_cpu_millicores: int | None) -> dict:
+    """Collect a short health snapshot after a capacity PR merges."""
+    wait_seconds = max(0, POST_MERGE_WAIT_SECONDS)
+    if wait_seconds:
+        time.sleep(wait_seconds)
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    evidence = {"status": "inconclusive", "checked_at": checked_at,
+                "window": POST_MERGE_WINDOW, "wait_seconds": wait_seconds,
+                "expected_replicas": expected_replicas,
+                "expected_memory_limit_mib": expected_memory_mib,
+                "expected_cpu_limit_millicores": expected_cpu_millicores,
+                "checks": [], "metrics": {}}
+    try:
+        metrics = _metrics(cluster, namespace, workload, POST_MERGE_WINDOW)
+        evidence["metrics"] = metrics
+        coverage_ok = all(metrics.get(key) is not None and metrics[key] >= POST_MERGE_MIN_COVERAGE_SECONDS
+                          for key in ("cpu_coverage_seconds", "memory_coverage_seconds"))
+        available = metrics.get("available_replicas")
+        replicas_ok = available is not None and available >= expected_replicas
+        restarts = metrics.get("restarts_in_window")
+        restarts_ok = restarts is not None and restarts == 0
+        cpu = metrics.get("cpu_p95_cores")
+        cpu_ok = cpu is not None and (expected_cpu_millicores is None or
+                                     cpu <= expected_cpu_millicores / 1000 * 0.8)
+        throttle = metrics.get("cpu_throttle")
+        throttle_ok = throttle is not None and throttle < CPU_THROTTLE_MAX
+        memory = metrics.get("memory_p99_bytes")
+        memory_ok = memory is not None and (expected_memory_mib is None or
+                                           memory <= expected_memory_mib * 1024 * 1024 * 0.8)
+        try:
+            alert_ok = not _active_alert(workload, namespace)
+            alert_value = "none active" if alert_ok else "matching alert active"
+        except Exception as exc:
+            alert_ok, alert_value = False, f"alert state unavailable: {exc}"
+        checks = [
+            ("metric coverage", coverage_ok, f"minimum {POST_MERGE_MIN_COVERAGE_SECONDS}s"),
+            ("available replicas", replicas_ok, f"{available} available; expected at least {expected_replicas}"),
+            ("restarts", restarts_ok, f"{restarts} in {POST_MERGE_WINDOW}"),
+            ("CPU usage", cpu_ok, f"{cpu} cores P95; expected limit {expected_cpu_millicores}m"),
+            ("CPU throttling", throttle_ok, f"{throttle} ratio"),
+            ("memory usage", memory_ok, f"{memory} bytes P99; expected limit {expected_memory_mib}MiB"),
+            ("matching alerts", alert_ok, alert_value),
+        ]
+        evidence["checks"] = [{"name": name, "passed": passed, "evidence": value}
+                              for name, passed, value in checks]
+        if not coverage_ok or alert_value.startswith("alert state unavailable") or any(metrics.get(key) is None for key in
+                                  ("available_replicas", "restarts_in_window", "cpu_p95_cores",
+                                   "cpu_throttle", "memory_p99_bytes")):
+            evidence["status"] = "inconclusive"
+        else:
+            evidence["status"] = "healthy" if all(passed for _, passed, _ in checks) else "needs_attention"
+    except Exception as exc:
+        evidence["error"] = str(exc)
+        evidence["checks"] = [{"name": "post-merge health snapshot", "passed": False,
+                               "evidence": f"verification failed: {exc}"}]
+    return evidence
 
 
 def _active_alert(workload: str, namespace: str) -> bool:
@@ -165,10 +231,16 @@ def _write_capacity_report(review: dict) -> str:
                      "workload": workload, "window": review.get("window", WINDOW), "metrics": metrics})
     report_id = f"rca-capacity-{now:%Y%m%dT%H%M%SZ}-{workload}-{uuid4().hex[:8]}"
     proposed = review.get("proposed_change")
+    post_merge = review.get("post_merge")
     if decision == "proposal":
         summary = f"Capacity review for {workload} proposed: {proposed}."
         if review.get("pr_url"):
             summary += f" PR #{review.get('pr_number')} was {'merged' if review.get('merged') else 'opened'}: {review['pr_url']}"
+        if review.get("merged"):
+            status = (post_merge or {}).get("status", "inconclusive")
+            summary += f" Post-merge health verification: {status.replace('_', ' ')}."
+        else:
+            summary += " Post-merge health verification has not run because the PR is still open."
     elif decision == "error":
         summary = f"Capacity review for {workload} failed: {review.get('reason', 'unknown error')}"
     else:
@@ -186,6 +258,24 @@ def _write_capacity_report(review: dict) -> str:
         f"memory coverage {fmt('memory_coverage_seconds', ' s')}; restarts in window {fmt('restarts_in_window')}; "
         f"available replicas {fmt('available_replicas')}."
     )
+    post_merge_text = ""
+    if review.get("merged"):
+        verification = post_merge or {"status": "inconclusive", "checks": []}
+        check_lines = "\n".join(
+            f"- {'PASS' if check.get('passed') else 'CHECK'} **{check.get('name')}:** {check.get('evidence')}"
+            for check in verification.get("checks", [])
+        ) or "- No post-merge checks were recorded."
+        post_merge_text = (
+            "\n\n## Post-merge verification\n\n"
+            f"**Status:** {verification.get('status', 'inconclusive')}  \n"
+            f"**PR merged at:** {review.get('merged_at', 'not recorded')}  \n"
+            f"**Checked at:** {verification.get('checked_at', 'not recorded')}  \n"
+            f"**Observation window:** {verification.get('window', POST_MERGE_WINDOW)}  \n"
+            f"**Wait after merge:** {verification.get('wait_seconds', 0)} seconds\n\n"
+            f"{check_lines}\n\n"
+            "A healthy result requires metric coverage, enough available replicas, no recent restarts or matching alerts, "
+            "CPU P95 and memory P99 below 80% of the proposed limits, and CPU throttling below its threshold."
+        )
     markdown = (
         f"# Capacity review: {workload}\n\n"
         f"**Decision:** {decision.replace('_', ' ')}  \n"
@@ -198,7 +288,15 @@ def _write_capacity_report(review: dict) -> str:
         "## Proposal\n\n"
         f"{summary}\n\n"
         "Scale-down requires adequate metric coverage, no active matching alert, no recent restarts, and all desired replicas available."
+        f"{post_merge_text}"
     )
+    report_evidence = [Evidence(source="mimir", query=f"SCALE_DOWN_WINDOW={review.get('window', WINDOW)} for {review.get('cluster', 'platform')}",
+                                finding=evidence_text)]
+    if review.get("merged") and post_merge:
+        post_checks = "; ".join(f"{item['name']}: {'passed' if item['passed'] else 'not passed'} ({item['evidence']})"
+                                 for item in post_merge.get("checks", []))
+        report_evidence.append(Evidence(source="mimir and Grafana", query=f"post-merge {post_merge.get('window', POST_MERGE_WINDOW)} health snapshot",
+                                        finding=f"Status: {post_merge.get('status')}. {post_checks}"))
     report = RcaReport(
         id=report_id,
         alert="CapacityReview",
@@ -213,13 +311,14 @@ def _write_capacity_report(review: dict) -> str:
                           rationale=["Scheduled capacity review; no incident was raised."]),
         fault_domain=FaultDomain(layer="infrastructure", component=f"{workload} capacity",
                                  reasoning=[review.get("reason", "Capacity metrics reviewed.")], confidence="medium"),
-        impact=Impact(slo="not evaluated", summary="Capacity review; service health was checked before any proposal.",
+        impact=Impact(slo="not evaluated", summary=(
+                          f"Capacity PR merged; post-merge health verification is {(post_merge or {}).get('status', 'inconclusive')}."
+                          if review.get("merged") else "Capacity review; service health was checked before any proposal."),
                       availability_replicas=metrics.get("available_replicas")),
         timeline=[TimelineEntry(time=started_at, event="Capacity review started"),
                   TimelineEntry(time=generated_at, event=summary)],
         root_cause=RootCause(category="capacity_review", description=summary, confidence="medium"),
-        evidence=[Evidence(source="mimir", query=f"SCALE_DOWN_WINDOW={review.get('window', WINDOW)} for {review.get('cluster', 'platform')}",
-                           finding=evidence_text)],
+        evidence=report_evidence,
         contributing_factors=[],
         how_to_fix=HowToFix(immediate=["No immediate action required."],
                             permanent=["Keep the workload at the reviewed replica floor and resource settings."],
@@ -227,7 +326,9 @@ def _write_capacity_report(review: dict) -> str:
         observability_gaps=[],
         rca_markdown=markdown,
         remediation={"pr_number": review.get("pr_number"), "pr_url": review.get("pr_url"),
-                     "merged": review.get("merged", False), "proposed_change": proposed},
+                     "merged": review.get("merged", False), "proposed_change": proposed,
+                     "merged_at": review.get("merged_at"),
+                     "post_merge_verification": post_merge},
         incident={"workflow": os.getenv("WORKFLOW_NAME", "capacity-review")},
     ).model_dump(mode="json")
     report["report_type"] = "capacity"
@@ -460,6 +561,20 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
                                   **({"candidate_floor": min_replicas} if replicas > min_replicas and low_cpu and low_memory else {}),
                               })
     review.update(pr_number=pr.get("number"), pr_url=pr.get("html_url"), merged=pr.get("_merged", False))
+    if review["merged"]:
+        target_replicas = re.search(r"\breplicas:\s*(\d+)", changed)
+        target_requests = _quantity_values(changed, "requests")
+        target_limits = _quantity_values(changed, "limits")
+        review["merged_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        review["post_merge"] = _verify_post_merge(
+            workload, namespace, cluster,
+            expected_replicas=int(target_replicas.group(1)) if target_replicas else replicas,
+            expected_memory_mib=_memory_mib(target_limits.get("memory")),
+            expected_cpu_millicores=_cpu_millicores(target_limits.get("cpu") or target_requests.get("cpu")),
+        )
+    else:
+        review["post_merge"] = {"status": "not_merged", "checks": [],
+                                "reason": "The pull request is open; post-merge verification will run only after merge."}
     return pr
 
 
@@ -500,7 +615,12 @@ def run_daily_review() -> None:
         try:
             report_id = _write_capacity_report(review)
             log.info("capacity report available", extra={"workload": workload, "report_id": report_id,
-                                                           "decision": review.get("decision")})
+                                                           "decision": review.get("decision"),
+                                                           "candidate_floor": review.get("candidate_floor"),
+                                                           "pr_number": review.get("pr_number"),
+                                                           "pr_url": review.get("pr_url"),
+                                                           "post_merge_status": (review.get("post_merge") or {}).get("status", "not_applicable"),
+                                                           "report_url": f"https://reports.localhost:9443/#{report_id}"})
         except Exception as exc:
             log.exception("capacity report could not be written for %s: %s", workload, exc)
             errors.append(workload)

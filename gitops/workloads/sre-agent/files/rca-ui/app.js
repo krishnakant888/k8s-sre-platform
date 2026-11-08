@@ -319,6 +319,93 @@
     const d = el("div"); d.append(el("dt", "", label), el("dd", "", value)); dl.append(d);
   }
 
+  function renderCapacityPlan(container, r) {
+    const c = r.capacity || {};
+    const remediation = r.remediation || {};
+    const verification = c.post_merge || remediation.post_merge_verification || null;
+    const checks = verification && Array.isArray(verification.checks) ? verification.checks : [];
+    const status = verification && verification.status;
+    const statusText = status === "healthy" ? "Healthy after change"
+      : status === "needs_attention" ? "Follow-up needed"
+      : status === "inconclusive" ? "Verification inconclusive"
+      : status === "not_merged" ? "Waiting for merge"
+      : remediation.merged ? "Verification pending" : "Plan recorded";
+    const statusClass = status === "healthy" ? "healthy" : status === "needs_attention" ? "attention" : "pending";
+    const section = (title, cls) => { const s = el("section", "capacity-panel " + (cls || "")); s.append(el("h3", "capacity-section-title", title)); return s; };
+    const metric = (label, value, detail) => {
+      const item = el("div", "capacity-metric");
+      item.append(el("span", "capacity-metric-label", label), el("strong", "capacity-metric-value", value));
+      if (detail) item.append(el("span", "capacity-metric-detail", detail));
+      return item;
+    };
+    const vmetrics = verification && verification.metrics || {};
+    const fmt = (value, digits = 2) => typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "—";
+    const memMiB = typeof vmetrics.memory_p99_bytes === "number" ? vmetrics.memory_p99_bytes / 1048576 : null;
+    const cpuMilli = typeof vmetrics.cpu_p95_cores === "number" ? vmetrics.cpu_p95_cores * 1000 : null;
+    const expected = verification && verification.expected_replicas != null ? verification.expected_replicas : c.current_replicas;
+    const available = vmetrics.available_replicas;
+
+    const top = el("div", "capacity-plan-top");
+    const overview = section("Capacity action", "capacity-action-panel");
+    overview.append(el("p", "capacity-eyebrow", (c.namespace ? c.namespace + " / " : "") + (c.workload || r.service || "workload")));
+    overview.append(el("p", "capacity-change", c.proposed_change || "No configuration change proposed"));
+    overview.append(el("p", "capacity-reason", c.reason || r.summary || "Capacity signals reviewed."));
+    const actionMeta = el("div", "capacity-action-meta");
+    if (remediation.pr_url || c.pr_url) {
+      const pr = el("a", "capacity-pr-link", "Pull request #" + (remediation.pr_number || c.pr_number || ""));
+      pr.href = remediation.pr_url || c.pr_url; pr.target = "_blank"; pr.rel = "noopener";
+      actionMeta.append(pr);
+    }
+    actionMeta.append(el("span", "capacity-status " + statusClass, statusText));
+    overview.append(actionMeta);
+    const result = section("Post-change result", "capacity-result-panel " + statusClass);
+    result.append(el("span", "capacity-result-mark", status === "healthy" ? "✓" : status === "needs_attention" ? "!" : "·"));
+    result.append(el("strong", "capacity-result-title", statusText));
+    result.append(el("p", "capacity-result-copy", status === "healthy"
+      ? "The proposed settings are active and the workload passed its " + (verification.window || "post-merge") + " health checks."
+      : status === "needs_attention" ? "The change was applied, but one or more health checks need follow-up."
+      : status === "not_merged" ? "The pull request has not merged, so post-change health has not been checked."
+      : "Post-change health evidence is not yet sufficient to confirm the result."));
+    if (verification && verification.checked_at) result.append(el("span", "capacity-checked-at", "Checked " + fmtTime(when(verification.checked_at))));
+    top.append(overview, result);
+    container.replaceChildren(top);
+
+    if (verification && verification.metrics) {
+      const health = section("Health evidence", "capacity-health-panel");
+      const grid = el("div", "capacity-metrics");
+      grid.append(
+        metric("CPU P95", cpuMilli == null ? "—" : fmt(cpuMilli, 1) + "m", "cores"),
+        metric("CPU throttling", typeof vmetrics.cpu_throttle === "number" ? fmt(vmetrics.cpu_throttle * 100, 3) + "%" : "—", "throttled periods"),
+        metric("Memory P99", memMiB == null ? "—" : fmt(memMiB, 1) + " MiB", "working set"),
+        metric("Available replicas", (available == null ? "—" : fmt(available, 0)) + " / " + (expected == null ? "—" : expected), "available / expected"),
+        metric("Restarts", vmetrics.restarts_in_window == null ? "—" : fmt(vmetrics.restarts_in_window, 0), "in " + (verification.window || "observation window")),
+        metric("Metric coverage", fmt(vmetrics.cpu_coverage_seconds, 0) + "s / " + fmt(vmetrics.memory_coverage_seconds, 0) + "s", "CPU / memory")
+      );
+      health.append(grid);
+      if (checks.length) {
+        const list = el("ul", "capacity-check-list");
+        checks.forEach((check) => {
+          const row = el("li", check.passed ? "capacity-check passed" : "capacity-check failed");
+          row.append(el("span", "capacity-check-icon", check.passed ? "✓" : "!"));
+          const text = el("span", "capacity-check-text");
+          text.append(el("strong", "", check.name || "Health check"), el("span", "", check.evidence || ""));
+          row.append(text); list.append(row);
+        });
+        health.append(list);
+      }
+      container.append(health);
+    }
+
+    const plan = section("Review basis", "capacity-basis-panel");
+    const basis = el("dl", "capacity-basis");
+    fact(basis, "Review decision", c.decision);
+    fact(basis, "Replica floor", c.candidate_floor);
+    fact(basis, "Review window", c.window);
+    fact(basis, "Review metrics", c.metrics ? "Captured" : "Unavailable");
+    plan.append(basis);
+    container.append(plan);
+  }
+
   async function show(id) {
     clearTimeout(state.liveTimer);
     state.current = id;
@@ -336,10 +423,22 @@
     const isCapacity = r.report_type === "capacity";
     const lv = level(r);
     if (lv) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
-    if (isCapacity) pills.append(pill("Capacity report", "soft"));
+    if (isCapacity) {
+      pills.append(pill("Capacity plan", "soft"));
+      const priorityPill = pills.querySelector(".pill");
+      if (priorityPill) priorityPill.remove();
+    }
     const decision = r.capacity && r.capacity.decision;
-    const badge = pill(isCapacity ? (decision === "proposal" ? "Proposal recorded" : "Review complete") : "Checking Grafana…", "soft");
+    const postMergeStatus = isCapacity && r.capacity.post_merge && r.capacity.post_merge.status;
+    const capacityBadge = postMergeStatus === "healthy" ? "Merged · healthy"
+      : postMergeStatus === "needs_attention" ? "Merged · needs attention"
+      : postMergeStatus === "inconclusive" ? "Merged · verification inconclusive"
+      : postMergeStatus === "not_merged" ? "PR open · not verified"
+      : decision === "proposal" ? "Proposal recorded" : "Review complete";
+    const badge = pill(isCapacity ? capacityBadge : "Checking Grafana…", "soft");
     badge.id = "live-badge";
+    if (isCapacity && postMergeStatus === "healthy") badge.classList.add("ok");
+    if (isCapacity && postMergeStatus === "needs_attention") badge.classList.add("p1");
     const stamp = el("span", "stamp muted", "");
     pills.append(badge, stamp);
     if (isCapacity) {
@@ -349,21 +448,21 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
-    $("title").textContent = `${r.alert || id}${r.service ? " on " + r.service : ""}`;
-    $("summary").textContent = r.summary || "";
+    $("title").textContent = isCapacity ? "Capacity plan for " + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
+    $("summary").textContent = isCapacity ? "Capacity review, change record, and post-change health evidence." : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
-    fact(facts, "Where", r.fault_domain && r.fault_domain.layer ? `${r.fault_domain.layer} level` : "");
-    fact(facts, "Component", r.fault_domain && r.fault_domain.component);
-    fact(facts, "Root cause", r.root_cause && r.root_cause.category ? `${words(r.root_cause.category)}${r.root_cause.confidence ? " (" + r.root_cause.confidence + " confidence)" : ""}` : "");
-    fact(facts, "Started", fmtTime(when(r.started_at)));
-    fact(facts, "Report written", fmtTime(when(r.generated_at)));
-    fact(facts, "Investigation ID", id);
     if (isCapacity) {
-      fact(facts, "Review decision", decision);
-      fact(facts, "Current replicas", r.capacity.current_replicas);
-      fact(facts, "Candidate replica floor", r.capacity.candidate_floor);
-      fact(facts, "Proposed change", r.capacity.proposed_change);
-      fact(facts, "Pull request", r.capacity.pr_url);
+      fact(facts, "Workload", `${r.capacity.namespace || ""}${r.capacity.namespace ? " / " : ""}${r.service || ""}`);
+      fact(facts, "Decision", decision);
+      fact(facts, "Replica floor", r.capacity.candidate_floor);
+      fact(facts, "Reviewed", fmtTime(when(r.started_at)));
+    } else {
+      fact(facts, "Where", r.fault_domain && r.fault_domain.layer ? `${r.fault_domain.layer} level` : "");
+      fact(facts, "Component", r.fault_domain && r.fault_domain.component);
+      fact(facts, "Root cause", r.root_cause && r.root_cause.category ? `${words(r.root_cause.category)}${r.root_cause.confidence ? " (" + r.root_cause.confidence + " confidence)" : ""}` : "");
+      fact(facts, "Started", fmtTime(when(r.started_at)));
+      fact(facts, "Report written", fmtTime(when(r.generated_at)));
+      fact(facts, "Investigation ID", id);
     }
 
     const actions = $("actions"); actions.replaceChildren();
@@ -374,9 +473,19 @@
     actions.append(copy, link("Markdown", `/${id}/rca.md`), link("JSON", `/${id}/report.json`), print);
 
     const body = $("body");
-    body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
-    enhance(body);
-    buildToc(body);
+    const toc = $("toc");
+    if (isCapacity) {
+      toc.replaceChildren(); toc.hidden = true;
+      body.parentElement.classList.add("capacity-grid");
+      renderCapacityPlan(body, r);
+    }
+    else {
+      toc.hidden = false;
+      body.parentElement.classList.remove("capacity-grid");
+      body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
+      enhance(body);
+      buildToc(body);
+    }
     renderInsights(r);
     renderAlertDetails(r);
     $("arch").closest(".arch-card").hidden = isCapacity;
@@ -386,12 +495,13 @@
     }
     document.title = `${r.alert || id} · reports`;
     $("main").scrollTo({ top: 0 });
+    if (isCapacity) document.title = "Capacity plan | " + (r.service || "workload");
   }
 
   function route() {
     const id = decodeURIComponent(location.hash.slice(1));
     if (id && /^rca-[\w.-]+$/.test(id)) show(id);
-    else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "RCA and capacity reports"; renderList(); }
+    else { clearTimeout(state.liveTimer); state.current = null; $("app").classList.remove("reading"); $("report").hidden = true; $("empty").hidden = false; document.title = "SRE Reports"; renderList(); }
   }
 
   // ---- wiring ------------------------------------------------------------------------------------------------

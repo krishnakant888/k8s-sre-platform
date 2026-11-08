@@ -30,6 +30,9 @@ spec:
           - {name: SCALE_DOWN_WINDOW, value: 2m}
           - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "120"}
           - {name: SCALE_DOWN_COOLDOWN_SECONDS, value: "0"}
+          - {name: SCALE_DOWN_POST_MERGE_WINDOW, value: 1m}
+          - {name: SCALE_DOWN_POST_MERGE_WAIT_SECONDS, value: "60"}
+          - {name: SCALE_DOWN_POST_MERGE_MIN_COVERAGE_SECONDS, value: "45"}
           - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
         resources:
           requests: {cpu: 50m, memory: 128Mi}
