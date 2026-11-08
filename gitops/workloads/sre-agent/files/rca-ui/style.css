@@ -169,17 +169,36 @@ button, input, select { font: inherit; color: inherit; }
 }
 .item:hover { background: var(--sb-2); }
 .item[aria-current="true"] { background: var(--sb-2); }
-/* severity-based left borders */
-.item[data-sev="p1"] { border-left-color: #ef4444; }
-.item[data-sev="p2"] { border-left-color: #f97316; }
-.item[data-sev="p3"] { border-left-color: #eab308; }
+/* severity-based card tint + left border */
+.item[data-sev="p1"] { border-left: 4px solid #ef4444; background: rgb(239 68 68/.06); }
+.item[data-sev="p2"] { border-left: 4px solid #f97316; background: rgb(249 115 22/.05); }
+.item[data-sev="p3"] { border-left: 3px solid #eab308; background: rgb(234 179 8/.04); }
 .item[data-sev="p4"] { border-left-color: #64748b; }
-.item[data-live="firing"] { border-left-color: #ef4444; animation: item-urgent .9s ease-in-out infinite alternate; }
-.item[data-live="resolved"] { border-left-color: #22c55e !important; }
+.item[data-sev="p1"]:hover, .item[data-sev="p1"][aria-current="true"] { background: rgb(239 68 68/.12); }
+.item[data-sev="p2"]:hover, .item[data-sev="p2"][aria-current="true"] { background: rgb(249 115 22/.10); }
+.item[data-sev="p3"]:hover, .item[data-sev="p3"][aria-current="true"] { background: rgb(234 179 8/.09); }
+/* firing: animated card glow by severity */
+.item[data-live="firing"][data-sev="p1"] { animation: item-fire-p1 1s ease-in-out infinite alternate; }
+.item[data-live="firing"][data-sev="p2"] { animation: item-fire-p2 1.4s ease-in-out infinite alternate; }
+.item[data-live="firing"] { border-left-color: #ef4444; animation: item-fire-p1 1s ease-in-out infinite alternate; }
+.item[data-live="resolved"] { border-left-color: #22c55e !important; background: rgb(34 197 94/.04) !important; }
 .item.capacity-healthy { border-left-color: #22c55e; }
 .item.capacity-attention { border-left-color: #ef4444; }
 .item.resolved[aria-current="true"] { border-left-color: #22c55e; }
-@keyframes item-urgent { from { background: transparent; } to { background: rgb(239 68 68 / .08); } }
+@keyframes item-fire-p1 { from { background: rgb(239 68 68/.06); } to { background: rgb(239 68 68/.16); box-shadow: inset 2px 0 0 #ef4444; } }
+@keyframes item-fire-p2 { from { background: rgb(249 115 22/.05); } to { background: rgb(249 115 22/.13); box-shadow: inset 2px 0 0 #f97316; } }
+/* live indicator dot (separate from unread dot — stays on after reading) */
+.item[data-live="firing"]::before {
+  content: ""; position: absolute; top: 9px; right: 24px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #ef4444; box-shadow: 0 0 6px #ef4444;
+  animation: live-pulse .8s ease-in-out infinite alternate;
+}
+.item[data-live="resolved"]::before {
+  content: ""; position: absolute; top: 9px; right: 24px;
+  width: 6px; height: 6px; border-radius: 50%; background: #22c55e;
+}
+@keyframes live-pulse { from { opacity: 1; transform: scale(1); } to { opacity: .3; transform: scale(.55); } }
 .item-top { display: flex; align-items: center; gap: 7px; }
 .item-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; color: var(--sb-text); }
 .item-sub { color: var(--sb-muted); font-size: 11.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
