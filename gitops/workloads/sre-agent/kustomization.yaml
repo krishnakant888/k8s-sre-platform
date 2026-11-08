@@ -10,6 +10,8 @@ resources:
   - agent.yaml
   - workflow-template.yaml
   - capacity-review.yaml
+  - hpa.yaml
+  - hpa-rca-viewer.yaml
 configMapGenerator:
   - name: rca-viewer-ui
     namespace: sre-agent
