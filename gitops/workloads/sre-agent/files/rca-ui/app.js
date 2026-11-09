@@ -1453,8 +1453,6 @@
   }
 
   const _RUN_LABELS = {
-    "capacity-review": "Capacity review",
-    "floor-review": "Floor review",
     "health-review": "Health review",
     "self-learning": "Self-learning",
   };
@@ -1528,8 +1526,6 @@
 
   // ---- run review modal --------------------------------------------------------------------------------------
   const _REVIEW_TYPES = [
-    { value: "capacity-review", label: "Capacity review" },
-    { value: "floor-review", label: "Floor review" },
     { value: "health-review", label: "Health review" },
     { value: "self-learning", label: "Self-learning" },
   ];
