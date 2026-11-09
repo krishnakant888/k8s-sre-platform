@@ -676,6 +676,8 @@ button, input, select { font: inherit; color: inherit; }
 .sl-spark-na { fill: var(--muted); font-size: 9px; }
 .sl-spark-cpu { fill: none; stroke: #3b82f6; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
 .sl-spark-mem { fill: none; stroke: #f59e0b; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.sl-spark-point-cpu { fill: #3b82f6; }
+.sl-spark-point-mem { fill: #f59e0b; }
 .sl-spark-thr { stroke: #dc2626; stroke-width: 1; stroke-dasharray: 3 2; opacity: .6; }
 .sl-spark-incident { stroke: #dc2626; stroke-width: 1.5; opacity: .7; }
 
