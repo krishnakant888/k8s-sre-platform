@@ -1126,7 +1126,7 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         commit_msg = rd.get("message", "")
         rev = (rd.get("revision") or "")[:10]
         # human-readable deploy identity
-        pr_ref = f"PR #{pr_num} "{pr_title}"" if pr_num and pr_title else (f"PR #{pr_num}" if pr_num else (f'"{commit_msg}"' if commit_msg else f"commit {rev}"))
+        pr_ref = (f'PR #{pr_num} "{pr_title}"' if pr_num and pr_title else (f"PR #{pr_num}" if pr_num else (f'"{commit_msg}"' if commit_msg else f"commit {rev}")))
         svc_ref = f"`{app_name}` (namespace `{dest_ns}`)" if app_name else f"`{wl}` (namespace `{dest_ns or ns}`)"
         paths_line = f"Changed paths: {', '.join(paths[:4])}" if paths else ""
         pr_link = f" — {pr_url}" if pr_url else ""
