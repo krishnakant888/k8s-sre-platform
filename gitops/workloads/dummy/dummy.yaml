@@ -1,6 +1,19 @@
-# A deliberately plain web app: no metrics endpoint, no scrape annotations, no tracing, plain-text access logs. The only things
-# it carries are the standard labels (name, version, team) and resources. Everything else about observing it
-# (metrics from the kubelet and kube-state-metrics, ingress traffic, logs, events, alerts, dashboards, RCA) comes from the platform.
+# A deliberately plain web app: no OTel SDK. Trace context arrives via the traceparent header forwarded by the
+# gateway; nginx logs it as trace_id so each request links back to its distributed trace.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dummy-shop-nginx-conf
+  namespace: sandbox
+data:
+  trace-logging.conf: |
+    log_format json_trace escape=json
+      '{"ts":"$time_iso8601","service":"dummy-shop",'
+      '"method":"$request_method","path":"$uri","status":$status,'
+      '"bytes":$body_bytes_sent,"duration":$request_time,'
+      '"trace_id":"$http_traceparent","request_id":"$http_x_request_id"}';
+    access_log /dev/stdout json_trace;
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -52,9 +65,12 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: nginx-conf, mountPath: /etc/nginx/conf.d/trace-logging.conf, subPath: trace-logging.conf, readOnly: true}
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: nginx-conf
+          configMap: {name: dummy-shop-nginx-conf}
 ---
 apiVersion: v1
 kind: Service

@@ -41,6 +41,8 @@ limits_config:
   allow_structured_metadata: true
   volume_enabled: true
   max_query_series: 20000                  # 5000
+  query_timeout: 120s                      # default 1m — high-cardinality services (mimir) need more
+  split_queries_by_interval: 15m           # break long-range queries into 15-min shards to avoid single-shard timeouts
   # 4x Loki's defaults (shown after each): three clusters tail every container, plus Kubernetes events
   ingestion_rate_mb: 16                    # 4
   ingestion_burst_size_mb: 24              # 6
