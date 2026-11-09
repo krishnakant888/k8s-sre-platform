@@ -147,6 +147,30 @@ async def list_workloads():
     return {"workloads": items}
 
 
+@app.post("/re-analyze/{report_id}", status_code=202)
+async def re_analyze(report_id: str):
+    """Re-run investigation for an existing report using its stored alert_details."""
+    import json as _json
+    report_path = Path(config.REPORTS_DIR) / report_id / "report.json"
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail=f"report {report_id!r} not found")
+    report = _json.loads(report_path.read_text())
+    ad = report.get("alert_details", {})
+    if not ad.get("alertname"):
+        raise HTTPException(status_code=422, detail="report has no alert_details to re-analyze from")
+    # reconstruct minimal Alertmanager alert dict
+    alert = {
+        "labels": {**ad.get("labels", {}), "alertname": ad["alertname"]},
+        "annotations": ad.get("annotations", {}),
+        "startsAt": ad.get("starts_at", ""),
+        "status": "firing",
+    }
+    workflow_name, _ = await create_workflow(alert)
+    STARTED.labels(ad["alertname"]).inc()
+    log.info("re-analysis triggered", extra={"report_id": report_id, "alertname": ad["alertname"], "workflow": workflow_name})
+    return {"workflow": workflow_name, "report_id": report_id}
+
+
 @app.get("/workflow-status/{name}")
 async def get_workflow_status(name: str):
     token = Path(f"{config.SA_DIR}/token").read_text()
