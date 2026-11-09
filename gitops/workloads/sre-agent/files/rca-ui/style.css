@@ -631,8 +631,9 @@ button, input, select { font: inherit; color: inherit; }
 .run-modal-select[hidden] { display: none; }
 .run-modal-run { align-self: flex-end; margin-top: 4px; }
 /* ---- run-in-progress strip ------------------------------------------------ */
-.run-strip { position: fixed; top: 52px; left: 0; right: 0; height: 3px; z-index: 300; overflow: hidden; background: transparent; }
-.run-strip-bar { height: 100%; width: 40%; background: var(--accent, #c2410c); border-radius: 2px; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; }
+.run-strip { position: fixed; top: 52px; left: 0; right: 0; height: 20px; z-index: 300; background: transparent; display: flex; align-items: flex-start; }
+.run-strip-bar { height: 3px; width: 40%; background: var(--accent, #c2410c); border-radius: 2px; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; flex-shrink: 0; }
+.run-strip-label { font-size: .62rem; color: var(--accent, #c2410c); padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 20px; }
 @keyframes run-scan { 0% { transform: translateX(-150%); } 100% { transform: translateX(350%); } }
 
 /* ---- notif runs section --------------------------------------------------- */
@@ -655,4 +656,30 @@ button, input, select { font: inherit; color: inherit; }
 .run-phase-pill.failed, .run-phase-pill.error { background: rgba(220,38,38,.1); color: #dc2626; }
 
 .item-skip-reason { color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.sl-report-link, .sl-issue-link { color: var(--accent); text-decoration: none; font-family: var(--mono); font-size: .78em; }
+.sl-report-link:hover, .sl-issue-link:hover { text-decoration: underline; }
+.sl-thr-detail { color: var(--muted); font-size: .78em; }
+
+/* threshold cards with sparklines */
+.sl-thr-card { border: 1px solid var(--line-2); border-radius: 6px; padding: 10px 12px; margin: 8px 0; background: var(--bg2, var(--bg)); }
+.sl-thr-card.ooms { border-color: #fca5a5; background: rgba(239,68,68,.04); }
+.sl-thr-card.clean { border-color: #86efac; background: rgba(22,163,74,.04); }
+.sl-thr-header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.sl-thr-svc { font-family: var(--mono); font-size: .82em; }
+.sl-thr-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* sparkline SVG */
+.sl-sparkline { display: block; width: 100%; height: 60px; border-radius: 4px; background: var(--bg3, var(--bg)); margin: 4px 0; }
+.sl-spark-na { fill: var(--muted); font-size: 9px; }
+.sl-spark-cpu { fill: none; stroke: #3b82f6; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.sl-spark-mem { fill: none; stroke: #f59e0b; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.sl-spark-thr { stroke: #dc2626; stroke-width: 1; stroke-dasharray: 3 2; opacity: .6; }
+.sl-spark-incident { stroke: #dc2626; stroke-width: 1.5; opacity: .7; }
+
+/* sparkline legend */
+.sl-spark-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; font-size: .68rem; color: var(--muted); }
+.sl-spark-leg-cpu { color: #3b82f6; }
+.sl-spark-leg-mem { color: #f59e0b; }
+.sl-spark-leg-thr { color: #dc2626; }
+.sl-spark-leg-inc { color: #dc2626; }
 .alert-ann b { color: var(--text-2); }

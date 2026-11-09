@@ -540,6 +540,70 @@
     const d = el("div"); d.append(el("dt", "", label), el("dd", "", value)); dl.append(d);
   }
 
+  function svgSparkline(cpuSeries, memSeries, incidentDates, capReviewDates, cpuThreshold, memThreshold) {
+    const W = 300, H = 60, PAD = 2;
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("class", "sl-sparkline");
+    svg.setAttribute("aria-hidden", "true");
+
+    if (!cpuSeries.length && !memSeries.length) {
+      const t = document.createElementNS(NS, "text");
+      t.setAttribute("x", W / 2); t.setAttribute("y", H / 2);
+      t.setAttribute("text-anchor", "middle"); t.setAttribute("class", "sl-spark-na");
+      t.textContent = "no telemetry";
+      svg.appendChild(t); return svg;
+    }
+
+    const allTs = [...cpuSeries, ...memSeries].map((p) => p.t);
+    const tMin = Math.min(...allTs), tMax = Math.max(...allTs);
+    const tRange = tMax - tMin || 1;
+    const tx = (t) => PAD + ((t - tMin) / tRange) * (W - 2 * PAD);
+
+    const renderLine = (series, maxV, cls, thresholdFrac) => {
+      if (!series.length) return;
+      const ty = (v) => H - PAD - ((v / maxV) * (H - 2 * PAD));
+      const pts = series.map((p) => `${tx(p.t).toFixed(1)},${ty(p.v).toFixed(1)}`).join(" ");
+      const pl = document.createElementNS(NS, "polyline");
+      pl.setAttribute("points", pts); pl.setAttribute("class", cls);
+      svg.appendChild(pl);
+      // threshold line
+      if (thresholdFrac != null && maxV > 0) {
+        const thrV = thresholdFrac * maxV;
+        const y = ty(thrV).toFixed(1);
+        const line = document.createElementNS(NS, "line");
+        line.setAttribute("x1", PAD); line.setAttribute("x2", W - PAD);
+        line.setAttribute("y1", y); line.setAttribute("y2", y);
+        line.setAttribute("class", "sl-spark-thr"); svg.appendChild(line);
+      }
+    };
+
+    const cpuMax = cpuSeries.length ? Math.max(...cpuSeries.map((p) => p.v), 0.01) : 1;
+    const memMax = memSeries.length ? Math.max(...memSeries.map((p) => p.v), 0.01) : 1;
+    // render CPU (threshold is fraction of capacity — approximate: show line at threshold * cpuMax)
+    renderLine(cpuSeries, cpuMax, "sl-spark-cpu", cpuThreshold);
+    // render memory (threshold fraction of limit — approximate similarly)
+    renderLine(memSeries, memMax, "sl-spark-mem", memThreshold);
+
+    // incident markers (red vertical tick)
+    const tsSet = new Set(allTs);
+    for (const d of (incidentDates || [])) {
+      const dayTs = Math.round(new Date(d + "T00:00:00Z").getTime() / 1000);
+      // find nearest series point
+      const nearest = allTs.reduce((a, b) => Math.abs(a - dayTs) < Math.abs(b - dayTs) ? a : b, allTs[0]);
+      if (Math.abs(nearest - dayTs) < 86400 * 2) {
+        const x = tx(nearest).toFixed(1);
+        const mk = document.createElementNS(NS, "line");
+        mk.setAttribute("x1", x); mk.setAttribute("x2", x);
+        mk.setAttribute("y1", PAD); mk.setAttribute("y2", H - PAD);
+        mk.setAttribute("class", "sl-spark-incident"); svg.appendChild(mk);
+      }
+    }
+
+    return svg;
+  }
+
   function capacityActionOutcome(c) {
     if (c.review_type === "weekly_floor") return "Recommendation only; no scaling change was applied";
     const verification = c.post_merge || {};
@@ -703,7 +767,7 @@
   function renderSelfLearning(container, r) {
     const sl = r.self_learning || {};
     const errors = sl.errors || [];
-    const section = (title, cls) => { const s = el("section", "capacity-panel " + (cls || "")); s.append(el("h3", "capacity-section-title", title)); return s; };
+    const mkSection = (title, cls) => { const s = el("section", "capacity-panel " + (cls || "")); s.append(el("h3", "capacity-section-title", title)); return s; };
     const metric = (label, value, detail) => {
       const item = el("div", "capacity-metric");
       item.append(el("span", "capacity-metric-label", label), el("strong", "capacity-metric-value", value));
@@ -713,49 +777,132 @@
     const statusClass = errors.length ? "attention" : "healthy";
     const statusText = errors.length ? errors.length + " module(s) failed" : "All modules completed";
     const top = el("div", "capacity-plan-top");
-    const overview = section("Self-learning run", "capacity-action-panel");
+    const overview = mkSection("Self-learning run", "capacity-action-panel");
     overview.append(el("p", "capacity-eyebrow", "platform / " + (r.cluster || "platform")));
     overview.append(el("p", "capacity-change", r.summary || "Self-learning pass completed"));
     const actionMeta = el("div", "capacity-action-meta");
     actionMeta.append(el("span", "capacity-status " + statusClass, statusText));
     overview.append(actionMeta);
-    const stats = section("Outcomes", "capacity-result-panel " + statusClass);
+    const stats = mkSection("Outcomes", "capacity-result-panel " + statusClass);
     stats.append(el("span", "capacity-result-mark", errors.length ? "!" : "✓"));
     stats.append(el("strong", "capacity-result-title", statusText));
     const grid = el("div", "capacity-metrics");
     grid.append(
       metric("Rediagnosed", String(sl.rediagnosed || 0), "unknown → known root cause"),
-      metric("Gap issues opened", String(sl.gap_issues_opened || 0), "new GitHub issues"),
+      metric("Gap issues", String((sl.gap_results || []).filter((g) => g.is_new).length) + " new / " + (sl.gap_results || []).length + " total", "GitHub issues"),
       metric("Families calibrated", String(Object.keys(sl.calibration || {}).length), "confidence updated"),
       metric("Services tuned", String(Object.keys(sl.thresholds || {}).length), "thresholds updated")
     );
     stats.append(grid);
     top.append(overview, stats);
     container.replaceChildren(top);
-    const calEntries = Object.entries(sl.calibration || {}).filter(([, v]) => v && typeof v === "object" && "total" in v);
-    if (calEntries.length) {
-      const calSection = section("Diagnosis confidence calibration", "capacity-health-panel");
+
+    // --- rediagnosed reports ---
+    const rediagReports = sl.rediagnosed_reports || [];
+    if (rediagReports.length) {
+      const sec = mkSection("Rediagnosed reports (" + rediagReports.length + ")", "capacity-health-panel");
       const list = el("ul", "capacity-check-list");
-      for (const [cat, v] of calEntries) {
-        const row = el("li", v.confidence_weight < 0.4 ? "capacity-check failed" : v.confidence_weight < 0.5 ? "capacity-check" : "capacity-check passed");
-        row.append(el("span", "capacity-check-icon", v.confidence_weight < 0.4 ? "!" : v.confidence_weight < 0.5 ? "·" : "✓"));
+      for (const rp of rediagReports) {
+        const row = el("li", "capacity-check passed");
+        row.append(el("span", "capacity-check-icon", "→"));
         const text = el("span", "capacity-check-text");
-        text.append(el("strong", "", words(cat)), el("span", "", " · " + v.total + " incident(s) · accuracy " + (v.accuracy * 100).toFixed(0) + "% · weight " + v.confidence_weight.toFixed(2)));
+        const link = el("a", "sl-report-link"); link.href = "/" + rp.id + "/rca.md"; link.textContent = rp.id; link.target = "_blank";
+        text.append(link);
+        text.append(el("span", "", " · " + rp.service + " · " + words(rp.old_cause) + " → "));
+        text.append(el("strong", "", words(rp.new_cause)));
         row.append(text); list.append(row);
       }
-      calSection.append(list);
-      container.append(calSection);
+      sec.append(list);
+      container.append(sec);
     }
-    const thrEntries = Object.entries(sl.thresholds || {}).filter(([, v]) => v && typeof v === "object" && "cpu_p95_max" in v);
+
+    // --- gap issues ---
+    const gapResults = sl.gap_results || [];
+    if (gapResults.length) {
+      const sec = mkSection("Observability gap issues (" + gapResults.length + " tracked)", "capacity-delta-panel");
+      const list = el("ul", "capacity-check-list");
+      for (const g of [...gapResults].sort((a, b) => b.count - a.count)) {
+        const row = el("li", "capacity-check" + (g.is_new ? " passed" : ""));
+        row.append(el("span", "capacity-check-icon", g.is_new ? "🆕" : "·"));
+        const text = el("span", "capacity-check-text");
+        text.append(el("strong", "", g.service));
+        text.append(el("span", "", " · " + g.gap_type.replace(/_/g, " ") + " · " + g.count + " report(s)"));
+        if (g.issue_url) {
+          text.append(el("span", "", " · "));
+          const iss = el("a", "sl-issue-link"); iss.href = g.issue_url; iss.textContent = "#" + g.issue_url.split("/").pop(); iss.target = "_blank";
+          text.append(iss);
+        }
+        row.append(text); list.append(row);
+      }
+      sec.append(list);
+      container.append(sec);
+    }
+
+    // --- calibration ---
+    const calEntries = Object.entries(sl.calibration || {}).filter(([, v]) => v && typeof v === "object" && "total" in v)
+      .sort(([, a], [, b]) => b.total - a.total);
+    if (calEntries.length) {
+      const calSec = mkSection("Diagnosis confidence calibration", "capacity-health-panel");
+      const list = el("ul", "capacity-check-list");
+      for (const [cat, v] of calEntries) {
+        const w = v.confidence_weight || 1;
+        const cls = w < 0.4 ? "capacity-check failed" : w < 0.5 ? "capacity-check" : "capacity-check passed";
+        const icon = w < 0.4 ? "🔻" : w < 0.5 ? "⚠" : "✓";
+        const row = el("li", cls);
+        row.append(el("span", "capacity-check-icon", icon));
+        const text = el("span", "capacity-check-text");
+        text.append(el("strong", "", words(cat)));
+        const detail = " · " + v.total + " incidents · " + v.cleared_within_1h + " cleared ≤1h · " + v.wrong_rediagnosis + " wrong re-diag · accuracy " + (v.accuracy * 100).toFixed(0) + "% · weight " + w.toFixed(2);
+        text.append(el("span", "", detail));
+        row.append(text); list.append(row);
+      }
+      calSec.append(list);
+      container.append(calSec);
+    }
+
+    // --- thresholds + telemetry sparklines ---
+    const thrEntries = Object.entries(sl.thresholds || {}).filter(([, v]) => v && typeof v === "object" && "cpu_p95_max" in v)
+      .sort(([a], [b]) => a.localeCompare(b));
     if (thrEntries.length) {
-      const thrSection = section("Per-service scale-down thresholds", "capacity-delta-panel");
-      const tgrid = el("div", "capacity-metrics");
-      for (const [svc, v] of thrEntries) tgrid.append(metric(svc, "CPU " + v.cpu_p95_max + " · Mem " + v.memory_p99_max, v.reason || ""));
-      thrSection.append(tgrid);
-      container.append(thrSection);
+      const thrSec = mkSection("Per-service scale-down thresholds · 30-day telemetry", "capacity-delta-panel");
+      for (const [svc, v] of thrEntries) {
+        const ooms = v.oom_incidents || 0;
+        const cleans = v.clean_capacity_reviews || 0;
+        const direction = ooms >= 2 ? "🔽 tightened" : ooms === 1 ? "↘ slightly tightened" : cleans >= 3 ? "↗ relaxed" : "→ default";
+        const cls = ooms >= 1 ? "sl-thr-card ooms" : cleans >= 3 ? "sl-thr-card clean" : "sl-thr-card";
+        const card = el("div", cls);
+        const header = el("div", "sl-thr-header");
+        header.append(el("strong", "sl-thr-svc", svc));
+        const meta = el("span", "sl-thr-meta");
+        meta.append(
+          el("span", "run-phase-pill " + (ooms >= 1 ? "failed" : "running"), direction),
+          el("span", "sl-thr-detail", "CPU ≤" + v.cpu_p95_max + "  Mem ≤" + v.memory_p99_max),
+          el("span", "sl-thr-detail", ooms + " OOM · " + cleans + " clean")
+        );
+        header.append(meta);
+        card.append(header);
+
+        const tele = v.telemetry || {};
+        const cpuS = tele.cpu_p95_cores || [];
+        const memS = tele.mem_p99_gib || [];
+        const spark = svgSparkline(cpuS, memS, tele.incident_dates, tele.cap_review_dates, v.cpu_p95_max, v.memory_p99_max);
+        card.append(spark);
+
+        // legend
+        const leg = el("div", "sl-spark-legend");
+        leg.append(el("span", "sl-spark-leg-cpu", "── CPU P95 (cores)"));
+        leg.append(el("span", "sl-spark-leg-mem", "── Mem P99 (GiB)"));
+        leg.append(el("span", "sl-spark-leg-thr", "- - threshold fraction"));
+        if ((tele.incident_dates || []).length) leg.append(el("span", "sl-spark-leg-inc", "│ OOM incident"));
+        card.append(leg);
+
+        thrSec.append(card);
+      }
+      container.append(thrSec);
     }
+
     if (errors.length) {
-      const errSection = section("Errors", "capacity-delta-panel");
+      const errSection = mkSection("Errors", "capacity-delta-panel");
       const elist = el("ul", "capacity-check-list");
       errors.forEach((e) => { const row = el("li", "capacity-check failed"); row.append(el("span", "capacity-check-icon", "!"), el("span", "capacity-check-text", e)); elist.append(row); });
       errSection.append(elist);
@@ -862,8 +1009,12 @@
     } else if (isSelfLearning) {
       const slFacts = r.self_learning || {};
       fact(facts, "Cluster", r.cluster || "platform");
-      fact(facts, "Rediagnosed", String(slFacts.rediagnosed || 0) + " unknown root cause(s)");
-      fact(facts, "Gap issues opened", String(slFacts.gap_issues_opened || 0));
+      fact(facts, "Rediagnosed", String(slFacts.rediagnosed || 0) + " report(s)");
+      const gapResults = slFacts.gap_results || [];
+      const newIssues = gapResults.filter((g) => g.is_new).length;
+      fact(facts, "Gap issues", newIssues + " new · " + gapResults.length + " total tracked");
+      fact(facts, "Families calibrated", String(Object.keys(slFacts.calibration || {}).length));
+      fact(facts, "Services tuned", String(Object.keys(slFacts.thresholds || {}).length));
       fact(facts, "Report written", fmtTime(when(r.generated_at)));
       fact(facts, "Report ID", id);
     } else if (!isHealthReport) {
@@ -992,7 +1143,15 @@
     if (!strip) {
       strip = el("div", "run-strip"); strip.id = "run-strip";
       strip.append(el("div", "run-strip-bar"));
+      const lbl = el("span", "run-strip-label"); lbl.id = "run-strip-label";
+      strip.append(lbl);
       document.body.append(strip);
+    }
+    const lbl = $("run-strip-label");
+    if (lbl) {
+      const names = active.map((r) => runLabel(r.workflow_type));
+      const unique = [...new Set(names)];
+      lbl.textContent = unique.join(", ") + " in progress…";
     }
     strip.hidden = false;
   }
@@ -1007,7 +1166,7 @@
       const li = el("li", "notif-run-item" + (run.done ? " done" : ""));
       const icon = el("span", run.done ? (run.phase === "Succeeded" ? "run-icon ok" : "run-icon err") : "run-icon spin", run.done ? (run.phase === "Succeeded" ? "✓" : "✗") : "⟳");
       const body = el("div", "notif-run-body");
-      body.append(el("span", "notif-run-name", run.workflow_type));
+      body.append(el("span", "notif-run-name", runLabel(run.workflow_type)));
       const metaRow = el("div", "notif-run-meta");
       metaRow.append(el("span", "", ago(run.startedAt)));
       const pp = el("span", "run-phase-pill " + run.phase.toLowerCase(), run.phase);
@@ -1027,7 +1186,7 @@
         if (["Succeeded", "Failed", "Error"].includes(run.phase)) {
           run.done = true;
           const ok = run.phase === "Succeeded";
-          toast((ok ? "✓ " : "✗ ") + run.workflow_type + " " + run.phase.toLowerCase());
+          toast((ok ? "✓ " : "✗ ") + runLabel(run.workflow_type) + " " + run.phase.toLowerCase());
           if (ok) loadList().catch(() => {});
           setTimeout(() => {
             state.runs = state.runs.filter((r) => r !== run);
@@ -1042,6 +1201,14 @@
     } catch (_) { setTimeout(() => pollRun(run), 5000); }
     updateNotifBadge(); renderRunStrip(); renderNotifRuns();
   }
+
+  const _RUN_LABELS = {
+    "capacity-review": "Capacity review",
+    "floor-review": "Floor review",
+    "health-review": "Health review",
+    "self-learning": "Self-learning",
+  };
+  function runLabel(wt) { return _RUN_LABELS[wt] || (wt ? wt.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Review"); }
 
   function startRunTracking(name, workflowType, startedAt) {
     if (state.runs.some((r) => r.name === name)) return; // already tracked
