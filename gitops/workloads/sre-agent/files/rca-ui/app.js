@@ -1178,12 +1178,14 @@
       const rem = r.remediation;
       const remSection = el("div", "auto-capacity-section");
       const remLabel = el("span", "rc-label", "Automated capacity action");
-      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type;
-      const remIcon = rem.type === "cpu_scaleup" ? "⚡" : "🧠";
+      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type === "hpa_maxreplicas" ? "HPA maxReplicas raised" : rem.type;
+      const remIcon = rem.type === "hpa_maxreplicas" ? "📈" : rem.type === "cpu_scaleup" ? "⚡" : "🧠";
       const remStatus = rem.status === "merged" ? "merged · ArgoCD syncing" : `PR #${rem.pr_number} opened`;
       let remDesc = "";
       if (rem.type === "cpu_scaleup") {
         remDesc = `CPU limit ${rem.old_cpu_limit} → ${rem.new_cpu_limit}` + (rem.old_cpu_request ? `, request ${rem.old_cpu_request} → ${rem.new_cpu_request}` : "");
+      } else if (rem.type === "hpa_maxreplicas") {
+        remDesc = `maxReplicas ${rem.old_max_replicas} → ${rem.new_max_replicas} · HPA was at ceiling; VPA will right-size new pods`;
       } else if (rem.type === "oom") {
         remDesc = `Memory limit ${rem.old_limit} → ${rem.new_limit}` + (rem.old_limit !== rem.new_limit ? ` (${rem.sizing_method === "observed_peak" ? `6h peak × 1.25` : "1.5× formula"})` : "");
       }

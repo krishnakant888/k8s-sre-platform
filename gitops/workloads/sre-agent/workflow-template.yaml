@@ -125,9 +125,9 @@ spec:
             valueFrom: {secretKeyRef: {name: anthropic-api-key, key: ANTHROPIC_API_KEY, optional: true}}
           - name: GITHUB_TOKEN   # absent: remediation PRs are skipped; create with: kubectl -n sre-agent create secret generic github-token --from-literal=GITHUB_TOKEN=<pat>
             valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
-          - {name: MAX_REPLICAS, value: "5"}        # scale-out ceiling; escalates to CPU vertical scale-up when reached
           - {name: MAX_CPU_LIMIT_M, value: "300"}   # temporary scaling drill ceiling
           - {name: MAX_MEMORY_LIMIT_MIB, value: "640"} # temporary scaling drill ceiling
+          - {name: VERTICAL_REMEDIATION, value: "false"}  # VPA manages limits/requests; agent raises maxReplicas instead
         resources:
           requests: {cpu: 100m, memory: 512Mi}
           limits: {memory: 1536Mi}

@@ -30,6 +30,8 @@ GRAFANA_API_TOKEN = os.getenv("GRAFANA_API_TOKEN", "")
 NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 # scale-out cap: escalates to CPU vertical scale-up when reached
 MAX_REPLICAS = int(os.getenv("MAX_REPLICAS", "5"))
+# Set to "false" to disable agent CPU limit changes when VPA manages vertical sizing
+VERTICAL_REMEDIATION = os.getenv("VERTICAL_REMEDIATION", "true").lower() not in ("false", "0", "no")
 # CPU vertical scale-up ceiling in millicores; above this the agent opens a PR but flags for human review
 MAX_CPU_LIMIT_M = int(os.getenv("MAX_CPU_LIMIT_M", "2000"))
 # Memory vertical scale-up ceiling in MiB; at the ceiling, scale out only when CPU metrics also show load pressure
