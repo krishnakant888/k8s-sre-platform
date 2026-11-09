@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-rca-viewer
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: prod-workloads
+  source:
+    repoURL: https://github.com/krishnakant888/k8s-sre-platform.git
+    targetRevision: main
+    path: gitops/workloads/sre-agent
+  destination:
+    name: platform
+    namespace: sre-agent
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

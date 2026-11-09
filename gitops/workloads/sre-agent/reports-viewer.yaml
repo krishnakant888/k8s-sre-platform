@@ -22,7 +22,12 @@ data:
       fastcgi_temp_path /tmp/fcgi_temp;
       uwsgi_temp_path /tmp/uwsgi_temp;
       scgi_temp_path /tmp/scgi_temp;
-      access_log /dev/stdout;
+      log_format json_trace escape=json
+        '{"ts":"$time_iso8601","service":"rca-viewer",'
+        '"method":"$request_method","path":"$uri","status":$status,'
+        '"bytes":$body_bytes_sent,"duration":$request_time,'
+        '"trace_id":"$http_traceparent","request_id":"$http_x_request_id"}';
+      access_log /dev/stdout json_trace;
       resolver 10.96.0.10 valid=20s ipv6=off;   # kube-dns of the kind clusters: the Grafana address is resolved per request, so the viewer starts without Grafana
 
       server {
@@ -108,14 +113,14 @@ kind: Deployment
 metadata:
   name: rca-viewer
   namespace: sre-agent
-  labels: {app.kubernetes.io/name: rca-viewer, app.kubernetes.io/version: "1.0.0", team: platform}
+  labels: {app.kubernetes.io/name: rca-viewer, app.kubernetes.io/version: "1.0.0", app.kubernetes.io/part-of: sre-agent, team: platform}
 spec:
   replicas: 1
   selector:
     matchLabels: {app.kubernetes.io/name: rca-viewer}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: rca-viewer, app.kubernetes.io/version: "1.0.0", team: platform}
+      labels: {app.kubernetes.io/name: rca-viewer, app.kubernetes.io/version: "1.0.0", app.kubernetes.io/part-of: sre-agent, team: platform}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
