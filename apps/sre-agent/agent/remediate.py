@@ -144,6 +144,29 @@ def _query_cpu_p95_cores(ns: str, wl: str) -> float | None:
     return None
 
 
+def _hpa_is_saturated(ns: str, wl: str) -> bool | None:
+    """Return True if the HPA for wl is at maxReplicas, False if it has room, None if no HPA / query error."""
+    sel = f'namespace="{ns}",horizontalpodautoscaler="{wl}"'
+    try:
+        cur_r = httpx.get(f"{config.MIMIR_URL}/api/v1/query",
+                          params={"query": f"max(kube_horizontalpodautoscaler_status_current_replicas{{{sel}}})"},
+                          timeout=10)
+        max_r = httpx.get(f"{config.MIMIR_URL}/api/v1/query",
+                          params={"query": f"max(kube_horizontalpodautoscaler_spec_max_replicas{{{sel}}})"},
+                          timeout=10)
+        cur_r.raise_for_status(); max_r.raise_for_status()
+        cur_res = cur_r.json().get("data", {}).get("result", [])
+        max_res = max_r.json().get("data", {}).get("result", [])
+        if not cur_res or not max_res:
+            return None  # no HPA found
+        cur = float(cur_res[0]["value"][1])
+        mx = float(max_res[0]["value"][1])
+        return cur >= mx
+    except Exception as exc:
+        log.debug("remediate: hpa saturation query failed for %s/%s: %s", ns, wl, exc)
+        return None
+
+
 def _cores_to_cpu_limit(p95_cores: float, headroom: float = 1.5) -> str:
     """Convert P95 cores → CPU limit string with headroom, rounded to nearest milestone."""
     target_m = int(p95_cores * 1000 * headroom)
@@ -513,7 +536,8 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
     if is_memory_pressure:
         return _remediate_oom(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
 
-    # CPU throttling — raise CPU limit (vertical). HPA handles replica count.
+    # CPU throttling — raise CPU limit only when HPA is saturated (at maxReplicas).
+    # If HPA still has room it will scale out pods and resolve throttling on its own.
     sig = ctx["signals"]
     cpu_throttled = (
         sig.get("cpu_throttled")
@@ -521,6 +545,11 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
         or report.alert == "ContainerCpuThrottled"
     )
     if cpu_throttled:
+        saturated = _hpa_is_saturated(sig["namespace"], sig["workload"])
+        if saturated is False:
+            log.info("remediate: CPU throttled on %s but HPA has room — skipping vertical scale-up", sig["workload"])
+            return None
+        # saturated is True (at max) or None (no HPA / query failed) — raise the limit
         return _remediate_cpu_scaleup(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
 
     return None
