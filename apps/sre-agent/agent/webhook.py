@@ -158,10 +158,12 @@ async def re_analyze(report_id: str):
     if not ad.get("alertname"):
         raise HTTPException(status_code=422, detail="report has no alert_details to re-analyze from")
     # reconstruct minimal Alertmanager alert dict
+    # unique fingerprint so each re-analyze gets a fresh workflow name (not a 409 conflict)
     alert = {
         "labels": {**ad.get("labels", {}), "alertname": ad["alertname"]},
         "annotations": ad.get("annotations", {}),
         "startsAt": ad.get("starts_at", ""),
+        "fingerprint": f"reanalysis-{int(time.time())}",
         "status": "firing",
     }
     workflow_name, newly_created = await create_workflow(alert, force=True)
