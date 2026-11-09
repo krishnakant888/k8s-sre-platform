@@ -1,20 +1,24 @@
-"""Automated remediation: memory limit raises only.
+"""Automated remediation: vertical resource limit changes only.
 
 Conditions (all must hold):
-  - root_cause.category == "resource_exhaustion" with OOM evidence
+  - root_cause.category == "resource_exhaustion"
   - GITHUB_TOKEN is configured
   - The workload has an Argo CD source directory with a YAML that has the target field
 
 Memory path  (OOMKill evidence):
   Raise memory to max_over_time(container_memory_working_set_bytes[6h]) × 1.25, capped at
-  MAX_MEMORY_LIMIT_MIB. At that cap, scale out only when CPU throttling also indicates load pressure.
+  MAX_MEMORY_LIMIT_MIB.
 
-CPU throttling is handled by the HPA on each workload. The agent does not open scale-out or
-CPU-limit PRs — those are the HPA's responsibility.
+CPU vertical scale-up  (CPU throttling):
+  New CPU limit = P95 cpu_usage × 1.5, rounded to nearest 50/100/500m milestone.
+  Falls back to 1.5× the current limit when Mimir has no data.
+
+Horizontal scaling (replica changes) is handled by the HPA — the agent does not touch replicas.
 """
 
 import base64
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -26,6 +30,7 @@ from agent import config
 log = logging.getLogger("sre-agent")
 
 _API = "https://api.github.com"
+MAX_CPU_LIMIT_M = int(getattr(config, "MAX_CPU_LIMIT_M", 2000))
 MAX_MEMORY_LIMIT_MIB = int(getattr(config, "MAX_MEMORY_LIMIT_MIB", 4096))
 
 
@@ -331,6 +336,108 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
     }
 
 
+# ── CPU vertical scale-up remediation ────────────────────────────────────────
+
+def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, head_sha: str) -> dict | None:
+    """Raise limits.cpu based on observed P95 usage."""
+    sig = ctx["signals"]
+    wl, ns = sig["workload"], sig["namespace"]
+    source_files = sig.get("source_files") or []
+    if not source_files:
+        return None
+
+    result = _find_resource_file(
+        repo, source_files[0], default_branch,
+        r"limits[:\s{][^\n]*cpu:|limits:\s*\{[^}]*cpu:",
+    )
+    if not result:
+        log.info("remediate: no YAML with limits.cpu found in %s", source_files[0])
+        return None
+    file_path, content, blob_sha = result
+
+    m = re.search(
+        r"limits[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*(\d+m?)"
+        r"|limits:\s*\{[^}]*cpu:\s*(\d+m?)",
+        content,
+    )
+    if not m:
+        log.info("remediate: no existing cpu limit found in %s; skipping (prefer requests-only)", file_path)
+        return None
+    old_cpu = m.group(1) or m.group(2)
+
+    p95_cores = _query_cpu_p95_cores(ns, wl)
+    if p95_cores and p95_cores > 0:
+        new_cpu = _cores_to_cpu_limit(p95_cores)
+        sizing_note = f"Observed 6h P95 CPU: {p95_cores * 1000:.0f}m × 1.5 headroom = {new_cpu}."
+        sizing_method = "observed_p95"
+    else:
+        new_cpu = _bump_cpu_formula(old_cpu)
+        sizing_note = f"No Mimir data; used 1.5× formula on current limit {old_cpu}."
+        sizing_method = "formula_1.5x"
+    if not new_cpu:
+        return None
+
+    _m = re.fullmatch(r"(\d+)(m?)", new_cpu)
+    new_cpu_m = int(_m.group(1)) if _m and _m.group(2) == "m" else int(_m.group(1)) * 1000 if _m else 0
+    at_cpu_cap = new_cpu_m >= MAX_CPU_LIMIT_M
+    if at_cpu_cap:
+        new_cpu = f"{MAX_CPU_LIMIT_M}m"
+        sizing_note += f" Capped at MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m — human review recommended."
+
+    patched, count = re.subn(
+        r"(limits\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*)" + re.escape(old_cpu),
+        lambda mo: mo.group(1) + new_cpu, content, count=1, flags=re.MULTILINE,
+    )
+    if not count:
+        patched, count = re.subn(
+            r"(limits:\s*\{[^}]*cpu:\s*)" + re.escape(old_cpu),
+            lambda mo: mo.group(1) + new_cpu, content, count=1,
+        )
+    if not count or patched == content:
+        log.warning("remediate: cpu scale-up patch produced no change for %s", file_path)
+        return None
+
+    branch = f"remediate/cpu-scaleup-{wl}-{ns}-{int(time.time())}"
+    commit_msg = (
+        f"fix(ops): raise CPU limit of {wl} in {ns} from {old_cpu} to {new_cpu}\n\n"
+        f"Automated remediation triggered by RCA {report.id}.\n"
+        f"Sizing: {sizing_note}\n"
+    )
+    pr_title = f"fix(ops): raise {wl} CPU limit {old_cpu} → {new_cpu} ({ns})"
+    cap_warning = (
+        f"\n\n> **Warning:** CPU ceiling `MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m` reached. "
+        f"Human review required."
+    ) if at_cpu_cap else ""
+    pr_body = (
+        f"## Automated remediation — CPU vertical scale-up\n\n"
+        f"**RCA:** `{report.id}`  \n"
+        f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
+        f"**Change:** `{file_path}` — `limits.cpu` `{old_cpu}` → `{new_cpu}`\n\n"
+        f"**Sizing:** {sizing_note}\n\n"
+        f"**Verify:** CPU throttle ratio drops after the rollout.{cap_warning}"
+    )
+
+    try:
+        pr = _open_and_merge_pr(
+            repo, default_branch, head_sha, branch, file_path, blob_sha, patched,
+            commit_msg, pr_title, pr_body,
+        )
+    except Exception as exc:
+        log.warning("remediate: cpu scale-up PR failed: %s", exc)
+        return None
+
+    return {
+        "type": "cpu_scaleup",
+        "pr_url": pr["html_url"],
+        "pr_number": pr["number"],
+        "old_cpu_limit": old_cpu,
+        "new_cpu_limit": new_cpu,
+        "sizing_method": sizing_method,
+        "file": file_path,
+        "branch": branch,
+        "status": "merged" if pr.get("_merged") else "pr_opened",
+    }
+
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
@@ -354,15 +461,24 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
         log.warning("remediate: could not get repo info: %s", exc)
         return None
 
-    # OOM: pod was killed by the kernel — fix is vertical (more memory).
-    # CPU throttling is handled by the HPA on each workload; no agent action needed.
     evidence_text = " ".join(
         str(e.get("finding", "")) for e in ctx.get("evidence", []) if isinstance(e, dict)
     ).lower()
+
+    # OOM: pod killed by kernel — raise memory limit (vertical)
     is_oom = "oomkill" in evidence_text or "oom" in evidence_text or "exit code 137" in evidence_text
     is_memory_pressure = is_oom or report.alert in ("ContainerMemoryNearLimit", "PodOOMKilled")
-
     if is_memory_pressure:
         return _remediate_oom(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
+
+    # CPU throttling — raise CPU limit (vertical). HPA handles replica count.
+    sig = ctx["signals"]
+    cpu_throttled = (
+        sig.get("cpu_throttled")
+        or "throttl" in evidence_text
+        or report.alert == "ContainerCpuThrottled"
+    )
+    if cpu_throttled:
+        return _remediate_cpu_scaleup(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
 
     return None

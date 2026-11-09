@@ -329,11 +329,10 @@ def remediation(category: str, ctx: dict) -> tuple[str, HowToFix]:
                 "No restarts occurred — this is a performance issue, not a crash."
             )
             immediate = [
-                f"The HPA for `{svc}` will scale out replicas automatically once load exceeds the target. "
+                f"The agent will automatically raise `limits.cpu` in {files} based on observed P95 usage — check for a remediation PR.",
+                f"The HPA for `{svc}` will scale out replicas to absorb load. "
                 f"Verify it is active: `kubectl -n {ns} get hpa {svc}` — `ScalingActive` must be `True`.",
-                f"If the HPA is inactive, check that metrics-server is running: `kubectl -n kube-system get deploy metrics-server`.",
-                f"If the CPU limit is too low for normal load (not a traffic spike), raise or remove `resources.limits.cpu` in {files}. "
-                "Prefer requests without limits for latency-sensitive services.",
+                f"If the HPA is inactive, check metrics-server: `kubectl -n kube-system get deploy metrics-server`.",
             ]
             permanent = [
                 f"Set an HPA target utilization that leaves headroom before throttling (e.g. 70% of request, not limit).",
