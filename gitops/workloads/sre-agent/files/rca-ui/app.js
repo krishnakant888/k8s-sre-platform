@@ -285,6 +285,7 @@
         if (verificationStatus === "healthy") m.append(el("span", "", "post-change checks passed"));
         else if (verificationStatus === "needs_attention") m.append(el("span", "", "check results need review"));
         else if (capacity.review_type === "weekly_floor") m.append(el("span", "", "recommendation only"));
+        else if (!verificationStatus && capacity.decision === "skipped" && capacity.reason) m.append(el("span", "item-skip-reason", capacity.reason));
         else if (!verificationStatus && capacity.decision) m.append(el("span", "", words(capacity.decision)));
       }
       if (r.root_cause && r.root_cause.category && !isHealthReport && !isSelfLearning) m.append(el("span", "", "· " + words(r.root_cause.category)));
@@ -549,6 +550,7 @@
       return "Applied; verification pending";
     }
     if (c.decision === "proposal") return "Proposed; awaiting merge";
+    if (c.decision === "skipped") return "Skipped — no change applied";
     if (c.decision === "error") return "Review failed";
     return "No change proposed";
   }
@@ -688,6 +690,7 @@
     const basis = el("dl", "capacity-basis");
     fact(basis, "Action outcome", capacityActionOutcome(c));
     fact(basis, "Review decision", c.decision);
+    if (c.decision === "skipped" && c.reason) fact(basis, "Skip reason", c.reason);
     fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review" : "Daily scale-down review");
     if (weeklyFloor) fact(basis, "Configured minimum", c.configured_floor);
     fact(basis, weeklyFloor ? "Candidate replica count" : "Replica floor", c.candidate_floor);
@@ -852,6 +855,7 @@
       fact(facts, "Action outcome", capacityActionOutcome(r.capacity));
       fact(facts, "Review type", r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review" : "Daily scale-down review");
       fact(facts, "Review decision", decision);
+      if (decision === "skipped" && r.capacity.reason) fact(facts, "Skip reason", r.capacity.reason);
       fact(facts, r.capacity.review_type === "weekly_floor" ? "Configured minimum" : "Replica floor",
         r.capacity.review_type === "weekly_floor" ? r.capacity.configured_floor : r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));

@@ -654,4 +654,5 @@ button, input, select { font: inherit; color: inherit; }
 .run-phase-pill.succeeded { background: rgba(22,163,74,.12); color: #16a34a; }
 .run-phase-pill.failed, .run-phase-pill.error { background: rgba(220,38,38,.1); color: #dc2626; }
 
+.item-skip-reason { color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
 .alert-ann b { color: var(--text-2); }
