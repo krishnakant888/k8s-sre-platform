@@ -581,6 +581,14 @@
       const pl = document.createElementNS(NS, "polyline");
       pl.setAttribute("points", pts); pl.setAttribute("class", cls);
       svg.appendChild(pl);
+      if (series.length === 1) {
+        const point = document.createElementNS(NS, "circle");
+        point.setAttribute("cx", tx(series[0].t).toFixed(1));
+        point.setAttribute("cy", ty(series[0].v).toFixed(1));
+        point.setAttribute("r", "3");
+        point.setAttribute("class", cls === "sl-spark-cpu" ? "sl-spark-point-cpu" : "sl-spark-point-mem");
+        svg.appendChild(point);
+      }
       // threshold line
       if (thresholdFrac != null && maxV > 0) {
         const thrV = thresholdFrac * maxV;
@@ -898,6 +906,7 @@
         const tele = v.telemetry || {};
         const cpuS = tele.cpu_p95_cores || [];
         const memS = tele.mem_p99_gib || [];
+        meta.append(el("span", "sl-thr-detail", `Samples · CPU ${cpuS.length} · memory ${memS.length}`));
         const spark = svgSparkline(cpuS, memS, tele.incident_dates, tele.cap_review_dates, v.cpu_p95_max, v.memory_p99_max);
         card.append(spark);
 
