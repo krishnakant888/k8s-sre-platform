@@ -769,13 +769,23 @@ def run_weekly_floor_review() -> None:
     for item in workloads:
         workload, sep, namespace = item.partition(":")
         if not sep or not workload or not namespace:
-            raise ValueError(f"invalid WEEKLY_FLOOR_WORKLOADS entry: {item!r}")
-        review = _review_replica_floor(workload, namespace, cluster)
+            workload = workload or "unknown"
+            namespace = namespace or "unknown"
+            review = {
+                "review_type": "weekly_floor", "workload": workload, "namespace": namespace,
+                "cluster": cluster, "window": WEEKLY_FLOOR_WINDOW,
+                "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "configured_floor": None, "decision": "skipped", "metrics": {},
+                "proposed_change": "No floor recommendation",
+                "reason": f"Invalid service selector {item!r}; expected workload:namespace. No recommendation was made.",
+            }
+        else:
+            review = _review_replica_floor(workload, namespace, cluster)
         try:
             report_id = _write_capacity_report(review)
             log.info("capacity report available", extra={"workload": workload, "review_type": "weekly_floor",
                                                            "report_id": report_id, "decision": review["decision"],
-                                                           "candidate_floor": review["candidate_floor"],
+                                                           "candidate_floor": review.get("candidate_floor", review.get("configured_floor")),
                                                            "report_url": f"https://reports.localhost:9443/#{report_id}"})
             if review["decision"] == "error":
                 errors.append(workload)

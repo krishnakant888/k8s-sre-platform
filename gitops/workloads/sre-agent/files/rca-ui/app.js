@@ -1314,16 +1314,9 @@
   ];
 
   function buildServiceOptions() {
-    // Collect from backend-reported list + any service:namespace seen in reports
-    const seen = new Map(); // key -> label
-    state.workloads.forEach((w) => { if (!seen.has(w)) seen.set(w, w); });
-    state.reports.forEach((r) => {
-      if (!r.service) return;
-      const ns = (r.capacity && r.capacity.namespace) || r.cluster || "";
-      const key = ns ? `${r.service}:${ns}` : r.service;
-      if (!seen.has(key)) seen.set(key, key);
-    });
-    return [{ value: "all", label: "All services" }, ...[...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([v]) => ({ value: v, label: v }))];
+    // Only offer configured workload:namespace selectors; RCA service names may be alert labels or clusters.
+    const workloads = [...new Set(state.workloads.filter((w) => typeof w === "string" && /^[^:,]+:[^:,]+$/.test(w)))].sort();
+    return [{ value: "all", label: "All services" }, ...workloads.map((w) => ({ value: w, label: w }))];
   }
 
   function openRunModal() {

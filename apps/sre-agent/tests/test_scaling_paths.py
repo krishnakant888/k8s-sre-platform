@@ -253,3 +253,35 @@ def test_scale_down_fails_closed_when_metric_history_is_short(monkeypatch):
 
     assert result is None
     assert opened == {}
+
+
+def test_weekly_floor_runner_writes_report_when_candidate_floor_is_not_evaluated(monkeypatch, tmp_path):
+    monkeypatch.setattr(scale_down.config, "REPORTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WEEKLY_FLOOR_WORKLOADS", "orders-api:demo")
+    review = {
+        "review_type": "weekly_floor", "workload": "orders-api", "namespace": "demo",
+        "cluster": "platform", "window": "7d", "decision": "skipped",
+        "configured_floor": 2, "proposed_change": "Maintain a minimum of 2 replicas",
+        "reason": "Insufficient weekly metric coverage.", "metrics": {},
+    }
+    monkeypatch.setattr(scale_down, "_review_replica_floor", lambda *a: review)
+
+    scale_down.run_weekly_floor_review()
+
+    reports = list(tmp_path.glob("rca-capacity-*/report.json"))
+    assert len(reports) == 1
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["capacity"]["decision"] == "skipped"
+    assert report["capacity"]["configured_floor"] == 2
+
+def test_weekly_floor_runner_writes_diagnostic_for_invalid_selector(monkeypatch, tmp_path):
+    monkeypatch.setattr(scale_down.config, "REPORTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WEEKLY_FLOOR_WORKLOADS", "argocd")
+
+    scale_down.run_weekly_floor_review()
+
+    reports = list(tmp_path.glob("rca-capacity-*/report.json"))
+    assert len(reports) == 1
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["capacity"]["decision"] == "skipped"
+    assert "expected workload:namespace" in report["capacity"]["reason"]
