@@ -48,6 +48,8 @@ spec:
             requests:
               cpu: 25m
               memory: 64Mi
+            limits:
+              memory: 256Mi
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 5
