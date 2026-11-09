@@ -33,26 +33,6 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: loadgen
-  description: Steady synthetic traffic against orders-api, so the dashboards and the SLO always have data
-  tags: [python]
-  annotations:
-    github.com/project-slug: krishnakant888/k8s-sre-platform
-    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/apps/orders-api
-    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=loadgen
-    backstage.io/kubernetes-namespace: demo
-    argocd/app-name: platform-orders-api
-spec:
-  type: service
-  lifecycle: production
-  owner: group:platform-team
-  system: workloads
-  subcomponentOf: component:orders-api
-  dependsOn: [component:orders-api]
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
   name: frontend
   description: Stateless nginx frontend that logs one JSON line per request
   tags: [nginx]
