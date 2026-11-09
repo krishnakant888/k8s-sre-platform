@@ -384,6 +384,38 @@ def list_namespace_deploys(namespace: str, cluster: str = "platform", minutes: i
     return _trim({"namespace": namespace, "cluster": cluster, "minutes": minutes, "apps": results})
 
 
+def list_all_deploys(minutes: int = 1440) -> dict:
+    """All Argo CD applications across the entire cluster with recent sync history (no namespace filter).
+
+    Use as a last-resort fallback when targeted and namespace scans find nothing — scans every app
+    ArgoCD manages and returns those with a deploy in the look-back window.
+    """
+    cutoff_epoch = __import__("time").time() - minutes * 60
+    all_apps = _k8s_get("/apis/argoproj.io/v1alpha1/namespaces/argocd/applications", cluster="gitops")
+    results = []
+    for app in all_apps.get("items", []):
+        history = app.get("status", {}).get("history", [])[-20:]
+        recent = []
+        for h in reversed(history):
+            ts = h.get("deployedAt", "")
+            try:
+                from datetime import datetime, timezone as _tz
+                t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            if t >= cutoff_epoch:
+                recent.append({"deployed_at": ts, "revision": _deployed_revision(h), "id": h.get("id")})
+        if recent:
+            spec = app.get("spec", {})
+            app_name = app["metadata"]["name"]
+            dest_ns = spec.get("destination", {}).get("namespace", "")
+            sources = spec.get("sources") or [spec.get("source", {})]
+            paths = [s.get("path") for s in sources if s.get("path")]
+            results.append({"application": app_name, "destination_namespace": dest_ns, "paths": paths, "history": recent})
+    results.sort(key=lambda x: x["history"][0]["deployed_at"] if x["history"] else "", reverse=True)
+    return _trim({"minutes": minutes, "apps": results})
+
+
 def get_argocd_app(name: str) -> dict:
     """Sync and health of one Argo CD application: conditions, last operation message and the resources that are not healthy."""
     app = None
@@ -512,6 +544,18 @@ TOOLS = {
                     "minutes": {"type": "integer", "description": "look-back window in minutes, default 120"},
                 },
                 "required": ["namespace"],
+            },
+        },
+    ),
+    "list_all_deploys": (
+        list_all_deploys,
+        {
+            "description": "All Argo CD applications across the entire cluster with recent sync history (no namespace filter). Last-resort fallback when targeted and namespace scans find nothing.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "minutes": {"type": "integer", "description": "look-back window in minutes, default 1440 (24 h)"},
+                },
             },
         },
     ),

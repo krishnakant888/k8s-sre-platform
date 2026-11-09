@@ -253,6 +253,36 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                         add("argocd", f"namespace deploys {fallback_namespace}",
                             f"{len(pre_alert)} app(s) deployed in the {window_label} window: {summary} ({mins_before}m before alert){pr_detail}")
                         return
+        # cluster-wide fallback: scan every ArgoCD app for any deploy in a 24h window before the alert
+        elapsed_min_cw = max(0, int((_time.time() - started) / 60))
+        cw_minutes = max(1440 + elapsed_min_cw + 30, 1440)
+        cw_res = tools.call_tool("list_all_deploys", {"minutes": cw_minutes})
+        if "error" not in cw_res:
+            raw["deploys"] = cw_res
+            cw_pre = []
+            for a in cw_res.get("apps", []):
+                before = [h for h in a.get("history", []) if h.get("deployed_at")
+                          and rca.parse_ts(h["deployed_at"]) <= started]
+                if before:
+                    cw_pre.append({**a, "history": before})
+            cw_pre.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
+            if cw_pre:
+                d0 = cw_pre[0]["history"][0]
+                sig["recent_deploy"] = d0
+                mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
+                summary = "; ".join(
+                    f"{a['application']} ({a.get('destination_namespace','?')}) at {a['history'][0]['deployed_at']}"
+                    for a in cw_pre[:3]
+                )
+                gh = tools.get_github_deploy_info(d0["revision"])
+                pr_detail = ""
+                if "pr_number" in gh:
+                    pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
+                elif gh.get("message"):
+                    pr_detail = f"; commit: {gh['message']}"
+                add("argocd", "cluster-wide deploy scan",
+                    f"{len(cw_pre)} app(s) deployed in the 24h window: {summary} ({mins_before}m before alert){pr_detail}")
+                return
         lookback_label = f"{lookback_seconds // 3600}h" if lookback_seconds >= 3600 else f"{lookback_seconds // 60}m"
         add("argocd", f"history {app_names[0] if app_names else '?'}", f"no deploy in the {lookback_label} before the alert")
 
