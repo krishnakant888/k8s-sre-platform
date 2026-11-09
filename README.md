@@ -96,44 +96,70 @@ observability cluster   LGTM stack, Argo Workflows, SRE agent, RCA viewer
 ```
 
 ```mermaid
-flowchart TB
-  Git[(GitHub\nthis repo)]
+flowchart LR
+    classDef git   fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f,font-weight:bold
+    classDef plat  fill:#dcfce7,stroke:#16a34a,color:#14532d,font-weight:bold
+    classDef obs   fill:#ffedd5,stroke:#ea580c,color:#7c2d12,font-weight:bold
+    classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef ext   fill:#f1f5f9,stroke:#94a3b8,color:#0f172a
 
-  subgraph GC["🔵 gitops cluster  —  the deployer"]
-    direction TB
-    ArgoCD["Argo CD\nhub + spoke\n───────────\nmanages both\nother clusters"]
-  end
+    Dev(["👨‍💻 Developer\n\npushes code\ntriggers templates"]):::ext
+    GH[("📦 GitHub\nthis repo")]:::ext
 
-  subgraph PC["🟢 platform cluster  —  the workloads"]
-    direction TB
-    Infra["traefik · cert-manager\nkyverno · sealed-secrets"]
-    Demo["demo namespace\norders-api  ·  frontend"]
-    Sandbox["sandbox namespace\ndummy-shop  (nginx + trace logging)"]
-    Alloy["Alloy collector\nkube-state-metrics"]
-    Demo -->|"metrics · logs\nOTLP traces"| Alloy
-    Sandbox -->|logs| Alloy
-  end
+    subgraph GC["🔵  gitops cluster"]
+        ArgoCD["🔄 Argo CD  —  hub + spoke\n━━━━━━━━━━━━━━━━━━━━━━━\nSingle deployer for\nboth other clusters.\nSyncs everything from Git;\nnothing is applied by hand.\n─────────────────────────\nargocd.localhost:7443"]:::git
+        Backstage["🏢 Backstage Developer Portal\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nService catalog  ·  live pod status\nArgo CD health  ·  open alerts\n13 self-service Scaffolder templates\n──────────────────────────────────\nbackstage-portal.localhost:7443"]:::git
+    end
 
-  subgraph OC["🟠 observability cluster  —  the tools"]
-    direction TB
-    LGTM["Mimir  ·  Loki  ·  Tempo\nGrafana  +  alert rules"]
-    AW["Argo Workflows\n(runs agent steps as pods)"]
-    Agent["SRE agent\nwebhook  ·  RCA viewer\n4 scheduled CronWorkflows"]
-    Reports[("reports PVC\nrca.md + report.json\n14-day retention")]
+    subgraph PC["🟢  platform cluster  —  the workloads"]
+        direction TB
+        WorkloadGrp["⚡ orders-api  🌐 frontend  🛍️ dummy-shop\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nFastAPI + 28-day SLO (99.5% success + p99 ≤ 300ms)\nnginx with traceparent header logging\n─────────────────────────────────────────────────\norders.localhost · app.localhost · dummy.localhost"]:::plat
+        Infra["🛡️ Traefik  (Gateway API controller)\ncert-manager  ·  Kyverno policies\nSealed Secrets controller"]:::plat
+        PAlloy["📡 Alloy collector\nkube-state-metrics\n─────────────────\nscrapes: pods · cAdvisor\ntails: pod logs via k8s API\nforwards: OTLP traces"]:::plat
+        WorkloadGrp -->|"metrics · logs\nOTLP traces"| PAlloy
+    end
 
-    LGTM -->|"alert fires\n→ POST /webhook"| Agent
-    Agent -->|"create Workflow\nper alert fingerprint"| AW
-    AW -->|"execute steps\n(collect → analyze → store → notify)"| Agent
-    Agent -->|"read-only queries\n(Mimir, Loki, Tempo)"| LGTM
-    Agent -->|write report| Reports
-  end
+    subgraph OC["🟠  observability cluster  —  the tools  (isolated: survives a platform outage)"]
+        direction TB
 
-  Git -->|"GitOps pull\n(app-of-apps)"| ArgoCD
-  ArgoCD -->|"sync manifests\n→ platform cluster"| Infra
-  ArgoCD -->|"sync manifests\n→ observability cluster"| LGTM
-  Alloy -->|"remote-write metrics\npush logs + traces\n(NodePorts, Docker network)"| LGTM
-  Agent -->|"read-only k8s API\npods · events"| PC
-  Agent -.->|"Argo CD API\ndeploy history"| GC
+        Mimir["📊 Mimir\nmetrics · SLO\nrecording rules"]:::obs
+        Loki["📋 Loki\nlogs"]:::obs
+        Tempo["🔍 Tempo\ntraces"]:::obs
+        Grafana["📈 Grafana\n━━━━━━━━━━━━━━━━\ndashboards (provisioned from Git)\nalert rules  ·  SLO burn-rate\ncontact points  ·  silences\n────────────────────────────\ngrafana.localhost:9443"]:::obs
+
+        Webhook["🚨 Alert Webhook\nFlask · idempotent\n(409 on duplicate fingerprint)"]:::obs
+        AW["⚙️ Argo Workflows\n━━━━━━━━━━━━━━━━\nruns agent steps as pods\nretries + timeouts per step\n────────────────────────\nworkflows.localhost:9443"]:::obs
+
+        Agent["🤖 SRE Agent\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nIncident flow:  settle → collect → analyze → store → notify\nRule-based classifier  (30+ cause families)\n+  LLM verification  (Claude)  when API key set\n─────────────────────────────────────────────\nScheduled CronWorkflows  (all IST):\n• capacity-review    daily   06:30  — scale-down PR if under-used\n• floor-review       Mon     07:00  — min-replica floor report\n• health-review      Mon     08:00  — restarts · HPA · change risk\n• self-learning      Sun     09:00  — rediagnose · gaps → issues\n                                       calibrate · tune thresholds"]:::obs
+
+        Reports[("📁 reports PVC\n─────────────\nrca.md  +  report.json\n14-day retention\nnightly cleanup CronJob")]:::store
+        Viewer["🖥️ RCA Viewer UI\n━━━━━━━━━━━━━━━━━━━━━\nlive 0–100% progress bar\nper-service 30-day sparklines\nmanual workflow triggers\n─────────────────────────\nreports.localhost:9443"]:::obs
+
+        Grafana   -->|"alert fires\nPOST /webhook"| Webhook
+        Webhook   -->|"Workflow.create()\none per alert fingerprint"| AW
+        AW        -->|"step pods execute"| Agent
+        Agent     -->|"read-only:\nMimir · Loki · Tempo"| Mimir
+        Agent     --> Loki
+        Agent     --> Tempo
+        Agent     -->|"write RCA"| Reports
+        Viewer    -->|"read reports"| Reports
+        Viewer    -->|"poll status.progress"| AW
+    end
+
+    Dev       -->|"git push / PR"| GH
+    GH        -->|"GitOps pull\n(app-of-apps)"| ArgoCD
+    ArgoCD    -->|"sync → platform"| Infra
+    ArgoCD    -->|"sync → observability"| Grafana
+    PAlloy    -->|"remote-write metrics\npush logs  ·  push traces\n(Docker network NodePorts)"| Mimir
+    PAlloy    --> Loki
+    PAlloy    --> Tempo
+    Agent     -->|"read-only k8s API\npods · events · Argo CD apps"| PC
+    Agent     -.->|"Argo CD API\ndeploy history"| GC
+    Dev       -->|"open UIs"| Grafana
+    Dev       -->|" "| ArgoCD
+    Dev       -->|" "| Viewer
+    Dev       -->|" "| AW
+    Dev       -->|" "| Backstage
 ```
 
 Clusters communicate over the shared Docker network. Collectors push to `observability-worker:<NodePort>`; the agent reads `platform-control-plane:6443` and `gitops-control-plane:6443` with read-only tokens created at bootstrap.
