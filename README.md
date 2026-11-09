@@ -194,6 +194,34 @@ Alert fires in Grafana → Grafana calls `POST /webhook` → agent creates one A
 - Honest — reports carry the exact queries, evidence, confidence level, contributing factors, and a flag when a fault injection drill is active
 - Tool output is treated as data, never as instructions; secrets are redacted from log lines; the LLM loop has a step limit
 
+### Automated remediation: how the agent extends HPA
+
+Kubernetes HPAs handle horizontal scaling (adding/removing pods) but cannot raise resource limits when a container is throttled or killed. The agent fills that gap with **vertical remediation** — it patches `limits` and `requests` in the GitOps manifests and opens a PR, which Argo CD applies on merge.
+
+**Division of responsibility**
+
+| Concern | Who handles it | Mechanism |
+|---|---|---|
+| Scale out more pods | HPA | Compares actual CPU/memory usage against `requests`; adds pods when utilisation exceeds the target percentage |
+| Scale in fewer pods | HPA | Removes pods when utilisation drops below the target |
+| Raise CPU limit (throttled) | Agent (incident remediation) | Detects `container_cpu_cfs_throttled_ratio > 25%`; patches `limits.cpu` × 1.5 and sets `requests.cpu` to 50% of the new limit |
+| Raise memory limit (OOM kill) | Agent (incident remediation) | Detects `kube_pod_container_status_last_terminated_reason == OOMKilled`; patches `limits.memory` to peak + 20% headroom; sets `requests.memory` to the same value (Guaranteed QoS) |
+| Lower limits over time | Scale-down agent (daily) | Checks CPU P95 and Mem P99 against per-service thresholds; PRs a reduction when usage stays below threshold for the review window |
+
+**Why `requests` must be patched alongside `limits`**
+
+The HPA derives utilisation as `actual usage ÷ requests`. If the agent raises `limits.cpu` from 200m to 300m but leaves `requests.cpu` at 50m, HPA sees 400% utilisation and immediately scales out pods — the opposite of what was needed. Setting `requests.cpu` to 50% of the new limit gives HPA an accurate baseline and lets it make a correct scale-out decision once the limit change is live.
+
+For memory, `requests.memory` is set equal to `limits.memory` to maintain Guaranteed QoS (Kubernetes does not evict Guaranteed pods under node memory pressure).
+
+**HPA requirements on kind clusters**
+
+HPAs need the `metrics.k8s.io/v1beta1` API, which is served by [metrics-server](https://github.com/kubernetes-sigs/metrics-server). It is not installed by default in kind. The cluster ships a `gitops/apps/metrics-server.yaml` ArgoCD Application that deploys metrics-server 3.12.2 with `--kubelet-insecure-tls` (required because kind kubelets use self-signed TLS). Without this, all HPAs show `ScalingActive: False` and never fire.
+
+**What the agent does NOT do**
+
+The agent never changes `spec.replicas` directly. Replica management is entirely owned by the HPA; the agent touches only `resources.limits` and `resources.requests` in the deployment manifests.
+
 ### Scheduled proactive reviews
 
 Four CronWorkflows run on a fixed schedule (all times IST):
