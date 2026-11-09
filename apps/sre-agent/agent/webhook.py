@@ -42,18 +42,19 @@ def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-async def create_workflow(alert: dict) -> tuple[str, bool]:
+async def create_workflow(alert: dict, force: bool = False) -> tuple[str, bool]:
     """Returns the workflow name and whether it was newly created. A 409 means this alert already has one."""
     workflow = incident.build_workflow(alert)
     token = Path(f"{config.SA_DIR}/token").read_text()  # re-read every time, projected tokens rotate
     async with httpx.AsyncClient(verify=f"{config.SA_DIR}/ca.crt", timeout=15) as client:
-        listing = await client.get(WORKFLOWS_URL, params={"labelSelector": f"sre-agent/target={workflow['metadata']['labels']['sre-agent/target']}"}, headers={"Authorization": f"Bearer {token}"})
-        if listing.status_code == 200:
-            twin = incident.recent_duplicate(listing.json().get("items", []), time.time())
-            if twin and twin != workflow["metadata"]["name"]:
-                DEDUPLICATED.labels(alert.get("labels", {}).get("alertname", "unknown")).inc()
-                log.info("alert joined an existing investigation", extra={"alertname": alert.get("labels", {}).get("alertname"), "workflow": twin})
-                return twin, False
+        if not force:
+            listing = await client.get(WORKFLOWS_URL, params={"labelSelector": f"sre-agent/target={workflow['metadata']['labels']['sre-agent/target']}"}, headers={"Authorization": f"Bearer {token}"})
+            if listing.status_code == 200:
+                twin = incident.recent_duplicate(listing.json().get("items", []), time.time())
+                if twin and twin != workflow["metadata"]["name"]:
+                    DEDUPLICATED.labels(alert.get("labels", {}).get("alertname", "unknown")).inc()
+                    log.info("alert joined an existing investigation", extra={"alertname": alert.get("labels", {}).get("alertname"), "workflow": twin})
+                    return twin, False
         resp = await client.post(WORKFLOWS_URL, json=workflow, headers={"Authorization": f"Bearer {token}"})
     if resp.status_code == 409:
         return workflow["metadata"]["name"], False
@@ -163,7 +164,7 @@ async def re_analyze(report_id: str):
         "startsAt": ad.get("starts_at", ""),
         "status": "firing",
     }
-    workflow_name, newly_created = await create_workflow(alert)
+    workflow_name, newly_created = await create_workflow(alert, force=True)
     STARTED.labels(ad["alertname"]).inc()
     log.info("re-analysis triggered", extra={"report_id": report_id, "alertname": ad["alertname"], "workflow": workflow_name, "newly_created": newly_created})
     return {"workflow": workflow_name, "report_id": report_id, "newly_created": newly_created}
