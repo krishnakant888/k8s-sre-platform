@@ -444,11 +444,21 @@ def run_threshold_tuning() -> dict:
 
     oom_counts: Counter = Counter()
     clean_caps: Counter = Counter()
+    service_locations: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
     for r in reports:
         svc = r.get("service", "")
         if not svc:
             continue
         rt = r.get("report_type", "incident")
+        alert_details = r.get("alert_details") or {}
+        labels = alert_details.get("labels") or {}
+        capacity = r.get("capacity") or {}
+        cluster = capacity.get("cluster") or alert_details.get("cluster") or labels.get("cluster") or ""
+        namespace = capacity.get("namespace") or alert_details.get("namespace") or labels.get("namespace") or ""
+        pod = labels.get("pod", "")
+        pod_workload = re.sub(r"-[a-f0-9]{8,10}-[a-z0-9]+$|-\d+$", "", pod) if pod else svc
+        workload = labels.get("deployment") or labels.get("statefulset") or pod_workload
+        service_locations[svc].add((str(cluster), str(namespace), str(workload)))
         if rt == "incident" and (r.get("root_cause") or {}).get("category") == "resource_exhaustion":
             oom_counts[svc] += 1
         if rt == "capacity":
@@ -497,16 +507,35 @@ def run_threshold_tuning() -> dict:
             mem = round(min(0.75, _DEFAULT_MEM_MAX + 0.05), 2)
             reason = f"slightly relaxed: {cleans} clean capacity reviews, no resource incidents"
 
-        # fetch 30-day telemetry series
-        svc_name = svc.split(":")[0]
-        ns = svc.split(":")[1] if ":" in svc else "default"
-        sel = f'namespace="{ns}",container=~"{svc_name}"'
-        cpu_series = _mimir_range(
-            f"max(quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{{{sel}}}[30m])[1d:30m]))",
-            thirty_ago, now_ts)
-        mem_series = _mimir_range(
-            f"max(quantile_over_time(0.99, container_memory_working_set_bytes{{{sel}}}[1d]))",
-            thirty_ago, now_ts)
+        # Query each observed workload location. Reports carry the real namespace and
+        # deployment; assuming `default` and container==service silently drops samples.
+        legacy_parts = svc.split(":", 1)
+        svc_name = legacy_parts[0]
+        locations = service_locations.get(svc) or {("", legacy_parts[1] if len(legacy_parts) > 1 else "", svc_name)}
+        cpu_by_time: dict[int, float] = {}
+        mem_by_time: dict[int, float] = {}
+        for cluster, ns, workload in locations:
+            # Prometheus label values are quoted; workload names are escaped as RE2 regexes.
+            matcher_parts = []
+            if cluster:
+                matcher_parts.append(f"cluster={json.dumps(cluster)}")
+            if ns:
+                matcher_parts.append(f"namespace={json.dumps(ns)}")
+            workload_pattern = re.escape(workload or svc_name)
+            matcher_parts.extend((f'pod=~"^{workload_pattern}-.*"', 'container!=""', 'container!="POD"'))
+            sel = ",".join(matcher_parts)
+            cpu_samples = _mimir_range(
+                f"max(quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{{{sel}}}[30m])[1d:30m]))",
+                thirty_ago, now_ts)
+            mem_samples = _mimir_range(
+                f"max(quantile_over_time(0.99, container_memory_working_set_bytes{{{sel}}}[1d]))",
+                thirty_ago, now_ts)
+            for ts, value in cpu_samples:
+                cpu_by_time[ts] = max(cpu_by_time.get(ts, value), value)
+            for ts, value in mem_samples:
+                mem_by_time[ts] = max(mem_by_time.get(ts, value), value)
+        cpu_series = sorted(cpu_by_time.items())
+        mem_series = sorted(mem_by_time.items())
 
         thresholds[svc] = {
             "cpu_p95_max": cpu,
