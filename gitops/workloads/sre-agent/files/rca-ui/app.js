@@ -267,11 +267,15 @@
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r) && !isHealthReport && !isSelfLearning) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
-      if (r.insights?.change?.likely) {
-        const ch = r.insights.change;
+      const _chSb = r.insights?.change || {};
+      const _sbGap = _chSb.minutes_before_alert;
+      const _sbLikely = _sbGap != null ? (_sbGap >= 0 && _sbGap <= 120) : _chSb.likely;
+      if (_sbLikely) {
+        const ch = _chSb;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
         const autoResolved = done && !r.ongoing;
-        const dpLabel = autoResolved ? "Deploy · auto-resolved" : ch.high_confidence ? "Deploy · " + minBefore : "Deploy? · " + minBefore;
+        const _sbHighConf = _sbGap != null ? (_sbGap >= 0 && _sbGap <= 60) : ch.high_confidence;
+        const dpLabel = autoResolved ? "Deploy · auto-resolved" : _sbHighConf ? "Deploy · " + minBefore : "Deploy? · " + minBefore;
         const dp = pill(dpLabel, autoResolved ? "ok" : "deploy");
         const files = (ch.files || []).join(", ");
         dp.title = (ch.note || "") + (autoResolved ? "\n\nThe alert has since resolved — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
@@ -1048,13 +1052,17 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
-    if (r.insights?.change?.likely && !isCapacity && !isHealthReport) {
-      const ch = r.insights.change;
+    const _chPill = r.insights?.change || {};
+    const _pillGap = _chPill.minutes_before_alert;
+    const _pillLikely = _pillGap != null ? (_pillGap >= 0 && _pillGap <= 120) : _chPill.likely;
+    if (_pillLikely && !isCapacity && !isHealthReport) {
+      const ch = _chPill;
       const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert} min before alert` : (ch.revision || "").slice(0, 8);
       const files = (ch.files || []).join(", ");
       const liveResolved = state.live[id] === "resolved";
       const autoResolved = liveResolved && !r.ongoing;
-      const dp = pill(autoResolved ? "Deploy · auto-resolved" : ch.high_confidence ? "Deploy · " + minBefore : "Deploy? · " + minBefore, autoResolved ? "ok" : "deploy");
+      const _pillHighConf = _pillGap != null ? (_pillGap >= 0 && _pillGap <= 60) : ch.high_confidence;
+      const dp = pill(autoResolved ? "Deploy · auto-resolved" : _pillHighConf ? "Deploy · " + minBefore : "Deploy? · " + minBefore, autoResolved ? "ok" : "deploy");
       dp.title = (ch.note || "") + (autoResolved ? "\n\nAlert cleared — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
@@ -1123,8 +1131,11 @@
         const ch = r.insights?.change || {};
         const liveResolved = state.live[id] === "resolved";
         const autoResolved = liveResolved && !r.ongoing;
-        const likely = ch.likely;
-        const highConf = ch.high_confidence;    // ≤60 min; likely but not high_confidence = 61–120 min
+        // Re-derive from minutes_before_alert so old reports (stored with the
+        // 60-min cutoff) show correctly now that the window is 120 min.
+        const gap = ch.minutes_before_alert;
+        const likely = gap != null ? (gap >= 0 && gap <= 120) : ch.likely;
+        const highConf = gap != null ? (gap >= 0 && gap <= 60) : ch.high_confidence;
         const deployCallout = el("div", "deploy-callout");
         const dcls = !likely ? "deploy-callout-none"
           : autoResolved ? "deploy-callout-auto"
