@@ -265,6 +265,54 @@ def _deployed_revision(entry: dict) -> str:
     return (commits or revisions or [""])[0][:10]
 
 
+def get_github_deploy_info(revision: str, repo: str = "") -> dict:
+    """Commit message and associated pull request for a deployed git revision."""
+    if not config.GITHUB_TOKEN:
+        return {"error": "GITHUB_TOKEN not configured"}
+    r = repo or config.GITOPS_REPO
+    try:
+        resp = _client.get(
+            f"https://api.github.com/repos/{r}/commits/{revision}",
+            headers=config.github_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 404:
+            return {"error": f"commit {revision!r} not found in {r}"}
+        resp.raise_for_status()
+        data = resp.json()
+        message = (data.get("commit", {}).get("message") or "").split("\n")[0][:200]
+        sha = data.get("sha", revision)
+        pr_num, pr_title, pr_url = None, None, None
+        m = re.search(r"[Mm]erge pull request #(\d+)|#(\d+)\)", message)
+        if m:
+            pr_num = int(m.group(1) or m.group(2))
+            pr_resp = _client.get(
+                f"https://api.github.com/repos/{r}/pulls/{pr_num}",
+                headers=config.github_headers(), timeout=10,
+            )
+            if pr_resp.status_code == 200:
+                pr_data = pr_resp.json()
+                pr_title = pr_data.get("title", "")[:200]
+                pr_url = pr_data.get("html_url", "")
+        else:
+            pr_resp = _client.get(
+                f"https://api.github.com/repos/{r}/commits/{sha}/pulls",
+                headers=config.github_headers(), timeout=10,
+            )
+            if pr_resp.status_code == 200:
+                prs = pr_resp.json()
+                if prs:
+                    pr_num = prs[0].get("number")
+                    pr_title = prs[0].get("title", "")[:200]
+                    pr_url = prs[0].get("html_url", "")
+        result: dict = {"revision": sha[:10], "message": message}
+        if pr_num:
+            result.update({"pr_number": pr_num, "pr_title": pr_title, "pr_url": pr_url})
+        return result
+    except Exception as e:
+        return {"error": str(e)[:120]}
+
+
 def get_recent_deploys(application: str) -> dict:
     """Argo CD sync history for an application, newest first."""
     # every application is named <cluster>-<component> in the Argo CD that deploys the three clusters

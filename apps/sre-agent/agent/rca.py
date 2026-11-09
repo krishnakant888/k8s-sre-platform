@@ -181,36 +181,63 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     sig["has_error_logs"] = bool(sig["top_log_messages"])
     sig["logs_have_trace_id"] = bool(sig["log_trace_ids"]) if sig["has_error_logs"] else None
 
+    import time as _time
     deploys = tools.call_tool("get_recent_deploys", {"application": sig["app"]})
     raw["deploys"] = deploys
     sig["source_files"] = deploys.get("source_files", [])
     recent = [d for d in deploys.get("history", []) if d.get("deployed_at") and started - 3600 < parse_ts(d["deployed_at"]) <= started]
     sig["recent_deploy"] = recent[0] if recent else None
+    # anchor namespace fallback window on started so investigation lag doesn't miss pre-alert deploys
+    elapsed_min = max(0, int((_time.time() - started) / 60))
+    ns_minutes = max(240 + elapsed_min + 30, 480)
     if "error" in deploys:
         # named-app lookup failed — scan all apps in the namespace for any recent deploy
-        ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 240})
+        ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": ns_minutes})
         raw["ns_deploys"] = ns_deploys
-        ns_apps = ns_deploys.get("apps", [])
-        if ns_apps:
-            # find the closest deploy to the alert window (within 2h before)
-            closest = ns_apps[0]
-            add("argocd", f"history {svc}", f"no app named '{svc}' in Argo CD; namespace {ns} had a deploy of {closest['application']} at {closest['history'][0]['deployed_at']} ({len(ns_apps)} app(s) deployed recently)")
-            sig["recent_deploy"] = closest["history"][0]
+        # filter to pre-alert deploys only, sort by most recent
+        pre_alert = []
+        for a in ns_deploys.get("apps", []):
+            before = [h for h in a.get("history", []) if h.get("deployed_at") and parse_ts(h["deployed_at"]) <= started]
+            if before:
+                pre_alert.append({**a, "history": before})
+        pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
+        if pre_alert:
+            closest = pre_alert[0]
+            d0 = closest["history"][0]
+            sig["recent_deploy"] = d0
             sig["recent_deploy_app"] = closest["application"]
+            mins_before = int((started - parse_ts(d0["deployed_at"])) / 60)
+            gh = tools.get_github_deploy_info(d0["revision"])
+            pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})" if "pr_number" in gh else (f"; commit: {gh['message']}" if gh.get("message") else "")
+            add("argocd", f"history {svc}", f"no app named '{svc}' in Argo CD; {len(pre_alert)} app(s) deployed before alert: {closest['application']} at {d0['deployed_at']} ({mins_before}m before){pr_detail}")
         else:
-            add("argocd", f"history {svc}", f"no Argo CD application named {svc} and no deploys to namespace {ns} in the past 2 hours")
+            add("argocd", f"history {svc}", f"no Argo CD application named {svc} and no deploys to namespace {ns} before the alert")
     else:
         if recent:
-            add("argocd", f"history {svc}", f"deploy {recent[0]['revision']} at {recent[0]['deployed_at']}")
+            d0 = recent[0]
+            gh = tools.get_github_deploy_info(d0["revision"])
+            pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})" if "pr_number" in gh else (f"; commit: {gh['message']}" if gh.get("message") else "")
+            add("argocd", f"history {svc}", f"deploy {d0['revision']} at {d0['deployed_at']}{pr_detail}")
         else:
             # named app found but no deploy in the 1h window — also scan namespace for related deploys
-            ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 240})
+            ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": ns_minutes})
             raw["ns_deploys"] = ns_deploys
-            ns_apps = [a for a in ns_deploys.get("apps", []) if a["application"] != deploys.get("application")]
-            if ns_apps:
-                closest = ns_apps[0]
-                add("argocd", f"history {svc}", f"no deploy of {svc} in the hour before the alert; related deploy of {closest['application']} at {closest['history'][0]['deployed_at']} (paths: {', '.join(closest['paths'][:3]) or 'unknown'})")
-                sig["related_deploy"] = {"app": closest["application"], "deploy": closest["history"][0]}
+            pre_alert = []
+            for a in ns_deploys.get("apps", []):
+                if a.get("application") == deploys.get("application"):
+                    continue
+                before = [h for h in a.get("history", []) if h.get("deployed_at") and parse_ts(h["deployed_at"]) <= started]
+                if before:
+                    pre_alert.append({**a, "history": before})
+            pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
+            if pre_alert:
+                closest = pre_alert[0]
+                d0 = closest["history"][0]
+                mins_before = int((started - parse_ts(d0["deployed_at"])) / 60)
+                gh = tools.get_github_deploy_info(d0["revision"])
+                pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})" if "pr_number" in gh else (f"; commit: {gh['message']}" if gh.get("message") else "")
+                add("argocd", f"history {svc}", f"no deploy of {svc} in the hour before the alert; related deploy of {closest['application']} at {d0['deployed_at']} ({mins_before}m before; paths: {', '.join(closest['paths'][:3]) or 'unknown'}){pr_detail}")
+                sig["related_deploy"] = {"app": closest["application"], "deploy": d0}
             else:
                 add("argocd", f"history {svc}", "no deploy in the hour before the alert, and no related namespace deploys found")
 

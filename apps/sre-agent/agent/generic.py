@@ -191,7 +191,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + (f", pressure {', '.join(sig['node_pressure'])}" if sig["node_pressure"] else ", no pressure")
             + f", CPU {sig['node_cpu']:.0%} and memory {sig['node_mem']:.0%} of allocatable")
 
-    def deploys(app_names: list[str], lookback_seconds: int = 7200, fallback_ns: str | None = None):
+    def deploys(app_names: list[str], lookback_seconds: int = 7200, fallback_ns: str | list[str] | None = None):
+        import time as _time
         for name in app_names:
             res = tools.call_tool("get_recent_deploys", {"application": name})
             if "error" not in res:
@@ -206,36 +207,54 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     deploy_ts = rca.parse_ts(d0["deployed_at"])
                     mins_before = int((started - deploy_ts) / 60)
                     paths = ", ".join(res.get("source_files", [])[:3]) or "unknown path"
+                    gh = tools.get_github_deploy_info(d0["revision"])
+                    pr_detail = ""
+                    if "pr_number" in gh:
+                        pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
+                    elif gh.get("message"):
+                        pr_detail = f"; commit: {gh['message']}"
                     add("argocd", f"history {name}",
                         f"deploy {d0['revision']} at {d0['deployed_at']} ({mins_before}m before the alert); "
-                        f"source: {paths}")
+                        f"source: {paths}{pr_detail}")
                     return
                 # no recent deploy for this app — keep trying others
-        # fallback: scan all apps targeting the namespace — use 2× the named-app window
-        if fallback_ns:
-            ns_minutes = max(int(lookback_seconds / 60) * 2, 240)  # at least 4 h
-            ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_ns, "minutes": ns_minutes})
-            if "error" not in ns_res:
-                raw["deploys"] = ns_res
-                # keep only history entries that landed before the alert
-                pre_alert = []
-                for a in ns_res.get("apps", []):
-                    before = [h for h in a.get("history", []) if h.get("deployed_at")
-                              and rca.parse_ts(h["deployed_at"]) <= started]
-                    if before:
-                        pre_alert.append({**a, "history": before})
-                # sort by most recent pre-alert deploy first
-                pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
-                if pre_alert:
-                    d0 = pre_alert[0]["history"][0]
-                    sig["recent_deploy"] = d0
-                    mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
-                    summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in pre_alert[:3])
-                    window_label = f"{ns_minutes // 60}h" if ns_minutes >= 60 else f"{ns_minutes}m"
-                    add("argocd", f"namespace deploys {fallback_ns}",
-                        f"{len(pre_alert)} app(s) deployed in the {window_label} window: {summary} ({mins_before}m before alert)")
-                    return
-        add("argocd", f"history {app_names[0] if app_names else '?'}", "no deploy in the 2 hours before the alert")
+        # fallback: scan all apps targeting the namespace(s)
+        # anchor window on `started` so deploys right before the alert are always included regardless of investigation lag
+        ns_list = ([fallback_ns] if isinstance(fallback_ns, str) else list(fallback_ns or []))
+        ns_list = list(dict.fromkeys(n for n in ns_list if n))  # dedup, preserve order
+        if ns_list:
+            elapsed_min = max(0, int((_time.time() - started) / 60))
+            ns_minutes = max(int(lookback_seconds / 60) + elapsed_min + 30, 480)  # 8 h floor; always covers pre-alert deploys
+            for fallback_namespace in ns_list:
+                ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_namespace, "minutes": ns_minutes})
+                if "error" not in ns_res:
+                    raw["deploys"] = ns_res
+                    # keep only history entries that landed before the alert
+                    pre_alert = []
+                    for a in ns_res.get("apps", []):
+                        before = [h for h in a.get("history", []) if h.get("deployed_at")
+                                  and rca.parse_ts(h["deployed_at"]) <= started]
+                        if before:
+                            pre_alert.append({**a, "history": before})
+                    # sort by most recent pre-alert deploy first
+                    pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
+                    if pre_alert:
+                        d0 = pre_alert[0]["history"][0]
+                        sig["recent_deploy"] = d0
+                        mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
+                        summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in pre_alert[:3])
+                        window_label = f"{ns_minutes // 60}h" if ns_minutes >= 60 else f"{ns_minutes}m"
+                        gh = tools.get_github_deploy_info(d0["revision"])
+                        pr_detail = ""
+                        if "pr_number" in gh:
+                            pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
+                        elif gh.get("message"):
+                            pr_detail = f"; commit: {gh['message']}"
+                        add("argocd", f"namespace deploys {fallback_namespace}",
+                            f"{len(pre_alert)} app(s) deployed in the {window_label} window: {summary} ({mins_before}m before alert){pr_detail}")
+                        return
+        lookback_label = f"{lookback_seconds // 3600}h" if lookback_seconds >= 3600 else f"{lookback_seconds // 60}m"
+        add("argocd", f"history {app_names[0] if app_names else '?'}", f"no deploy in the {lookback_label} before the alert")
 
     # ---------------------------------------------------------------- per family
     if family in ("container", "scheduling", "rollout", "job", "memory", "cpu", "target"):
@@ -260,7 +279,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         if sig["restarts"] or any(not p["ready"] for p in sig["pods"]) or family != "memory":
             logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}|{labels["pod"]}"' if labels.get("pod") else f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(workload)}"', "last log lines of the workload", everything=True)
         node_facts(sig.get("nodes", []))
-        deploys([f"platform-{workload}", workload])
+        deploys([f"platform-{workload}", workload], fallback_ns=ns)
         scaled_down = sig.get("desired") == 0 or (family == "rollout" and not sig["pods"])   # no pod at all is an outage, not a recovery
         sig["ongoing"] = scaled_down or any(not p["ready"] for p in sig["pods"]) or bool(sig["restarts"] and sig["restarts"] > 0)
 
@@ -315,7 +334,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
         logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(sig["backend"])}"', f"error lines of backend {sig['backend']}")
         node_facts(sig.get("nodes", []))
-        deploys([f"platform-{sig['backend']}", sig["backend"]], fallback_ns=ns)
+        ingress_fallback = list(dict.fromkeys(n for n in [ns, "sre-agent", "observability"] if n))
+        deploys([f"platform-{sig['backend']}", sig["backend"]], fallback_ns=ingress_fallback)
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or (family == "ingress" and sig["p95_peak"] > 1 and labels["alertname"] == "IngressSlow")
 
     elif family == "gateway":
@@ -340,7 +360,9 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         top_backend = top_route[1] if top_route else None
         top_backend_ns = top_route[0] if top_route else None
         backend_apps = ([f"platform-{top_backend}", top_backend] if top_backend else []) + ["platform-traefik", "traefik"]
-        deploys(backend_apps, fallback_ns=top_backend_ns or ns)
+        # scan backend namespace first, then common platform namespaces where workloads live
+        gateway_fallback = list(dict.fromkeys(n for n in [top_backend_ns, "sre-agent", "observability", ns] if n))
+        deploys(backend_apps, fallback_ns=gateway_fallback)
         # a configuration error in the log (a middleware that does not exist) lasts until someone fixes it
         config_error = bool(re.search(r"does not exist|failed to load|error while reading", _msgs(sig)))
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or sig["reload_failures"] > 0 or config_error
@@ -451,7 +473,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                 "workflow step errors: " + "; ".join(f"{m[:110]!r} x{c}" for m, c in sig["workflow_step_logs"][:3]))
 
         # Check if a recent alert-webhook deploy preceded the failure (a rollout kills in-flight workflows)
-        deploys(["observability-sre-agent", "sre-agent"])
+        deploys(["observability-sre-agent", "sre-agent"], fallback_ns="sre-agent")
 
         # Broad error log for overall context
         logs_for('cluster="observability", namespace="sre-agent"', "error lines of the investigation steps and the webhook")
@@ -472,7 +494,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             f"HPA {hpa_name}: current={sig['hpa_current']}, max={sig['hpa_max']}, min={sig['hpa_min']}"
             + (f", cpu utilization={sig['hpa_cpu_utilization']:.0%}" if sig["hpa_cpu_utilization"] is not None else ""))
         pods_and_events(hpa_name, ns)
-        deploys([f"platform-{hpa_name}", hpa_name])
+        deploys([f"platform-{hpa_name}", hpa_name], fallback_ns=ns)
         sig["desired"] = sig["hpa_current"]
         sig["ongoing"] = sig["hpa_current"] is not None and sig["hpa_max"] is not None and sig["hpa_current"] >= sig["hpa_max"]
 
