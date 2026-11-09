@@ -98,7 +98,7 @@ discovery.relabel "annotated_pods" {
 }
 
 prometheus.scrape "annotated_pods" {
-  scrape_interval = "15s"  // tighter interval so KEDA RPS trigger sees fresh data within one cycle
+  scrape_interval = "30s"
   honor_labels    = true   // series that name their own namespace / pod (kube-state-metrics, Argo CD) keep them
   targets         = discovery.relabel.annotated_pods.output
   forward_to      = [prometheus.relabel.gateway_routes.receiver]
