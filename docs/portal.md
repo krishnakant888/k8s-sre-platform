@@ -6,7 +6,7 @@ An internal developer platform on top of this repo: one place to see what runs, 
 
 | Where | What |
 |---|---|
-| **Catalog** | Every component (orders-api, frontend, the SRE agent, Traefik, Argo CD, Grafana, Mimir, Loki, Tempo, Alloy, Kyverno...), the three clusters as resources, owner, system, dependencies and links to Grafana, Argo CD, the runbook and the RCA reports. The data is in `gitops/backstage/catalog/`. |
+| **Catalog** | Every component (orders-api, the SRE agent, Traefik, Argo CD, Grafana, Mimir, Loki, Tempo, Alloy, Kyverno...), the three clusters as resources, owner, system, dependencies and links to Grafana, Argo CD, the runbook and the RCA reports. The data is in `gitops/backstage/catalog/`. |
 | **Kubernetes tab** of a component | The pods and deployments of that component, read live from the three clusters. |
 | **Argo CD card** | Sync and health of the application that deploys the component, and its last sync. |
 | **Alerts card** | The Grafana alerts that are firing for the component (alerts whose labels match `grafana/alert-label-selector`). |
