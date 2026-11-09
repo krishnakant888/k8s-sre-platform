@@ -81,6 +81,15 @@
     return `${Math.round(s / 86400)} d ago`;
   }
   const level = (r) => (r.priority && r.priority.level) || "";
+  const floorReviewStatus = (capacity) => {
+    if (capacity && capacity.decision === "error") return { label: "Review failed", className: "p1" };
+    if (capacity && capacity.decision === "skipped") {
+      const reason = String(capacity.reason || "").toLowerCase();
+      const safetyHold = /alert|restart|unavailable|unhealthy|replica/.test(reason);
+      return { label: safetyHold ? "Safety hold" : "Evidence incomplete", className: "p3" };
+    }
+    return { label: "Recommendation ready", className: "ok" };
+  };
   const pill = (text, cls) => { const p = el("span", `pill ${cls || ""}`); p.append(el("span", "dot"), document.createTextNode(text)); return p; };
   const words = (s) => String(s || "").replace(/_/g, " ");
   function toast(text, undoFn) {
@@ -217,7 +226,7 @@
       const top = el("div", "item-top");
       const isCapacity = r.report_type === "capacity";
       const capacity = r.capacity || {};
-      if (isCapacity && r.root_cause && r.root_cause.category === "capacity_review") r.root_cause.category = "";
+      if (isCapacity && r.root_cause) r.root_cause.category = "";
       const verification = capacity.post_merge || (r.remediation && r.remediation.post_merge_verification);
       const verificationStatus = verification && verification.status;
       if (isCapacity) {
@@ -267,8 +276,12 @@
         top.append(dp);
       }
       if (isCapacity) {
-        const priority = top.querySelector(".p4"); if (priority) priority.remove();
-        if (capacity.review_type === "weekly_floor") top.append(pill("Weekly floor", "ok"));
+        if (capacity.review_type === "weekly_floor") {
+          const floorStatus = floorReviewStatus(capacity);
+          top.append(pill(floorStatus.label, floorStatus.className));
+        } else {
+          const priority = top.querySelector(".p4"); if (priority) priority.remove();
+        }
         const action = (capacity.proposed_change || capacity.reason || r.summary || "No change proposed").replace(/`/g, "");
         b.append(top, el("div", "item-sub item-action", action), el("div", "item-sub", "ID: " + r.id));
       } else if (isHealthReport) {
@@ -925,14 +938,19 @@
 
     const pills = $("pills"); pills.replaceChildren();
     const isCapacity = r.report_type === "capacity";
+    const isWeeklyFloor = isCapacity && r.capacity && r.capacity.review_type === "weekly_floor";
     const isHealthReport = ["restart_storm","hpa_saturation","change_risk"].includes(r.report_type);
     const isSelfLearning = r.report_type === "self_learning";
     const lv = level(r);
-    if (lv && !isHealthReport) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
+    if (lv && !isHealthReport && !isCapacity) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
     if (isCapacity) {
-      pills.append(pill("Capacity plan", "soft"));
-      const priorityPill = pills.querySelector(".pill");
-      if (priorityPill) priorityPill.remove();
+      if (isWeeklyFloor) {
+        const floorStatus = floorReviewStatus(r.capacity);
+        pills.append(pill("Severity " + (lv || "P4"), (lv || "p4").toLowerCase()));
+        pills.append(pill(floorStatus.label, floorStatus.className));
+      } else {
+        pills.append(pill("Capacity plan", "soft"));
+      }
     }
     if (isHealthReport) {
       const healthLabel = { restart_storm: "Restart storm", hpa_saturation: "HPA saturation", change_risk: "Change risk" }[r.report_type];
@@ -949,13 +967,14 @@
     }
     const decision = r.capacity && r.capacity.decision;
     const postMergeStatus = isCapacity && r.capacity.post_merge && r.capacity.post_merge.status;
-    const capacityBadge = isCapacity && r.capacity.review_type === "weekly_floor" ? "Weekly floor review · recommendation only"
+    const floorBadge = isWeeklyFloor ? floorReviewStatus(r.capacity) : null;
+    const capacityBadge = isWeeklyFloor ? floorBadge.label
       : postMergeStatus === "healthy" ? "Merged · healthy"
       : postMergeStatus === "needs_attention" ? "Merged · needs attention"
       : postMergeStatus === "inconclusive" ? "Merged · verification inconclusive"
       : postMergeStatus === "not_merged" ? "PR open · not verified"
       : decision === "proposal" ? "Proposal recorded" : "Review complete";
-    const badge = pill(isCapacity ? capacityBadge : isSelfLearning ? "Self-learning run" : "Checking Grafana…", "soft");
+    const badge = pill(isCapacity ? capacityBadge : isSelfLearning ? "Self-learning run" : "Checking Grafana…", isWeeklyFloor ? floorBadge.className : "soft");
     badge.id = "live-badge";
     if (isCapacity && postMergeStatus === "healthy") badge.classList.add("ok");
     if (isCapacity && postMergeStatus === "needs_attention") badge.classList.add("p1");
@@ -987,6 +1006,8 @@
       : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
     $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.")
       : (r.summary || "");
+    const staleRootCause = $("report").querySelector(".root-cause-callout");
+    if (staleRootCause) staleRootCause.remove();
     const facts = $("facts"); facts.replaceChildren();
     if (isHealthReport) {
       const healthData = r[r.report_type] || {};
@@ -1000,6 +1021,7 @@
       fact(facts, "Namespace", r.capacity.namespace || "not recorded");
       fact(facts, "Workload", r.service || r.capacity.workload || "not recorded");
       fact(facts, "Action outcome", capacityActionOutcome(r.capacity));
+      if (isWeeklyFloor) fact(facts, "Severity", lv || "P4");
       fact(facts, "Review type", r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review" : "Daily scale-down review");
       fact(facts, "Review decision", decision);
       if (decision === "skipped" && r.capacity.reason) fact(facts, "Skip reason", r.capacity.reason);
@@ -1024,10 +1046,8 @@
       fact(facts, "Started", fmtTime(when(r.started_at)));
       fact(facts, "Report written", fmtTime(when(r.generated_at)));
       fact(facts, "Investigation ID", id);
-      // root cause callout — prominent above-fold anchor for incident responders
-      const oldCallout = $("report").querySelector(".root-cause-callout");
-      if (oldCallout) oldCallout.remove();
-      if (!isCapacity && !isHealthReport && r.root_cause && r.root_cause.category) {
+      // Root cause callouts are incident-only; floor reviews use severity and review status.
+      if (!isCapacity && !isHealthReport && !isWeeklyFloor && r.root_cause && r.root_cause.category) {
         const callout = el("div", "root-cause-callout");
         const icon = el("span", "rc-icon", "🔍");
         const content = el("div");
