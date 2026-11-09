@@ -25,7 +25,7 @@ spec:
           - name: GRAFANA_API_TOKEN
             valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
           - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
-          - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo"}
+          - {name: SCALE_DOWN_WORKLOADS, value: "orders-api:demo,frontend:demo,dummy-shop:sandbox"}
           - {name: SCALE_DOWN_CLUSTER, value: platform}
           - {name: SCALE_DOWN_WINDOW, value: 24h}
           - {name: SCALE_DOWN_MIN_COVERAGE_SECONDS, value: "86400"}
