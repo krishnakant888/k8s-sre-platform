@@ -94,9 +94,12 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: reports, mountPath: /reports, readOnly: true}
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports, readOnly: true}
 ---
 apiVersion: v1
 kind: Service
