@@ -96,13 +96,3 @@ spec:
   rules:
     - backendRefs:
         - {name: dummy-shop, port: 80}
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: dummy-shop
-  namespace: sandbox
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels: {app.kubernetes.io/name: dummy-shop}
