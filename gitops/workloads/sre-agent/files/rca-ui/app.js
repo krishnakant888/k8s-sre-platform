@@ -1160,6 +1160,41 @@
       }
     }
 
+    // Automated capacity actions section — shown when agent opened a remediation PR
+    const staleRemSection = $("report")?.querySelector(".auto-capacity-section");
+    if (staleRemSection) staleRemSection.remove();
+    if (!isCapacity && !isHealthReport && !isWeeklyFloor && !isSelfLearning && r.remediation) {
+      const rem = r.remediation;
+      const remSection = el("div", "auto-capacity-section");
+      const remLabel = el("span", "rc-label", "Automated capacity action");
+      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type;
+      const remIcon = rem.type === "cpu_scaleup" ? "⚡" : "🧠";
+      const remStatus = rem.status === "merged" ? "merged · ArgoCD syncing" : `PR #${rem.pr_number} opened`;
+      let remDesc = "";
+      if (rem.type === "cpu_scaleup") {
+        remDesc = `CPU limit ${rem.old_cpu_limit} → ${rem.new_cpu_limit}` + (rem.old_cpu_request ? `, request ${rem.old_cpu_request} → ${rem.new_cpu_request}` : "");
+      } else if (rem.type === "oom") {
+        remDesc = `Memory limit ${rem.old_limit} → ${rem.new_limit}` + (rem.old_limit !== rem.new_limit ? ` (${rem.sizing_method === "observed_peak" ? `6h peak × 1.25` : "1.5× formula"})` : "");
+      }
+      const remHead = el("div", "auto-capacity-head");
+      remHead.append(el("span", "auto-capacity-icon", remIcon), remLabel);
+      const remBody = el("div", "auto-capacity-body");
+      remBody.append(el("p", "rc-text", `${remType} · ${remStatus}`));
+      if (remDesc) remBody.append(el("p", "rc-desc", remDesc));
+      if (rem.pr_url) {
+        const prLink = el("a", "rc-desc auto-capacity-pr", `View PR #${rem.pr_number} →`);
+        prLink.href = rem.pr_url; prLink.target = "_blank"; prLink.rel = "noopener";
+        remBody.append(prLink);
+      }
+      remSection.append(remHead, remBody);
+      // insert after deploy callout if present, else after root-cause callout, else after facts
+      const deployCalloutEl = $("report")?.querySelector(".deploy-callout");
+      const rcCalloutEl = $("report")?.querySelector(".root-cause-callout");
+      if (deployCalloutEl) deployCalloutEl.after(remSection);
+      else if (rcCalloutEl) rcCalloutEl.after(remSection);
+      else facts.after(remSection);
+    }
+
     const actions = $("actions"); actions.replaceChildren();
     const link = (text, href) => { const a = el("a", "btn", text); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };
     const copy = el("button", "btn btn-primary", "Copy link"); copy.type = "button";

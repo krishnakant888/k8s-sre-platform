@@ -393,6 +393,18 @@ button, input, select { font: inherit; color: inherit; }
 .deploy-auto-hint { color: #86efac !important; font-weight: 500; }
 .deploy-revert-hint { color: #fbbf24 !important; font-family: var(--font-mono, monospace); font-size: 12px; }
 
+/* automated capacity actions section */
+.auto-capacity-section {
+  margin: 10px 0 0; padding: 12px 16px; border-radius: var(--r-lg);
+  display: flex; gap: 12px; align-items: flex-start;
+  background: rgb(99 102 241/.08); border: 1px solid rgb(99 102 241/.2);
+  border-left: 4px solid rgb(99 102 241/.7);
+}
+.auto-capacity-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.auto-capacity-icon { font-size: 18px; flex: none; }
+.auto-capacity-body { flex: 1; min-width: 0; }
+.auto-capacity-pr { color: rgb(99 102 241) !important; font-size: .82em; }
+
 /* actions */
 .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 18px; }
 .btn {

@@ -40,10 +40,7 @@ def analyze(alert: dict, ctx: dict) -> dict:
             report.remediation = pr
             log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct"), "old_cpu_limit": pr.get("old_cpu_limit"), "new_cpu_limit": pr.get("new_cpu_limit")})
             status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
-            if pr.get("type") == "scaleout":
-                change_desc = f"replicas {pr['old_replicas']} → {pr['new_replicas']}"
-                sync_msg = "Remediation already applied — wait for Argo CD to scale the deployment"
-            elif pr.get("type") == "cpu_scaleup":
+            if pr.get("type") == "cpu_scaleup":
                 change_desc = f"CPU limit {pr.get('old_cpu_limit')} → {pr.get('new_cpu_limit')}"
                 sync_msg = "Remediation already applied — wait for Argo CD to sync the new CPU limit"
             else:

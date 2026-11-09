@@ -161,24 +161,6 @@ data:
             annotations:
               summary: "{{ $labels.pod }} is using over 90% of its memory limit"
               description: "Container {{ $labels.container }} of {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.cluster }}) will be OOMKilled if it grows further."
-          - uid: generic-cpu-throttled
-            title: ContainerCpuThrottled
-            condition: C
-            data:
-              - refId: A
-                relativeTimeRange: {from: 600, to: 0}
-                datasourceUid: mimir
-                model: {refId: A, expr: "sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=\"\"}[5m])) / sum by (cluster, namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=\"\"}[5m])) > 0.5", instant: true}
-              - refId: C
-                datasourceUid: __expr__
-                model: {refId: C, type: math, expression: "$A >= 0"}
-            noDataState: OK
-            execErrState: Error
-            for: 1m
-            labels: {severity: ticket}
-            annotations:
-              summary: "{{ $labels.pod }} is CPU throttled more than half the time"
-              description: "Container {{ $labels.container }} of {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.cluster }}) hits its CPU limit, which adds latency."
           - uid: generic-pvc-filling
             title: PersistentVolumeFillingUp
             condition: C
