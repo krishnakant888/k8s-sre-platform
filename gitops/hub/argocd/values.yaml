@@ -31,6 +31,10 @@ notifications:
 
 # renders manifests (helm template, kustomize build) for every sync: short CPU and memory spikes
 repoServer:
+  replicas: 2
+  pdb:
+    enabled: true
+    minAvailable: 2
   resources:
     requests: {cpu: 500m, memory: 1Gi}
     limits: {cpu: "4", memory: 2Gi}
@@ -38,6 +42,10 @@ repoServer:
 # the UI and API
 server:
   # no Ingress: the route is an HTTPRoute in gitops/gateway/hub/routes.yaml
+  replicas: 2
+  pdb:
+    enabled: true
+    minAvailable: 2
   resources:
     requests: {cpu: 200m, memory: 512Mi}
     limits: {cpu: "2", memory: 1Gi}
