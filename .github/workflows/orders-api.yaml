@@ -65,7 +65,6 @@ jobs:
           f=gitops/workloads/orders-api/deployment.yaml
           [ -f "$f" ] || { echo "no deployment yet"; exit 0; }
           sed -i "s#\(image: ${IMAGE}\):.*#\1:sha-${GITHUB_SHA}#" "$f"
-          sed -i "s#\(image: ${IMAGE}\):.*#\1:sha-${GITHUB_SHA}#" gitops/workloads/orders-api/loadgen.yaml 2>/dev/null || true
           git config user.name "orders-api ci"
           git config user.email "ci@users.noreply.github.com"
           git add gitops/workloads/orders-api

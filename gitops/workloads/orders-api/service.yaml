@@ -21,13 +21,3 @@ spec:
   rules:
     - backendRefs:
         - {name: orders-api, port: 80}
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: orders-api
-  namespace: demo
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels: {app.kubernetes.io/name: orders-api}

@@ -191,7 +191,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + (f", pressure {', '.join(sig['node_pressure'])}" if sig["node_pressure"] else ", no pressure")
             + f", CPU {sig['node_cpu']:.0%} and memory {sig['node_mem']:.0%} of allocatable")
 
-    def deploys(app_names: list[str], lookback_seconds: int = 7200):
+    def deploys(app_names: list[str], lookback_seconds: int = 7200, fallback_ns: str | None = None):
         for name in app_names:
             res = tools.call_tool("get_recent_deploys", {"application": name})
             if "error" not in res:
@@ -207,10 +207,20 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     add("argocd", f"history {name}",
                         f"deploy {d0['revision']} at {d0['deployed_at']} ({mins_before}m before the alert); "
                         f"source: {paths}")
-                else:
-                    add("argocd", f"history {name}", "no deploy in the 2 hours before the alert")
-                return
-        add("argocd", f"history {app_names[0] if app_names else '?'}", "no Argo CD application of that name could be read")
+                    return
+                # no recent deploy for this app — keep trying others
+        # fallback: scan all apps targeting the namespace for any recent deploy
+        if fallback_ns:
+            ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_ns, "minutes": int(lookback_seconds / 60)})
+            if "error" not in ns_res:
+                raw["deploys"] = ns_res
+                recent_any = [a for a in ns_res.get("applications", []) if a.get("recent_syncs")]
+                if recent_any:
+                    summary = "; ".join(f"{a['name']} at {a['recent_syncs'][0]['synced_at']}" for a in recent_any[:3])
+                    sig["recent_deploy"] = recent_any[0]["recent_syncs"][0]
+                    add("argocd", f"namespace deploys {fallback_ns}", f"{len(recent_any)} app(s) deployed in the 2h window: {summary}")
+                    return
+        add("argocd", f"history {app_names[0] if app_names else '?'}", "no deploy in the 2 hours before the alert")
 
     # ---------------------------------------------------------------- per family
     if family in ("container", "scheduling", "rollout", "job", "memory", "cpu", "target"):
@@ -290,7 +300,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["desired"] = _num(_q(f'max(kube_deployment_spec_replicas{{cluster="{cluster}", namespace="{ns}", deployment="{sig["backend"]}"}})', 5), "last")
         logs_for(f'cluster="{cluster}", namespace="{ns}", pod=~"{_pod_rx(sig["backend"])}"', f"error lines of backend {sig['backend']}")
         node_facts(sig.get("nodes", []))
-        deploys([f"platform-{sig['backend']}", sig["backend"]])
+        deploys([f"platform-{sig['backend']}", sig["backend"]], fallback_ns=ns)
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or (family == "ingress" and sig["p95_peak"] > 1 and labels["alertname"] == "IngressSlow")
 
     elif family == "gateway":
@@ -311,7 +321,11 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + ("routes with 5xx: " + ", ".join(f"{r[0]}/{r[1]} {r[2]:.2f}/s" for r in sig["failing_routes"][:3]) if sig["failing_routes"] else "no route stands out")
             + f"; configuration reload failures in 15m: {sig['reload_failures']:.0f}")
         logs_for(f'cluster="{cluster}", namespace="{ns}"', "gateway error lines")
-        deploys(["platform-traefik", "traefik"])
+        top_route = sig["failing_routes"][0] if sig["failing_routes"] else None
+        top_backend = top_route[1] if top_route else None
+        top_backend_ns = top_route[0] if top_route else None
+        backend_apps = ([f"platform-{top_backend}", top_backend] if top_backend else []) + ["platform-traefik", "traefik"]
+        deploys(backend_apps, fallback_ns=top_backend_ns or ns)
         # a configuration error in the log (a middleware that does not exist) lasts until someone fixes it
         config_error = bool(re.search(r"does not exist|failed to load|error while reading", _msgs(sig)))
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or sig["reload_failures"] > 0 or config_error

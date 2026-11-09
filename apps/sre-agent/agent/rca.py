@@ -320,30 +320,54 @@ def remediation(category: str, ctx: dict) -> tuple[str, HowToFix]:
         verify = [f"5xx share back near zero: `{err_q}`", "The error budget burn alerts return to normal in Grafana."]
     elif category == "resource_exhaustion":
         limit = sig.get("mem_limit")
-        what = (
-            f"The container in `{pods}` ({ns}) ran out of memory and was OOMKilled: its memory use reached the limit"
-            + (f" of {limit}" if limit else "")
-            + f" and the kernel killed the process. There have been {sig['restarts']:.0f} container restarts in the last 45 minutes; "
-            "each restart drops the in-flight work and, when the component is on the request path, fails requests until it is ready again."
-            + (" A fault injection flag is set, so this may be the memory drill." if drill else "")
-        )
-        immediate = [
-            f"Raise the memory limit in Git so it sticks (Argo CD applies it): set `resources.limits.memory` in {files}"
-            + (f" from {limit} to {_bigger_memory(limit)}." if limit else f" to {_bigger_memory(limit)}."),
-            f"First decide if it is a leak or a limit that is simply too low: look at `container_memory_working_set_bytes{{namespace=\"{ns}\", pod=~\"{svc}-.*\"}}`. "
-            "Steady growth until the kill is a leak; a plateau at the limit means the limit is too low.",
-        ]
-        if drill:
-            immediate.insert(0, "This may be the memory drill. The restarted pods are clean; no further action is needed for the drill itself.")
-        permanent = [
-            f"Set memory requests equal to limits for `{svc}` so the scheduler reserves what the process really needs.",
-            f"Add an alert at 80% of the limit: `container_memory_working_set_bytes{{namespace=\"{ns}\", pod=~\"{svc}-.*\"}} / on(namespace,pod,container) kube_pod_container_resource_limits{{resource=\"memory\"}} > 0.8`.",
-            "If memory grows without bound, profile the process and fix the leak.",
-        ]
-        verify = [
-            "No new restarts for 30 minutes: `increase(kube_pod_container_status_restarts_total{namespace=\"" + ns + "\", pod=~\"" + svc + "-.*\"}[30m]) == 0`.",
-            "Memory use stays below 80% of the new limit.",
-        ]
+        is_cpu_throttle = sig.get("throttle", 0) > 0.25 and not sig.get("kill_events")
+        if is_cpu_throttle:
+            throttle_pct = f"{sig.get('throttle', 0):.0%}"
+            what = (
+                f"`{svc}` ({ns}) is CPU throttled in {throttle_pct} of scheduling periods. "
+                "The kernel pauses the container once it uses its CPU limit, adding latency to every request. "
+                "No restarts occurred — this is a performance issue, not a crash."
+            )
+            immediate = [
+                f"**VPA Auto** will evict and reschedule the pod with a higher `limits.cpu` within ~5–10 min — no manual change needed.",
+                f"**KEDA** will scale out replicas if RPS exceeds the threshold. Verify it is active: "
+                f"`kubectl -n {ns} get scaledobject {svc}`.",
+                f"If KEDA is already at `maxReplicaCount`, the agent will automatically raise it — check for a remediation PR.",
+            ]
+            permanent = [
+                "VPA Auto continuously right-sizes CPU limits from observed usage — no static limit needed in Git.",
+                f"If throttling recurs after VPA converges, KEDA `maxReplicaCount` may be too low — the agent raises it automatically.",
+            ]
+            verify = [
+                f"Throttle ratio drops to near 0: `rate(container_cpu_cfs_throttled_periods_total{{namespace=\"{ns}\",pod=~\"{svc}-.*\"}}[5m]) / rate(container_cpu_cfs_periods_total{{namespace=\"{ns}\",pod=~\"{svc}-.*\"}}[5m])`.",
+                f"HPA shows `ScalingActive: True` and `currentReplicas` matches desired: `kubectl -n {ns} get hpa {svc}`.",
+            ]
+        else:
+            what = (
+                f"The container in `{pods}` ({ns}) ran out of memory and was OOMKilled: its memory use reached the limit"
+                + (f" of {limit}" if limit else "")
+                + f" and the kernel killed the process. There have been {sig['restarts']:.0f} container restarts in the last 45 minutes; "
+                "each restart drops the in-flight work and, when the component is on the request path, fails requests until it is ready again."
+                + (" A fault injection flag is set, so this may be the memory drill." if drill else "")
+            )
+            new_limit = _bigger_memory(limit)
+            limit_advice = (f" from {limit} to {new_limit} in {files}") if limit else ""
+            immediate = [
+                f"**VPA Auto** will evict and reschedule the pod with a higher `limits.memory` within ~5–10 min — no manual change needed.",
+                f"If VPA is not active, raise the memory limit{limit_advice}.",
+                f"First rule out a memory leak: check `container_memory_working_set_bytes{{namespace=\"{ns}\", pod=~\"{svc}-.*\"}}`. "
+                "Steady unbounded growth = leak (VPA cannot fix a leak); a plateau at the limit = limit too low (VPA will fix it).",
+            ]
+            if drill:
+                immediate.insert(0, "This may be the memory drill. The restarted pods are clean; no further action is needed for the drill itself.")
+            permanent = [
+                "VPA Auto continuously right-sizes memory limits from observed usage — no static limit needed in Git.",
+                "If memory grows without bound, profile the process and fix the leak — VPA cannot solve a leak.",
+            ]
+            verify = [
+                "No new restarts for 30 minutes: `increase(kube_pod_container_status_restarts_total{namespace=\"" + ns + "\", pod=~\"" + svc + "-.*\"}[30m]) == 0`.",
+                "Memory use stays below 80% of the new limit.",
+            ]
     elif category == "pod_crash":
         what = (
             f"Pods of `{svc}` in `{ns}` were restarted or unavailable ({sig['restarts']:.0f} restarts in the last 45 minutes, "
@@ -521,7 +545,7 @@ def observability_gaps(category: str, sig: dict, ctx: dict) -> list[str]:
     if category == "pod_crash" and not sig.get("exit_codes"):
         gaps.append("Exit codes of the previous container were not available. Keep `terminationMessagePolicy: FallbackToLogsOnError` on the container so the last log lines are kept with the pod status.")
     if sig.get("cpu_throttle", 0) > 0.25:
-        gaps.append(f"Add a CPU throttling alert for `{svc}`: `rate(container_cpu_cfs_throttled_periods_total[5m]) / rate(container_cpu_cfs_periods_total[5m]) > 0.25`.")
+        gaps.append(f"CPU throttling detected on `{svc}`. Check HPA status (`kubectl -n {ns} get hpa {svc}`) — if `ScalingActive` is False, metrics-server may be missing or the HPA target is misconfigured.")
     for err in sig.get("tool_errors", []):
         gaps.append(f"The agent could not read what it needed ({err}). Grant its ServiceAccount read access to that resource.")
     if not sig.get("source_files") and sig.get("app") == svc and not sig.get("recent_deploy"):

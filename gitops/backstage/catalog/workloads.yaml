@@ -33,49 +33,6 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: loadgen
-  description: Steady synthetic traffic against orders-api, so the dashboards and the SLO always have data
-  tags: [python]
-  annotations:
-    github.com/project-slug: krishnakant888/k8s-sre-platform
-    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/apps/orders-api
-    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=loadgen
-    backstage.io/kubernetes-namespace: demo
-    argocd/app-name: platform-orders-api
-spec:
-  type: service
-  lifecycle: production
-  owner: group:platform-team
-  system: workloads
-  subcomponentOf: component:orders-api
-  dependsOn: [component:orders-api]
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
-  name: frontend
-  description: Stateless nginx frontend that logs one JSON line per request
-  tags: [nginx]
-  annotations:
-    selfservice/enabled: "true"   # the self-service templates offer it (scale, resources, image, alerts ...)
-    github.com/project-slug: krishnakant888/k8s-sre-platform
-    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/workloads/frontend
-    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=frontend
-    backstage.io/kubernetes-namespace: demo
-    argocd/app-name: platform-frontend
-    grafana/alert-label-selector: service=frontend
-  links:
-    - {url: "https://frontend.localhost:8443", title: Open the frontend, icon: web}
-spec:
-  type: website
-  lifecycle: production
-  owner: group:platform-team
-  system: workloads
-  dependsOn: [resource:cluster-platform]
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
   name: dummy-shop
   description: "A deliberately plain web app with no metrics endpoint: everything about it comes from the platform (the observability coverage test)"
   tags: [nginx, coverage-test]

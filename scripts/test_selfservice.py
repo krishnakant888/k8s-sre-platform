@@ -35,13 +35,13 @@ def deployment(repo, name):
 
 
 def test_scale(repo):
-    r = run("scale", service="frontend", replicas=3)
-    assert deployment(repo, "frontend")["spec"]["replicas"] == 3
+    r = run("scale", service="orders-api", replicas=3)
+    assert deployment(repo, "orders-api")["spec"]["replicas"] == 3
     assert "scale to 3" in r["title"]
     with pytest.raises(ss.Refused):
-        run("scale", service="frontend", replicas=3)          # already 3
+        run("scale", service="orders-api", replicas=3)          # already 3
     with pytest.raises(ss.Refused):
-        run("scale", service="frontend", replicas=0)
+        run("scale", service="orders-api", replicas=0)
     with pytest.raises(ss.Refused):
         run("scale", service="nope", replicas=2)
 
@@ -67,8 +67,6 @@ def test_env_adds_replaces_and_refuses(repo):
         run("env", service="orders-api", name="DB_PASSWORD", value="x")
     with pytest.raises(ss.Refused, match="valueFrom"):
         run("env", service="orders-api", name="POD_NAME", value="x")
-    run("env", service="frontend", name="MODE", value="a b")             # no env block yet
-    assert deployment(repo, "frontend")["spec"]["template"]["spec"]["containers"][0]["env"] == [{"name": "MODE", "value": "a b"}]
 
 
 def test_image_and_rollback(repo):
@@ -83,21 +81,21 @@ def test_image_and_rollback(repo):
 
 
 def test_route(repo):
-    run("route", service="frontend", host="www.localhost")
-    path, parts, i = ss.find("HTTPRoute", "frontend")
-    assert yaml.safe_load(parts[i])["spec"]["hostnames"] == ["frontend.localhost", "www.localhost"]
+    run("route", service="orders-api", host="www.localhost")
+    path, parts, i = ss.find("HTTPRoute", "orders-api")
+    assert yaml.safe_load(parts[i])["spec"]["hostnames"] == ["orders.localhost", "www.localhost"]
     with pytest.raises(ss.Refused):
-        run("route", service="frontend", host="www.localhost")
+        run("route", service="orders-api", host="www.localhost")
     with pytest.raises(ss.Refused):
-        run("route", service="frontend", host="orders.localhost")        # used by another route
+        run("route", service="orders-api", host="dummy.localhost")        # used by another route
     with pytest.raises(ss.Refused):
-        run("route", service="frontend", host="evil.example.com")
+        run("route", service="orders-api", host="evil.example.com")
 
 
 def test_promote(repo):
     (repo / "gitops/workloads/shop").mkdir()
     (repo / "gitops/workloads/shop/shop.yaml").write_text("apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop\n  namespace: sandbox\n")
-    app = (repo / "gitops/apps/frontend.yaml").read_text().replace("frontend", "shop").replace("namespace: demo", "namespace: sandbox")
+    app = (repo / "gitops/apps/orders-api.yaml").read_text().replace("orders-api", "shop").replace("namespace: demo", "namespace: sandbox")
     (repo / "gitops/apps/shop.yaml").write_text(app)
     run("promote", service="shop")
     assert "namespace: demo" in (repo / "gitops/workloads/shop/shop.yaml").read_text()
@@ -117,9 +115,9 @@ def test_alert(repo, kind):
 
 
 def test_dashboard(repo):
-    r = run("dashboard", service="frontend", panels=[{"title": "Mine", "expr": "up", "unit": "short"}])
+    r = run("dashboard", service="orders-api", panels=[{"title": "Mine", "expr": "up", "unit": "short"}])
     cm = yaml.safe_load((repo / r["files"][0]).read_text())
-    dash = json.loads(cm["data"]["svc-frontend.json"])
+    dash = json.loads(cm["data"]["svc-orders-api.json"])
     assert len(dash["panels"]) == 9 and dash["panels"][-1]["title"] == "Mine"
 
 
@@ -157,9 +155,9 @@ def test_drill(repo):
 
 
 def test_main_prints_json_and_refuses(repo, capsys):
-    ss.main(["x", "scale", json.dumps({"service": "frontend", "replicas": 4})])
+    ss.main(["x", "scale", json.dumps({"service": "orders-api", "replicas": 4})])
     out = json.loads(capsys.readouterr().out)
-    assert out["branch"].startswith("selfservice/scale-") and out["files"] == ["gitops/workloads/frontend/deployment.yaml"]
+    assert out["branch"].startswith("selfservice/scale-") and out["files"] == ["gitops/workloads/orders-api/deployment.yaml"]
     with pytest.raises(SystemExit) as e:
-        ss.main(["x", "scale", json.dumps({"service": "frontend", "replicas": "many"})])
+        ss.main(["x", "scale", json.dumps({"service": "orders-api", "replicas": "many"})])
     assert e.value.code == 2

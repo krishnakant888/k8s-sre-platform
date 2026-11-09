@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orders-api
+  namespace: demo
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orders-api

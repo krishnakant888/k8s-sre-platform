@@ -15,9 +15,8 @@ from agent import config
 # what stops working with a component (extend for your own services)
 DEPENDENTS = {
     "traefik": ["every URL behind the gateway of that cluster (the apps, Grafana, Argo CD, the report viewer)"],
-    "inventory": ["orders-api (its inventory lookups)", "checkout in the frontend"],
-    "orders-api": ["the frontend (orders and checkout)", "the orders URL through the gateway"],
-    "frontend": ["users of the web shop"],
+    "inventory": ["orders-api (its inventory lookups)"],
+    "orders-api": ["the orders URL through the gateway"],
     "grafana": ["dashboards and alert rules evaluation", "the portal's Grafana pages"],
     "loki": ["log search and log based evidence in reports"],
     "mimir": ["metrics, alert rules and every dashboard"],
@@ -90,13 +89,16 @@ def blast_radius(report, sig: dict) -> list[str]:
 def change(report, sig: dict) -> dict:
     rd = sig.get("recent_deploy")
     if not rd or not rd.get("deployed_at"):
-        return {"likely": False, "note": "no deploy found in the hour before the alert, so a recent change is unlikely to be the cause"}
+        return {"likely": False, "note": "no deploy found in the 2 hours before the alert"}
     started, at = _ts(report.started_at), _ts(rd["deployed_at"])
     gap = round((started - at) / 60) if started and at else None
-    likely = gap is not None and 0 <= gap <= 60
-    note = (f"deploy {rd.get('revision', '?')} landed {gap} min before the alert started: the change is the first thing to roll back or inspect" if likely
+    # likely=True covers 0–120 min (matches 2 h lookback); high_confidence=True for ≤60 min
+    likely = gap is not None and 0 <= gap <= 120
+    high_confidence = gap is not None and 0 <= gap <= 60
+    note = (f"deploy {rd.get('revision', '?')} landed {gap} min before the alert: strong candidate — roll back or inspect first" if high_confidence
+            else f"deploy {rd.get('revision', '?')} landed {gap} min before the alert: possible contributing cause, worth checking" if likely
             else f"deploy {rd.get('revision', '?')} was {abs(gap) if gap is not None else '?'} min {'after' if gap is not None and gap < 0 else 'before'} the alert: probably not the cause")
-    return {"likely": likely, "revision": rd.get("revision", ""), "deployed_at": rd["deployed_at"], "minutes_before_alert": gap, "files": sig.get("source_files", [])[:5], "note": note}
+    return {"likely": likely, "high_confidence": high_confidence, "revision": rd.get("revision", ""), "deployed_at": rd["deployed_at"], "minutes_before_alert": gap, "files": sig.get("source_files", [])[:5], "note": note}
 
 
 def confidence(report, ctx: dict) -> dict:

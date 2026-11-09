@@ -91,49 +91,75 @@ Three clusters, each responsible for one concern, so an outage, upgrade or rebui
 
 ```
 gitops cluster          Argo CD (hub) — deploys both other clusters from this repo
-platform cluster        workloads (orders-api, frontend, dummy-shop), gateway, kyverno, sealed-secrets
+platform cluster        workloads (orders-api, dummy-shop), gateway, kyverno, sealed-secrets
 observability cluster   LGTM stack, Argo Workflows, SRE agent, RCA viewer
 ```
 
 ```mermaid
-flowchart TB
-  Git[(GitHub\nthis repo)]
+flowchart LR
+    classDef git   fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f,font-weight:bold
+    classDef plat  fill:#dcfce7,stroke:#16a34a,color:#14532d,font-weight:bold
+    classDef obs   fill:#ffedd5,stroke:#ea580c,color:#7c2d12,font-weight:bold
+    classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef ext   fill:#f1f5f9,stroke:#94a3b8,color:#0f172a
 
-  subgraph GC["🔵 gitops cluster  —  the deployer"]
-    direction TB
-    ArgoCD["Argo CD\nhub + spoke\n───────────\nmanages both\nother clusters"]
-  end
+    Dev(["👨‍💻 Developer\n\npushes code\ntriggers templates"]):::ext
+    GH[("📦 GitHub\nthis repo")]:::ext
 
-  subgraph PC["🟢 platform cluster  —  the workloads"]
-    direction TB
-    Infra["traefik · cert-manager\nkyverno · sealed-secrets"]
-    Demo["demo namespace\norders-api  ·  frontend"]
-    Sandbox["sandbox namespace\ndummy-shop  (nginx + trace logging)"]
-    Alloy["Alloy collector\nkube-state-metrics"]
-    Demo -->|"metrics · logs\nOTLP traces"| Alloy
-    Sandbox -->|logs| Alloy
-  end
+    subgraph GC["🔵  gitops cluster"]
+        ArgoCD["🔄 Argo CD  —  hub + spoke\n━━━━━━━━━━━━━━━━━━━━━━━\nSingle deployer for\nboth other clusters.\nSyncs everything from Git;\nnothing is applied by hand.\n─────────────────────────\nargocd.localhost:7443"]:::git
+        Backstage["🏢 Backstage Developer Portal\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nService catalog  ·  live pod status\nArgo CD health  ·  open alerts\n13 self-service Scaffolder templates\n──────────────────────────────────\nbackstage-portal.localhost:7443"]:::git
+    end
 
-  subgraph OC["🟠 observability cluster  —  the tools"]
-    direction TB
-    LGTM["Mimir  ·  Loki  ·  Tempo\nGrafana  +  alert rules"]
-    AW["Argo Workflows\n(runs agent steps as pods)"]
-    Agent["SRE agent\nwebhook  ·  RCA viewer\n4 scheduled CronWorkflows"]
-    Reports[("reports PVC\nrca.md + report.json\n14-day retention")]
+    subgraph PC["🟢  platform cluster  —  the workloads"]
+        direction TB
+        WorkloadGrp["⚡ orders-api  🛍️ dummy-shop\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nFastAPI + 28-day SLO (99.5% success + p99 ≤ 300ms)\n─────────────────────────────────────────────────\norders.localhost · dummy.localhost"]:::plat
+        Infra["🛡️ Traefik  (Gateway API controller)\ncert-manager  ·  Kyverno policies\nSealed Secrets controller"]:::plat
+        PAlloy["📡 Alloy collector\nkube-state-metrics\n─────────────────\nscrapes: pods · cAdvisor\ntails: pod logs via k8s API\nforwards: OTLP traces"]:::plat
+        WorkloadGrp -->|"metrics · logs\nOTLP traces"| PAlloy
+    end
 
-    LGTM -->|"alert fires\n→ POST /webhook"| Agent
-    Agent -->|"create Workflow\nper alert fingerprint"| AW
-    AW -->|"execute steps\n(collect → analyze → store → notify)"| Agent
-    Agent -->|"read-only queries\n(Mimir, Loki, Tempo)"| LGTM
-    Agent -->|write report| Reports
-  end
+    subgraph OC["🟠  observability cluster  —  the tools  (isolated: survives a platform outage)"]
+        direction TB
 
-  Git -->|"GitOps pull\n(app-of-apps)"| ArgoCD
-  ArgoCD -->|"sync manifests\n→ platform cluster"| Infra
-  ArgoCD -->|"sync manifests\n→ observability cluster"| LGTM
-  Alloy -->|"remote-write metrics\npush logs + traces\n(NodePorts, Docker network)"| LGTM
-  Agent -->|"read-only k8s API\npods · events"| PC
-  Agent -.->|"Argo CD API\ndeploy history"| GC
+        Mimir["📊 Mimir\nmetrics · SLO\nrecording rules"]:::obs
+        Loki["📋 Loki\nlogs"]:::obs
+        Tempo["🔍 Tempo\ntraces"]:::obs
+        Grafana["📈 Grafana\n━━━━━━━━━━━━━━━━\ndashboards (provisioned from Git)\nalert rules  ·  SLO burn-rate\ncontact points  ·  silences\n────────────────────────────\ngrafana.localhost:9443"]:::obs
+
+        Webhook["🚨 Alert Webhook\nFlask · idempotent\n(409 on duplicate fingerprint)"]:::obs
+        AW["⚙️ Argo Workflows\n━━━━━━━━━━━━━━━━\nruns agent steps as pods\nretries + timeouts per step\n────────────────────────\nworkflows.localhost:9443"]:::obs
+
+        Agent["🤖 SRE Agent\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nIncident flow:  settle → collect → analyze → store → notify\nRule-based classifier  (30+ cause families)\n+  LLM verification  (Claude)  when API key set\n─────────────────────────────────────────────\nScheduled CronWorkflows  (all IST):\n• capacity-review    daily   06:30  — scale-down PR if under-used\n• floor-review       Mon     07:00  — min-replica floor report\n• health-review      Mon     08:00  — restarts · HPA · change risk\n• self-learning      Sun     09:00  — rediagnose · gaps → issues\n                                       calibrate · tune thresholds"]:::obs
+
+        Reports[("📁 reports PVC\n─────────────\nrca.md  +  report.json\n14-day retention\nnightly cleanup CronJob")]:::store
+        Viewer["🖥️ RCA Viewer UI\n━━━━━━━━━━━━━━━━━━━━━\nlive 0–100% progress bar\nper-service 30-day sparklines\nmanual workflow triggers\n─────────────────────────\nreports.localhost:9443"]:::obs
+
+        Grafana   -->|"alert fires\nPOST /webhook"| Webhook
+        Webhook   -->|"Workflow.create()\none per alert fingerprint"| AW
+        AW        -->|"step pods execute"| Agent
+        Agent     -->|"read-only:\nMimir · Loki · Tempo"| Mimir
+        Agent     --> Loki
+        Agent     --> Tempo
+        Agent     -->|"write RCA"| Reports
+        Viewer    -->|"read reports"| Reports
+        Viewer    -->|"poll status.progress"| AW
+    end
+
+    Dev       -->|"git push / PR"| GH
+    GH        -->|"GitOps pull\n(app-of-apps)"| ArgoCD
+    ArgoCD    -->|"sync → platform"| Infra
+    ArgoCD    -->|"sync → observability"| Grafana
+    PAlloy    -->|"remote-write metrics\npush logs  ·  push traces\n(Docker network NodePorts)"| Mimir
+    PAlloy    --> Loki
+    PAlloy    --> Tempo
+    Agent     -->|"read-only k8s API\npods · events · Argo CD apps"| PC
+    Agent     -.->|"Argo CD API\ndeploy history"| GC
+    Dev       -->|"open UIs"| Grafana
+    Dev       -->|" "| ArgoCD
+    Dev       -->|" "| Viewer
+    Dev       -->|" "| AW
+    Dev       -->|" "| Backstage
 ```
 
 Clusters communicate over the shared Docker network. Collectors push to `observability-worker:<NodePort>`; the agent reads `platform-control-plane:6443` and `gitops-control-plane:6443` with read-only tokens created at bootstrap.
@@ -143,7 +169,7 @@ Clusters communicate over the shared Docker network. Collectors push to `observa
 | Namespace | Cluster | Contents |
 |---|---|---|
 | `argocd` | gitops | Argo CD hub — manages itself and both other clusters |
-| `demo` | platform | `orders-api`, `frontend` |
+| `demo` | platform | `orders-api` |
 | `sandbox` | platform | `dummy-shop` (nginx + trace logging, no OTel SDK) |
 | `observability` | platform | Alloy collector, kube-state-metrics |
 | `observability` | observability | Mimir, Loki, Tempo, Grafana, Alloy, kube-state-metrics |
@@ -162,7 +188,7 @@ gitops/apps/            platform cluster Argo CD Applications (one per component
 gitops/observability-cluster/  observability cluster Applications, Alloy values, NodePorts
 gitops/hub/             gitops cluster: Argo CD values, root Applications
 gitops/observability/   Mimir, Loki, Tempo, Grafana configs, alert rules, dashboards
-gitops/workloads/       manifests for orders-api, frontend, sre-agent (WorkflowTemplates, CronWorkflows, UI)
+gitops/workloads/       manifests for orders-api, sre-agent (WorkflowTemplates, CronWorkflows, UI)
 gitops/fault-drills/    fault injection manifests (active, degraded scenarios)
 backstage-portal/       Backstage app + self-service templates
 apps/orders-api/        FastAPI sample service: code, tests, Dockerfile
@@ -193,6 +219,34 @@ Alert fires in Grafana → Grafana calls `POST /webhook` → agent creates one A
 - Playbook-first — structured queries run before any LLM call; the report is complete without one
 - Honest — reports carry the exact queries, evidence, confidence level, contributing factors, and a flag when a fault injection drill is active
 - Tool output is treated as data, never as instructions; secrets are redacted from log lines; the LLM loop has a step limit
+
+### Automated remediation: how the agent extends HPA
+
+Kubernetes HPAs handle horizontal scaling (adding/removing pods) but cannot raise resource limits when a container is throttled or killed. The agent fills that gap with **vertical remediation** — it patches `limits` and `requests` in the GitOps manifests and opens a PR, which Argo CD applies on merge.
+
+**Division of responsibility**
+
+| Concern | Who handles it | Mechanism |
+|---|---|---|
+| Scale out more pods | HPA | Compares actual CPU/memory usage against `requests`; adds pods when utilisation exceeds the target percentage |
+| Scale in fewer pods | HPA | Removes pods when utilisation drops below the target |
+| Raise CPU limit (throttled) | Agent (incident remediation) | Detects `container_cpu_cfs_throttled_ratio > 25%`; patches `limits.cpu` × 1.5 and sets `requests.cpu` to 50% of the new limit |
+| Raise memory limit (OOM kill) | Agent (incident remediation) | Detects `kube_pod_container_status_last_terminated_reason == OOMKilled`; patches `limits.memory` to peak + 20% headroom; sets `requests.memory` to the same value (Guaranteed QoS) |
+| Lower limits over time | Scale-down agent (daily) | Checks CPU P95 and Mem P99 against per-service thresholds; PRs a reduction when usage stays below threshold for the review window |
+
+**Why `requests` must be patched alongside `limits`**
+
+The HPA derives utilisation as `actual usage ÷ requests`. If the agent raises `limits.cpu` from 200m to 300m but leaves `requests.cpu` at 50m, HPA sees 400% utilisation and immediately scales out pods — the opposite of what was needed. Setting `requests.cpu` to 50% of the new limit gives HPA an accurate baseline and lets it make a correct scale-out decision once the limit change is live.
+
+For memory, `requests.memory` is set equal to `limits.memory` to maintain Guaranteed QoS (Kubernetes does not evict Guaranteed pods under node memory pressure).
+
+**HPA requirements on kind clusters**
+
+HPAs need the `metrics.k8s.io/v1beta1` API, which is served by [metrics-server](https://github.com/kubernetes-sigs/metrics-server). It is not installed by default in kind. The cluster ships a `gitops/apps/metrics-server.yaml` ArgoCD Application that deploys metrics-server 3.12.2 with `--kubelet-insecure-tls` (required because kind kubelets use self-signed TLS). Without this, all HPAs show `ScalingActive: False` and never fire.
+
+**What the agent does NOT do**
+
+The agent never changes `spec.replicas` directly. Replica management is entirely owned by the HPA; the agent touches only `resources.limits` and `resources.requests` in the deployment manifests.
 
 ### Scheduled proactive reviews
 

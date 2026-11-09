@@ -11,6 +11,7 @@
     dismissed: new Set(), showDismissed: false,
     read: new Set(), notifOpen: false,
     runs: [], workloads: [],
+    reanalyzing: new Map(), // reportId -> { workflow, interval }
   };
   const meta = new Map(); // id -> report.json
 
@@ -54,7 +55,7 @@
     saveRead(); updateNotifBadge(); renderList(); renderNotifList();
   }
   function updateNotifBadge() {
-    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)).length;
+    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && reportType(r) === "incident").length;
     const active = state.runs.filter((r) => !r.done).length;
     const total = unread + active;
     const badge = $("notif-badge");
@@ -117,10 +118,19 @@
   };
 
   // ---- tab counts --------------------------------------------------------------------------------------------
+  const HEALTH_TYPES = new Set(["restart_storm", "hpa_saturation", "change_risk"]);
+  const CAPACITY_TYPES = new Set(["capacity", "weekly_floor"]);
+
   function updateTabCounts() {
     const active = state.reports.filter((r) => !state.dismissed.has(r.id));
-    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0, restart_storm: 0, hpa_saturation: 0, change_risk: 0, self_learning: 0 };
-    for (const r of active) counts[reportType(r)] = (counts[reportType(r)] || 0) + 1;
+    const counts = { all: active.length, incident: 0, capacity: 0, health: 0, self_learning: 0 };
+    for (const r of active) {
+      const rt = reportType(r);
+      if (rt === "incident") counts.incident++;
+      else if (CAPACITY_TYPES.has(rt)) counts.capacity++;
+      else if (HEALTH_TYPES.has(rt)) counts.health++;
+      else if (rt === "self_learning") counts.self_learning++;
+    }
     for (const [type, n] of Object.entries(counts)) {
       const ct = $("tc-" + type);
       if (ct) ct.textContent = n > 0 ? n : "";
@@ -139,7 +149,7 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-        if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { state.live[r.id] = "capacity"; continue; }
+        if (reportType(r) !== "incident") { state.live[r.id] = "capacity"; continue; }
         if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
@@ -174,11 +184,8 @@
       if (state.filter.size && !state.filter.has(level(r))) return false;
       const rt = reportType(r);
       if (state.type === "incident" && rt !== "incident") return false;
-      if (state.type === "capacity" && rt !== "capacity") return false;
-      if (state.type === "weekly_floor" && rt !== "weekly_floor") return false;
-      if (state.type === "restart_storm" && rt !== "restart_storm") return false;
-      if (state.type === "hpa_saturation" && rt !== "hpa_saturation") return false;
-      if (state.type === "change_risk" && rt !== "change_risk") return false;
+      if (state.type === "capacity" && !CAPACITY_TYPES.has(rt)) return false;
+      if (state.type === "health" && !HEALTH_TYPES.has(rt)) return false;
       if (state.type === "self_learning" && rt !== "self_learning") return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
@@ -267,11 +274,15 @@
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
       if (level(r) && !isHealthReport && !isSelfLearning) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
-      if (r.insights?.change?.likely) {
-        const ch = r.insights.change;
+      const _chSb = r.insights?.change || {};
+      const _sbGap = _chSb.minutes_before_alert;
+      const _sbLikely = _sbGap != null ? (_sbGap >= 0 && _sbGap <= 120) : _chSb.likely;
+      if (_sbLikely) {
+        const ch = _chSb;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
         const autoResolved = done && !r.ongoing;
-        const dpLabel = autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore;
+        const _sbHighConf = _sbGap != null ? (_sbGap >= 0 && _sbGap <= 60) : ch.high_confidence;
+        const dpLabel = autoResolved ? "Deploy · auto-resolved" : _sbHighConf ? "Deploy · " + minBefore : "Deploy? · " + minBefore;
         const dp = pill(dpLabel, autoResolved ? "ok" : "deploy");
         const files = (ch.files || []).join(", ");
         dp.title = (ch.note || "") + (autoResolved ? "\n\nThe alert has since resolved — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
@@ -306,6 +317,12 @@
       if (r.root_cause && r.root_cause.category && !isHealthReport && !isSelfLearning) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
+
+      // reanalyzing badge
+      if (state.reanalyzing.has(r.id)) {
+        const badge = el("span", "item-reanalyzing", "Reanalyzing");
+        b.append(badge);
+      }
 
       // dismiss button
       const dismiss = el("button", "item-dismiss", "×");
@@ -513,7 +530,7 @@
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
     body.replaceChildren();
-    if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { card.hidden = true; return; }
+    if (reportType(r) !== "incident") { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
     const grid = el("dl", "facts-grid");
@@ -892,14 +909,16 @@
       for (const [svc, v] of thrEntries) {
         const ooms = v.oom_incidents || 0;
         const cleans = v.clean_capacity_reviews || 0;
+        const cpuPct = Math.round((v.cpu_p95_max || 0) * 100);
+        const memPct = Math.round((v.memory_p99_max || 0) * 100);
         const directionLabel = ooms >= 2 ? "🔽 Tightened — OOMs detected" : ooms === 1 ? "↘ Slightly tightened — 1 OOM" : cleans >= 3 ? "↗ Relaxed — consistent headroom" : "→ Default thresholds";
         const directionTip = ooms >= 2
-          ? `${ooms} OOM kills in the last 30 days. CPU and memory scale-down thresholds have been lowered (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max} of limit). The agent will not propose scale-down unless usage stays well below these tighter limits, reducing the risk of another OOM after a resource cut.`
+          ? `${ooms} OOM kills in the last 30 days. Scale-down is blocked unless CPU P95 stays below ${cpuPct}% of limit AND memory P99 stays below ${memPct}% of limit. These are tighter than default to reduce the risk of another OOM after a resource cut.`
           : ooms === 1
-          ? `1 OOM kill in the last 30 days. Thresholds are slightly tighter than default (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent applies a small safety margin before recommending any resource reduction.`
+          ? `1 OOM kill in the last 30 days. Scale-down is blocked unless CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their limits. Slightly tighter than default as a safety margin.`
           : cleans >= 3
-          ? `${cleans} consecutive clean capacity reviews with no incidents. Thresholds are relaxed (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}), so the agent can recommend scale-down at a higher usage level than it would for a service with OOM history.`
-          : `No OOM history and fewer than 3 consecutive clean reviews. Using default thresholds (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent recommends scale-down only when usage is below these limits with no active alerts or restarts.`;
+          ? `${cleans} consecutive clean reviews with no incidents. Scale-down can be proposed when CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their limits — relaxed from default because this service has shown consistent headroom.`
+          : `No OOM history. Scale-down is proposed only when CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their current limits, with no active alerts or recent restarts.`;
         const cls = ooms >= 1 ? "sl-thr-card ooms" : cleans >= 3 ? "sl-thr-card clean" : "sl-thr-card";
         const card = el("div", cls);
         const header = el("div", "sl-thr-header");
@@ -909,7 +928,7 @@
         dirPill.title = directionTip;
         meta.append(
           dirPill,
-          el("span", "sl-thr-detail", "CPU ≤" + v.cpu_p95_max + "  Mem ≤" + v.memory_p99_max),
+          el("span", "sl-thr-detail", `Scale-down blocked above CPU ${cpuPct}% · Mem ${memPct}%`),
           el("span", "sl-thr-detail", ooms + " OOM · " + cleans + " clean")
         );
         header.append(meta);
@@ -926,7 +945,7 @@
         const leg = el("div", "sl-spark-legend");
         leg.append(el("span", "sl-spark-leg-cpu", "── CPU P95 (cores)"));
         leg.append(el("span", "sl-spark-leg-mem", "── Mem P99 (GiB)"));
-        leg.append(el("span", "sl-spark-leg-thr", "- - threshold fraction"));
+        leg.append(el("span", "sl-spark-leg-thr", `- - scale-down limit (CPU ${cpuPct}% · Mem ${memPct}%)`));
         if ((tele.incident_dates || []).length) leg.append(el("span", "sl-spark-leg-inc", "│ OOM incident"));
         card.append(leg);
         // impact explanation
@@ -984,6 +1003,13 @@
     document.querySelectorAll(".item").forEach((b) => (b.dataset.id === id ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
     $("app").classList.add("reading");
     $("empty").hidden = true; $("report").hidden = false;
+    if (state.reanalyzing.has(id)) {
+      $("body").replaceChildren();
+      const ov = el("div", "reanalyzing-overlay");
+      ov.append(el("div", "reanalyzing-spinner"), el("div", "reanalyzing-title", "Reanalyzing"), el("div", "reanalyzing-sub", "Please wait — running investigation with the current agent version…"));
+      $("body").append(ov);
+      return;
+    }
     $("body").replaceChildren(el("p", "muted", "Loading…"));
     let r = meta.get(id);
     if (!r) { try { r = await getJson(`/${id}/report.json`); meta.set(id, r); } catch (_) { r = { id, alert: id }; } }
@@ -1046,13 +1072,17 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
-    if (r.insights?.change?.likely && !isCapacity && !isHealthReport) {
-      const ch = r.insights.change;
+    const _chPill = r.insights?.change || {};
+    const _pillGap = _chPill.minutes_before_alert;
+    const _pillLikely = _pillGap != null ? (_pillGap >= 0 && _pillGap <= 120) : _chPill.likely;
+    if (_pillLikely && !isCapacity && !isHealthReport) {
+      const ch = _chPill;
       const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert} min before alert` : (ch.revision || "").slice(0, 8);
       const files = (ch.files || []).join(", ");
       const liveResolved = state.live[id] === "resolved";
       const autoResolved = liveResolved && !r.ongoing;
-      const dp = pill(autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore, autoResolved ? "ok" : "deploy");
+      const _pillHighConf = _pillGap != null ? (_pillGap >= 0 && _pillGap <= 60) : ch.high_confidence;
+      const dp = pill(autoResolved ? "Deploy · auto-resolved" : _pillHighConf ? "Deploy · " + minBefore : "Deploy? · " + minBefore, autoResolved ? "ok" : "deploy");
       dp.title = (ch.note || "") + (autoResolved ? "\n\nAlert cleared — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
@@ -1065,6 +1095,8 @@
       : (r.summary || "");
     const staleRootCause = $("report").querySelector(".root-cause-callout");
     if (staleRootCause) staleRootCause.remove();
+    const staleDeployCallout = $("report").querySelector(".deploy-callout");
+    if (staleDeployCallout) staleDeployCallout.remove();
     const facts = $("facts"); facts.replaceChildren();
     if (isHealthReport) {
       const healthData = r[r.report_type] || {};
@@ -1119,18 +1151,27 @@
         const ch = r.insights?.change || {};
         const liveResolved = state.live[id] === "resolved";
         const autoResolved = liveResolved && !r.ongoing;
-        const likely = ch.likely;
+        // Re-derive from minutes_before_alert so old reports (stored with the
+        // 60-min cutoff) show correctly now that the window is 120 min.
+        const gap = ch.minutes_before_alert;
+        const likely = gap != null ? (gap >= 0 && gap <= 120) : ch.likely;
+        const highConf = gap != null ? (gap >= 0 && gap <= 60) : ch.high_confidence;
         const deployCallout = el("div", "deploy-callout");
-        const dcls = likely ? (autoResolved ? "deploy-callout-auto" : "deploy-callout-likely") : "deploy-callout-none";
+        const dcls = !likely ? "deploy-callout-none"
+          : autoResolved ? "deploy-callout-auto"
+          : highConf ? "deploy-callout-likely"
+          : "deploy-callout-possible";
         deployCallout.classList.add(dcls);
         const dIcon = el("span", "deploy-callout-icon", likely ? "🔀" : "—");
         const dContent = el("div", "deploy-callout-body");
         const dLabel = el("span", "rc-label", "Deploy correlation");
-        const confidenceText = likely
-          ? (autoResolved
-            ? `Deploy ${(ch.revision || "").slice(0, 8)} caused a temporary blip that auto-resolved · ${ch.minutes_before_alert}m before alert`
-            : `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · likely cause`)
-          : "No deploy in the 2 h before this alert";
+        const confidenceText = !likely
+          ? (ch.revision ? `Deploy found but ${Math.abs(ch.minutes_before_alert ?? 0)}m ${(ch.minutes_before_alert ?? 0) < 0 ? "after" : "before"} alert — unlikely causal` : "No deploy in the 2 h before this alert")
+          : autoResolved
+            ? `Deploy ${(ch.revision || "").slice(0, 8)} · auto-resolved · ${ch.minutes_before_alert}m before alert`
+            : highConf
+              ? `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · likely cause`
+              : `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · possible cause`;
         const dText = el("p", "rc-text", confidenceText);
         dContent.append(dLabel, dText);
         if (likely && ch.files && ch.files.length) {
@@ -1138,14 +1179,53 @@
         }
         if (likely && autoResolved) {
           dContent.append(el("p", "rc-desc deploy-auto-hint", "Alert cleared — the deploy caused a transient spike. No rollback needed unless it recurs."));
-        } else if (likely) {
+        } else if (likely && highConf) {
           dContent.append(el("p", "rc-desc deploy-revert-hint", `Suggested fix: git revert ${ch.revision || "HEAD"} && git push`));
+        } else if (likely) {
+          dContent.append(el("p", "rc-desc muted", "Deploy is a possible contributing cause — check changelogs and correlate with error timeline."));
         }
         deployCallout.append(dIcon, dContent);
         // insert after root-cause callout if present, else after facts
         const rcCallout = $("report")?.querySelector(".root-cause-callout");
         if (rcCallout) rcCallout.after(deployCallout); else facts.after(deployCallout);
       }
+    }
+
+    // Automated capacity actions section — shown when agent opened a remediation PR
+    const staleRemSection = $("report")?.querySelector(".auto-capacity-section");
+    if (staleRemSection) staleRemSection.remove();
+    if (!isCapacity && !isHealthReport && !isWeeklyFloor && !isSelfLearning && r.remediation && r.remediation.type) {
+      const rem = r.remediation;
+      const remSection = el("div", "auto-capacity-section");
+      const remLabel = el("span", "rc-label", "Automated capacity action");
+      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type === "hpa_maxreplicas" ? "HPA maxReplicas raised" : (rem.type ?? "Capacity change");
+      const remIcon = rem.type === "hpa_maxreplicas" ? "📈" : rem.type === "cpu_scaleup" ? "⚡" : "🧠";
+      const remStatus = rem.status === "merged" ? "merged · ArgoCD syncing" : rem.pr_number ? `PR #${rem.pr_number} opened` : "PR opened";
+      let remDesc = "";
+      if (rem.type === "cpu_scaleup") {
+        remDesc = `CPU limit ${rem.old_cpu_limit} → ${rem.new_cpu_limit}` + (rem.old_cpu_request ? `, request ${rem.old_cpu_request} → ${rem.new_cpu_request}` : "");
+      } else if (rem.type === "hpa_maxreplicas") {
+        remDesc = `maxReplicas ${rem.old_max_replicas} → ${rem.new_max_replicas} · HPA was at ceiling; VPA will right-size new pods`;
+      } else if (rem.type === "oom") {
+        remDesc = `Memory limit ${rem.old_limit} → ${rem.new_limit}` + (rem.old_limit !== rem.new_limit ? ` (${rem.sizing_method === "observed_peak" ? `6h peak × 1.25` : "1.5× formula"})` : "");
+      }
+      const remHead = el("div", "auto-capacity-head");
+      remHead.append(el("span", "auto-capacity-icon", remIcon), remLabel);
+      const remBody = el("div", "auto-capacity-body");
+      remBody.append(el("p", "rc-text", `${remType} · ${remStatus}`));
+      if (remDesc) remBody.append(el("p", "rc-desc", remDesc));
+      if (rem.pr_url) {
+        const prLink = el("a", "rc-desc auto-capacity-pr", rem.pr_number ? `View PR #${rem.pr_number} →` : "View PR →");
+        prLink.href = rem.pr_url; prLink.target = "_blank"; prLink.rel = "noopener";
+        remBody.append(prLink);
+      }
+      remSection.append(remHead, remBody);
+      // insert after deploy callout if present, else after root-cause callout, else after facts
+      const deployCalloutEl = $("report")?.querySelector(".deploy-callout");
+      const rcCalloutEl = $("report")?.querySelector(".root-cause-callout");
+      if (deployCalloutEl) deployCalloutEl.after(remSection);
+      else if (rcCalloutEl) rcCalloutEl.after(remSection);
+      else facts.after(remSection);
     }
 
     const actions = $("actions"); actions.replaceChildren();
@@ -1169,7 +1249,38 @@
       // re-render action bar to reflect new state
       show(id);
     });
-    actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, dimBtn);
+    const reanalyze = el("button", "btn", "Re-analyze"); reanalyze.type = "button";
+    reanalyze.title = "Re-run investigation with the current agent version";
+    if (state.reanalyzing.has(id)) { reanalyze.disabled = true; reanalyze.textContent = "Reanalyzing…"; }
+    reanalyze.addEventListener("click", async () => {
+      if (state.reanalyzing.has(id)) return;
+      reanalyze.disabled = true; reanalyze.textContent = "Starting…";
+      try {
+        const resp = await fetch(`/_re-analyze/${id}`, { method: "POST" });
+        if (resp.ok) {
+          const data = await resp.json();
+          reanalyze.textContent = "Reanalyzing…";
+          renderList(); // show blinking badge on list item
+          const iv = setInterval(async () => {
+            try {
+              const sr = await fetch(`/_workflow-status/${data.workflow}`);
+              if (!sr.ok) return;
+              const s = await sr.json();
+              if (s.phase === "Succeeded" || s.phase === "Failed" || s.phase === "Error") {
+                clearInterval(iv);
+                state.reanalyzing.delete(id);
+                reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
+                renderList();
+                if (s.phase === "Succeeded") { toast("Re-analysis complete — refreshing reports…"); await loadList(); renderList(); if (state.current === id) show(id); }
+                else { toast(`Re-analysis ${s.phase.toLowerCase()}`); if (state.current === id) show(id); }
+              }
+            } catch (_) {}
+          }, 5000);
+          state.reanalyzing.set(id, { workflow: data.workflow, interval: iv });
+        } else { toast(`Failed: ${resp.status}`); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
+      } catch (e) { toast("Failed to reach webhook"); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
+    });
+    actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, reanalyze, dimBtn);
 
     const body = $("body");
     const toc = $("toc");
@@ -1342,8 +1453,6 @@
   }
 
   const _RUN_LABELS = {
-    "capacity-review": "Capacity review",
-    "floor-review": "Floor review",
     "health-review": "Health review",
     "self-learning": "Self-learning",
   };
@@ -1417,8 +1526,6 @@
 
   // ---- run review modal --------------------------------------------------------------------------------------
   const _REVIEW_TYPES = [
-    { value: "capacity-review", label: "Capacity review" },
-    { value: "floor-review", label: "Floor review" },
     { value: "health-review", label: "Health review" },
     { value: "self-learning", label: "Self-learning" },
   ];
