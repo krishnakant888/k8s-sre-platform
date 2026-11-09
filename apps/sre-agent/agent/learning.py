@@ -297,13 +297,16 @@ def run_gap_tracker() -> int:
 # 3. Confidence calibration
 # ---------------------------------------------------------------------------
 
-def _alert_cleared_at_t(alert: str, svc: str, t: float) -> bool | None:
-    """Return True if the alert had cleared by time t, False if still firing, None if unknown."""
-    # Query Mimir ALERTS metric (synthetic series present while rule is firing)
-    sel = f'alertname="{alert}"'
-    if svc:
-        sel += f',service=~".*{re.escape(svc)}.*"'
-    still_firing = _mimir_at(f"ALERTS{{{sel}}}", t)
+def _alert_cleared_at_t(alert: str, t: float) -> bool | None:
+    """Return True if the alert had cleared by time t, False if still firing, None if unknown.
+
+    The ALERTS synthetic metric carries the alert rule's own labels (alertname, namespace, pod…)
+    — not necessarily a 'service' label — so we filter by alertname only.  A result of None means
+    Mimir had no data at that time; the caller treats it as "unknown" (no penalty applied).
+    """
+    if not alert:
+        return None
+    still_firing = _mimir_at(f'ALERTS{{alertname="{alert}"}}', t)
     if still_firing is None:
         return None
     return still_firing == 0
@@ -348,8 +351,7 @@ def run_confidence_calibration() -> dict:
             family_stats[cat]["total"] += 1
 
             # 1. Did the alert clear within 1h?
-            cleared = _alert_cleared_at_t(r.get("alert", ""), r.get("service", ""),
-                                          gen_t + 3600)
+            cleared = _alert_cleared_at_t(r.get("alert", ""), gen_t + 3600)
             if cleared is True:
                 family_stats[cat]["cleared"] += 1
             elif cleared is False and i + 1 < len(rs):
@@ -367,9 +369,9 @@ def run_confidence_calibration() -> dict:
         total = stats["total"]
         cleared = stats["cleared"]
         wrong = stats["wrong_rediagnosis"]
-        # accuracy: fraction that cleared OR recurred with same cause (correctly ID'd)
-        correct = cleared + (total - cleared - wrong)
-        accuracy = round(correct / total, 3) if total else 1.0
+        # accuracy: fraction of incidents NOT confirmed wrong
+        # (only wrong_rediagnosis is penalised; unknowns and cleared both get benefit of the doubt)
+        accuracy = round(1.0 - (wrong / total), 3) if total else 1.0
         calibration[cat] = {
             "total": total,
             "cleared_within_1h": cleared,
