@@ -114,6 +114,30 @@ async def trigger_review(req: TriggerRequest):
     return {"workflow": name, "workflow_type": req.workflow_type, "services": req.services}
 
 
+@app.get("/active-workflows")
+async def list_active_workflows():
+    token = Path(f"{config.SA_DIR}/token").read_text()
+    async with httpx.AsyncClient(verify=f"{config.SA_DIR}/ca.crt", timeout=10) as client:
+        resp = await client.get(
+            WORKFLOWS_URL,
+            params={"limit": "50"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    resp.raise_for_status()
+    items = resp.json().get("items") or []
+    active = [
+        {
+            "name": w["metadata"]["name"],
+            "workflow_type": w["metadata"].get("labels", {}).get("sre-agent/review-type", ""),
+            "phase": w.get("status", {}).get("phase", "Unknown"),
+            "startedAt": w.get("status", {}).get("startedAt"),
+        }
+        for w in items
+        if w.get("status", {}).get("phase") in ("Running", "Pending")
+    ]
+    return {"workflows": active}
+
+
 @app.get("/workloads")
 async def list_workloads():
     import os
