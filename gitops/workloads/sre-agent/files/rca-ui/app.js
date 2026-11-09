@@ -1184,9 +1184,9 @@
       const rem = r.remediation;
       const remSection = el("div", "auto-capacity-section");
       const remLabel = el("span", "rc-label", "Automated capacity action");
-      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type === "hpa_maxreplicas" ? "HPA maxReplicas raised" : rem.type;
+      const remType = rem.type === "cpu_scaleup" ? "CPU limit raised" : rem.type === "oom" ? "Memory limit raised" : rem.type === "hpa_maxreplicas" ? "HPA maxReplicas raised" : (rem.type ?? "Capacity change");
       const remIcon = rem.type === "hpa_maxreplicas" ? "📈" : rem.type === "cpu_scaleup" ? "⚡" : "🧠";
-      const remStatus = rem.status === "merged" ? "merged · ArgoCD syncing" : `PR #${rem.pr_number} opened`;
+      const remStatus = rem.status === "merged" ? "merged · ArgoCD syncing" : rem.pr_number ? `PR #${rem.pr_number} opened` : "PR opened";
       let remDesc = "";
       if (rem.type === "cpu_scaleup") {
         remDesc = `CPU limit ${rem.old_cpu_limit} → ${rem.new_cpu_limit}` + (rem.old_cpu_request ? `, request ${rem.old_cpu_request} → ${rem.new_cpu_request}` : "");
@@ -1201,7 +1201,7 @@
       remBody.append(el("p", "rc-text", `${remType} · ${remStatus}`));
       if (remDesc) remBody.append(el("p", "rc-desc", remDesc));
       if (rem.pr_url) {
-        const prLink = el("a", "rc-desc auto-capacity-pr", `View PR #${rem.pr_number} →`);
+        const prLink = el("a", "rc-desc auto-capacity-pr", rem.pr_number ? `View PR #${rem.pr_number} →` : "View PR →");
         prLink.href = rem.pr_url; prLink.target = "_blank"; prLink.rel = "noopener";
         remBody.append(prLink);
       }
