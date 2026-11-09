@@ -1103,16 +1103,22 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         rd = sig["recent_deploy"]
         mins_before = int((ctx["started"] - _rca.parse_ts(rd["deployed_at"])) / 60)
         confidence = "high" if mins_before <= 120 else "medium" if mins_before <= 480 else "low"
-        manifest = _manifest(sig, rd.get("revision", "the recent deploy"))
         return Diag(
             "deploy", "application", wl or alertname, confidence,
             f"a deploy ({rd['revision']}) {mins_before}m before the alert is the most likely cause",
-            f"Deploy `{rd['revision']}` was synced {mins_before} minutes before `{alertname}` fired on `{ns + '/' if ns else ''}{wl}`. "
-            f"No other signal isolates an independent cause, so the deploy is the most probable trigger.",
-            [f"a deploy ({rd['revision']}) landed {mins_before}m before the alert and no other root cause was identified"],
-            [f"git revert {rd['revision']} && git push  # roll back the change", f"{k} -n {ns or 'default'} get pods,events  # check for crashloops after the deploy"],
-            ["Add the missing signal named in the observability gaps"],
-            [f"the alert resolves after rolling back or the deploy is confirmed safe"],
+            f"Deploy `{rd['revision']}` synced {mins_before} minutes before `{alertname}` fired on "
+            f"`{ns + '/' if ns else ''}{wl}`. No other independent signal was found — the deploy is the most probable trigger.",
+            [f"deploy ({rd['revision']}) landed {mins_before}m before the alert", "no other root cause isolated"],
+            [
+                f"{k} -n {ns or 'default'} rollout status deploy/{wl}  # is the rollout still in progress?",
+                f"if still rolling out: wait for it to complete — the alert may clear on its own once all pods are healthy",
+                f"if the alert persists after the rollout finishes: inspect the diff at {rd['revision']} and roll back — git revert {rd['revision']} && git push",
+            ],
+            [
+                "add a smoke-test or readiness probe that catches the regression before traffic shifts to new pods",
+                "use a canary or progressive rollout strategy to limit blast radius on future deploys",
+            ],
+            [f"the alert {alertname} stops firing after the rollout completes or after a rollback"],
             f"Deploy `{rd['revision']}` synced {mins_before}m before the alert.",
         )
 
@@ -1245,7 +1251,7 @@ def analyze(alert: dict, ctx: dict, now: float | None = None) -> RcaReport:
     d.confidence = _calibrated_confidence(d.category, d.confidence)
     priority = _priority(alert, ctx, d)
     contrib = list(d.contributing)
-    if sig.get("recent_deploy"):
+    if sig.get("recent_deploy") and d.category != "deploy":
         contrib.append(f"a deploy ({sig['recent_deploy']['revision']}) landed within the hour before the alert")
     if sig.get("tool_errors"):
         contrib.append("some lookups failed, so this analysis may be incomplete: " + "; ".join(sig["tool_errors"]))
