@@ -1235,7 +1235,18 @@
       // re-render action bar to reflect new state
       show(id);
     });
-    actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, dimBtn);
+    const reanalyze = el("button", "btn", "Re-analyze"); reanalyze.type = "button";
+    reanalyze.title = "Re-run investigation with the current agent version";
+    reanalyze.addEventListener("click", async () => {
+      reanalyze.disabled = true; reanalyze.textContent = "Starting…";
+      try {
+        const resp = await fetch(`/_re-analyze/${id}`, { method: "POST" });
+        if (resp.ok) { toast("Re-analysis started — new report will appear when done"); }
+        else { toast(`Failed: ${resp.status}`); }
+      } catch (e) { toast("Failed to reach webhook"); }
+      reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
+    });
+    actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, reanalyze, dimBtn);
 
     const body = $("body");
     const toc = $("toc");
