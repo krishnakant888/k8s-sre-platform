@@ -53,7 +53,7 @@
     saveRead(); updateNotifBadge(); renderList(); renderNotifList();
   }
   function updateNotifBadge() {
-    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)).length;
+    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)).length;
     const badge = $("notif-badge");
     if (badge) { badge.hidden = unread === 0; badge.textContent = unread > 9 ? "9+" : unread; }
   }
@@ -98,6 +98,7 @@
     if (r.report_type === "restart_storm") return "restart_storm";
     if (r.report_type === "hpa_saturation") return "hpa_saturation";
     if (r.report_type === "change_risk") return "change_risk";
+    if (r.report_type === "self_learning") return "self_learning";
     if (r.report_type !== "capacity") return "incident";
     if (r.capacity && r.capacity.review_type === "weekly_floor") return "weekly_floor";
     return "capacity";
@@ -106,7 +107,7 @@
   // ---- tab counts --------------------------------------------------------------------------------------------
   function updateTabCounts() {
     const active = state.reports.filter((r) => !state.dismissed.has(r.id));
-    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0, restart_storm: 0, hpa_saturation: 0, change_risk: 0 };
+    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0, restart_storm: 0, hpa_saturation: 0, change_risk: 0, self_learning: 0 };
     for (const r of active) counts[reportType(r)] = (counts[reportType(r)] || 0) + 1;
     for (const [type, n] of Object.entries(counts)) {
       const ct = $("tc-" + type);
@@ -126,7 +127,7 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-        if (["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)) { state.live[r.id] = "capacity"; continue; }
+        if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { state.live[r.id] = "capacity"; continue; }
         if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
@@ -166,6 +167,7 @@
       if (state.type === "restart_storm" && rt !== "restart_storm") return false;
       if (state.type === "hpa_saturation" && rt !== "hpa_saturation") return false;
       if (state.type === "change_risk" && rt !== "change_risk") return false;
+      if (state.type === "self_learning" && rt !== "self_learning") return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
         r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
@@ -205,7 +207,8 @@
       if (liveState === "firing") b.dataset.live = "firing";
       else if (liveState === "resolved") b.dataset.live = "resolved";
       const isHealthReport = ["restart_storm","hpa_saturation","change_risk"].includes(r.report_type);
-      if (!state.read.has(r.id) && r.report_type !== "capacity" && !isHealthReport) b.dataset.unread = level(r).toLowerCase() || "p4";
+      const isSelfLearning = r.report_type === "self_learning";
+      if (!state.read.has(r.id) && r.report_type !== "capacity" && !isHealthReport && !isSelfLearning) b.dataset.unread = level(r).toLowerCase() || "p4";
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
@@ -219,15 +222,17 @@
         if (verificationStatus === "healthy") b.classList.add("capacity-healthy");
         else if (verificationStatus === "needs_attention") b.classList.add("capacity-attention");
       }
-      const capacityTitle = capacityLabel(r);
+      const capacityTitle = capacity.decision === "proposal" ? "Capacity plan" : "Capacity review";
+      // health report labels
       const healthLabel = { restart_storm: "Restart storm", hpa_saturation: "HPA saturation", change_risk: "Change risk" }[r.report_type];
       const healthData = r[r.report_type] || {};
       top.append(el("span", "item-title",
         isCapacity ? capacityTitle + " · " + (r.service || "workload") :
         isHealthReport ? healthLabel + " · " + (r.service || "platform") :
+        isSelfLearning ? "Self-learning run · " + (r.service || "platform") :
         (r.alert || r.id)));
       if (isCapacity) {
-        top.append(pill(capacityTitle, "soft"));
+        top.append(pill("Capacity", "soft"));
         if (verificationStatus) {
           const label2 = verificationStatus === "healthy" ? "Healthy"
             : verificationStatus === "needs_attention" ? "Follow-up"
@@ -241,9 +246,15 @@
         if (flagged > 0) top.append(pill(flagged + " flagged", "p2"));
         else top.append(pill("All clear", "ok"));
       }
+      if (isSelfLearning) {
+        const slData = r.self_learning || {};
+        const slErrors = (slData.errors || []).length;
+        top.append(pill("Self-learning", "soft"));
+        top.append(pill(slErrors > 0 ? slErrors + " error(s)" : "Complete", slErrors > 0 ? "p2" : "ok"));
+      }
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
-      if (level(r) && !isHealthReport) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
+      if (level(r) && !isHealthReport && !isSelfLearning) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
       if (r.insights?.change?.likely) {
         const ch = r.insights.change;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
@@ -260,6 +271,9 @@
       } else if (isHealthReport) {
         const sub = (r.summary || "").replace(/`/g, "");
         b.append(top, el("div", "item-sub item-action", sub), el("div", "item-sub", "ID: " + r.id));
+      } else if (isSelfLearning) {
+        const sub = (r.summary || "").replace(/`/g, "");
+        b.append(top, el("div", "item-sub item-action", sub), el("div", "item-sub", "ID: " + r.id));
       } else b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
@@ -270,7 +284,7 @@
         else if (capacity.review_type === "weekly_floor") m.append(el("span", "", "recommendation only"));
         else if (!verificationStatus && capacity.decision) m.append(el("span", "", words(capacity.decision)));
       }
-      if (r.root_cause && r.root_cause.category && !isHealthReport) m.append(el("span", "", "· " + words(r.root_cause.category)));
+      if (r.root_cause && r.root_cause.category && !isHealthReport && !isSelfLearning) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
 
@@ -480,7 +494,7 @@
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
     body.replaceChildren();
-    if (["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)) { card.hidden = true; return; }
+    if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
     const grid = el("dl", "facts-grid");
@@ -520,16 +534,6 @@
   function fact(dl, label, value) {
     if (!value) return;
     const d = el("div"); d.append(el("dt", "", label), el("dd", "", value)); dl.append(d);
-  }
-
-  function capacityLabel(r) {
-    const c = (r && r.capacity) || {};
-    if (c.review_type === "weekly_floor") return "Floor review";
-    if (c.decision !== "proposal") return "Capacity review";
-    const ch = String(c.proposed_change || "");
-    if (/memory limit/i.test(ch)) return "Memory tuning";
-    if (/cpu limit/i.test(ch)) return "CPU tuning";
-    return "Scale-down plan";
   }
 
   function capacityActionOutcome(c) {
@@ -583,11 +587,7 @@
     const afterMemPct = memMiB != null && newMemoryLimit ? memMiB / newMemoryLimit * 100 : null;
 
     const top = el("div", "capacity-plan-top");
-    const actionTitle = weeklyFloor ? "Weekly replica-floor recommendation"
-      : /memory limit/i.test(changeText) ? "Memory limit reduction"
-      : /cpu limit/i.test(changeText) ? "CPU limit reduction"
-      : "Replica scale-down";
-    const overview = section(actionTitle, "capacity-action-panel");
+    const overview = section(weeklyFloor ? "Weekly replica-floor recommendation" : "Capacity action", "capacity-action-panel");
     overview.append(el("p", "capacity-eyebrow", (c.namespace ? c.namespace + " / " : "") + (c.workload || r.service || "workload")));
     overview.append(el("p", "capacity-change", String(c.proposed_change || "No configuration change proposed").replace(/`/g, "")));
     overview.append(el("p", "capacity-reason", c.reason || r.summary || "Capacity signals reviewed."));
@@ -685,16 +685,76 @@
     const basis = el("dl", "capacity-basis");
     fact(basis, "Action outcome", capacityActionOutcome(c));
     fact(basis, "Review decision", c.decision);
-    fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review"
-      : /memory limit/i.test(changeText) ? "Daily resource review (memory)"
-      : /cpu limit/i.test(changeText) ? "Daily resource review (CPU)"
-      : "Daily scale-down review");
+    fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review" : "Daily scale-down review");
     if (weeklyFloor) fact(basis, "Configured minimum", c.configured_floor);
     fact(basis, weeklyFloor ? "Candidate replica count" : "Replica floor", c.candidate_floor);
     fact(basis, "Review window", c.window);
     fact(basis, "Review metrics", c.metrics ? "Captured" : "Unavailable");
     plan.append(basis);
     container.append(plan);
+  }
+
+  function renderSelfLearning(container, r) {
+    const sl = r.self_learning || {};
+    const errors = sl.errors || [];
+    const section = (title, cls) => { const s = el("section", "capacity-panel " + (cls || "")); s.append(el("h3", "capacity-section-title", title)); return s; };
+    const metric = (label, value, detail) => {
+      const item = el("div", "capacity-metric");
+      item.append(el("span", "capacity-metric-label", label), el("strong", "capacity-metric-value", value));
+      if (detail) item.append(el("span", "capacity-metric-detail", detail));
+      return item;
+    };
+    const statusClass = errors.length ? "attention" : "healthy";
+    const statusText = errors.length ? errors.length + " module(s) failed" : "All modules completed";
+    const top = el("div", "capacity-plan-top");
+    const overview = section("Self-learning run", "capacity-action-panel");
+    overview.append(el("p", "capacity-eyebrow", "platform / " + (r.cluster || "platform")));
+    overview.append(el("p", "capacity-change", r.summary || "Self-learning pass completed"));
+    const actionMeta = el("div", "capacity-action-meta");
+    actionMeta.append(el("span", "capacity-status " + statusClass, statusText));
+    overview.append(actionMeta);
+    const stats = section("Outcomes", "capacity-result-panel " + statusClass);
+    stats.append(el("span", "capacity-result-mark", errors.length ? "!" : "✓"));
+    stats.append(el("strong", "capacity-result-title", statusText));
+    const grid = el("div", "capacity-metrics");
+    grid.append(
+      metric("Rediagnosed", String(sl.rediagnosed || 0), "unknown → known root cause"),
+      metric("Gap issues opened", String(sl.gap_issues_opened || 0), "new GitHub issues"),
+      metric("Families calibrated", String(Object.keys(sl.calibration || {}).length), "confidence updated"),
+      metric("Services tuned", String(Object.keys(sl.thresholds || {}).length), "thresholds updated")
+    );
+    stats.append(grid);
+    top.append(overview, stats);
+    container.replaceChildren(top);
+    const calEntries = Object.entries(sl.calibration || {}).filter(([, v]) => v && typeof v === "object" && "total" in v);
+    if (calEntries.length) {
+      const calSection = section("Diagnosis confidence calibration", "capacity-health-panel");
+      const list = el("ul", "capacity-check-list");
+      for (const [cat, v] of calEntries) {
+        const row = el("li", v.confidence_weight < 0.4 ? "capacity-check failed" : v.confidence_weight < 0.5 ? "capacity-check" : "capacity-check passed");
+        row.append(el("span", "capacity-check-icon", v.confidence_weight < 0.4 ? "!" : v.confidence_weight < 0.5 ? "·" : "✓"));
+        const text = el("span", "capacity-check-text");
+        text.append(el("strong", "", words(cat)), el("span", "", " · " + v.total + " incident(s) · accuracy " + (v.accuracy * 100).toFixed(0) + "% · weight " + v.confidence_weight.toFixed(2)));
+        row.append(text); list.append(row);
+      }
+      calSection.append(list);
+      container.append(calSection);
+    }
+    const thrEntries = Object.entries(sl.thresholds || {}).filter(([, v]) => v && typeof v === "object" && "cpu_p95_max" in v);
+    if (thrEntries.length) {
+      const thrSection = section("Per-service scale-down thresholds", "capacity-delta-panel");
+      const tgrid = el("div", "capacity-metrics");
+      for (const [svc, v] of thrEntries) tgrid.append(metric(svc, "CPU " + v.cpu_p95_max + " · Mem " + v.memory_p99_max, v.reason || ""));
+      thrSection.append(tgrid);
+      container.append(thrSection);
+    }
+    if (errors.length) {
+      const errSection = section("Errors", "capacity-delta-panel");
+      const elist = el("ul", "capacity-check-list");
+      errors.forEach((e) => { const row = el("li", "capacity-check failed"); row.append(el("span", "capacity-check-icon", "!"), el("span", "capacity-check-text", e)); elist.append(row); });
+      errSection.append(elist);
+      container.append(errSection);
+    }
   }
 
   async function show(id) {
@@ -713,10 +773,11 @@
     const pills = $("pills"); pills.replaceChildren();
     const isCapacity = r.report_type === "capacity";
     const isHealthReport = ["restart_storm","hpa_saturation","change_risk"].includes(r.report_type);
+    const isSelfLearning = r.report_type === "self_learning";
     const lv = level(r);
     if (lv && !isHealthReport) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
     if (isCapacity) {
-      pills.append(pill(capacityLabel(r), "soft"));
+      pills.append(pill("Capacity plan", "soft"));
       const priorityPill = pills.querySelector(".pill");
       if (priorityPill) priorityPill.remove();
     }
@@ -727,6 +788,12 @@
       pills.append(pill(healthLabel, "soft"));
       pills.append(pill(flagged > 0 ? flagged + " flagged" : "All clear", flagged > 0 ? "p2" : "ok"));
     }
+    if (isSelfLearning) {
+      const slDet = r.self_learning || {};
+      const slErrors = (slDet.errors || []).length;
+      pills.append(pill("Self-learning", "soft"));
+      pills.append(pill(slErrors > 0 ? slErrors + " error(s)" : "Complete", slErrors > 0 ? "p1" : "ok"));
+    }
     const decision = r.capacity && r.capacity.decision;
     const postMergeStatus = isCapacity && r.capacity.post_merge && r.capacity.post_merge.status;
     const capacityBadge = isCapacity && r.capacity.review_type === "weekly_floor" ? "Weekly floor review · recommendation only"
@@ -735,7 +802,7 @@
       : postMergeStatus === "inconclusive" ? "Merged · verification inconclusive"
       : postMergeStatus === "not_merged" ? "PR open · not verified"
       : decision === "proposal" ? "Proposal recorded" : "Review complete";
-    const badge = pill(isCapacity ? capacityBadge : "Checking Grafana…", "soft");
+    const badge = pill(isCapacity ? capacityBadge : isSelfLearning ? "Self-learning run" : "Checking Grafana…", "soft");
     badge.id = "live-badge";
     if (isCapacity && postMergeStatus === "healthy") badge.classList.add("ok");
     if (isCapacity && postMergeStatus === "needs_attention") badge.classList.add("p1");
@@ -745,6 +812,10 @@
       const floor = r.capacity.candidate_floor;
       stamp.textContent = `Action outcome: ${capacityActionOutcome(r.capacity)}${floor != null ? " | candidate floor " + floor : ""}`;
       badge.title = "Stored result of the capacity review";
+    }
+    if (isSelfLearning) {
+      stamp.textContent = "Self-learning pass completed " + fmtTime(when(r.generated_at));
+      badge.title = "Result of the self-learning run";
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
@@ -757,8 +828,9 @@
       pills.append(dp);
     }
     const healthTitles = { restart_storm: "Restart storm review", hpa_saturation: "HPA saturation review", change_risk: "Change risk report" };
-    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : capacityLabel(r) + " for ") + (r.service || "workload")
+    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : "Capacity plan for ") + (r.service || "workload")
       : isHealthReport ? (healthTitles[r.report_type] || "Health review") + " · " + (r.service || "platform")
+      : isSelfLearning ? "Self-learning run · " + (r.service || "platform")
       : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
     $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.")
       : (r.summary || "");
@@ -780,6 +852,13 @@
       fact(facts, r.capacity.review_type === "weekly_floor" ? "Configured minimum" : "Replica floor",
         r.capacity.review_type === "weekly_floor" ? r.capacity.configured_floor : r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));
+    } else if (isSelfLearning) {
+      const slFacts = r.self_learning || {};
+      fact(facts, "Cluster", r.cluster || "platform");
+      fact(facts, "Rediagnosed", String(slFacts.rediagnosed || 0) + " unknown root cause(s)");
+      fact(facts, "Gap issues opened", String(slFacts.gap_issues_opened || 0));
+      fact(facts, "Report written", fmtTime(when(r.generated_at)));
+      fact(facts, "Report ID", id);
     } else if (!isHealthReport) {
       fact(facts, "Where", r.fault_domain && r.fault_domain.layer ? `${r.fault_domain.layer} level` : "");
       fact(facts, "Component", r.fault_domain && r.fault_domain.component);
@@ -830,6 +909,10 @@
       toc.replaceChildren(); toc.hidden = true;
       body.parentElement.classList.add("capacity-grid");
       renderCapacityPlan(body, r);
+    } else if (isSelfLearning) {
+      toc.replaceChildren(); toc.hidden = true;
+      body.parentElement.classList.add("capacity-grid");
+      renderSelfLearning(body, r);
     } else if (isHealthReport) {
       toc.replaceChildren(); toc.hidden = false;
       body.parentElement.classList.remove("capacity-grid");
@@ -843,23 +926,24 @@
       enhance(body);
       buildToc(body);
     }
-    if (!isHealthReport) renderInsights(r);
+    if (!isHealthReport && !isSelfLearning) renderInsights(r);
     renderAlertDetails(r);
-    $("arch").closest(".arch-card").hidden = isCapacity;
-    if (!isCapacity) {
+    $("arch").closest(".arch-card").hidden = isCapacity || isSelfLearning;
+    if (!isCapacity && !isSelfLearning) {
       drawArchitecture(r, "unknown");
       startLive(r, badge, stamp);
     }
     document.title = `${r.alert || id} · reports`;
     const rHead = $("report").querySelector(".report-head");
-    if (rHead) { rHead.dataset.sev = isCapacity ? "capacity" : (level(r).toLowerCase() || "none"); delete rHead.dataset.live; }
+    if (rHead) { rHead.dataset.sev = (isCapacity || isSelfLearning) ? "capacity" : (level(r).toLowerCase() || "none"); delete rHead.dataset.live; }
     markRead(id);
     renderNotifList();
     // remove stale firing banner when navigating to a new report
     const staleBanner = $("incident-banner");
     if (staleBanner) staleBanner.hidden = true;
     $("main").scrollTo({ top: 0 });
-    if (isCapacity) document.title = capacityLabel(r) + " | " + (r.service || "workload");
+    if (isCapacity) document.title = "Capacity plan | " + (r.service || "workload");
+    if (isSelfLearning) document.title = "Self-learning | " + (r.generated_at ? r.generated_at.slice(0, 10) : id);
   }
 
   function route() {
@@ -928,9 +1012,66 @@
     if (state.notifOpen && !e.target.closest("#notif-panel") && !e.target.closest("#notif-btn")) closeNotif();
   });
 
+  // ---- run review modal --------------------------------------------------------------------------------------
+  const _REVIEW_TYPES = [
+    { value: "capacity-review", label: "Capacity review" },
+    { value: "floor-review", label: "Floor review" },
+    { value: "health-review", label: "Health review" },
+    { value: "self-learning", label: "Self-learning" },
+  ];
+  const _SERVICES = [
+    { value: "all", label: "All services" },
+    { value: "orders-api:demo", label: "orders-api (demo)" },
+    { value: "frontend:demo", label: "frontend (demo)" },
+    { value: "dummy-shop:sandbox", label: "dummy-shop (sandbox)" },
+  ];
+  function openRunModal() {
+    let modal = $("run-modal");
+    if (!modal) {
+      modal = el("div", "run-modal"); modal.id = "run-modal";
+      const inner = el("div", "run-modal-inner");
+      const head = el("div", "run-modal-head");
+      head.append(el("span", "run-modal-title", "Run a review"));
+      const closeBtn = el("button", "run-modal-close", "×"); closeBtn.type = "button";
+      closeBtn.addEventListener("click", closeRunModal);
+      head.append(closeBtn);
+      const form = el("div", "run-modal-form");
+      const typeLabel = el("label", "run-modal-label", "Review type"); typeLabel.htmlFor = "run-type";
+      const typeSelect = el("select", "run-modal-select"); typeSelect.id = "run-type";
+      _REVIEW_TYPES.forEach((t) => { const o = document.createElement("option"); o.value = t.value; o.textContent = t.label; typeSelect.append(o); });
+      const svcLabel = el("label", "run-modal-label", "Service"); svcLabel.htmlFor = "run-svc";
+      const svcSelect = el("select", "run-modal-select"); svcSelect.id = "run-svc";
+      _SERVICES.forEach((s) => { const o = document.createElement("option"); o.value = s.value; o.textContent = s.label; svcSelect.append(o); });
+      typeSelect.addEventListener("change", () => { svcLabel.hidden = svcSelect.hidden = typeSelect.value === "self-learning"; });
+      const runBtn = el("button", "btn btn-primary run-modal-run", "Run"); runBtn.type = "button";
+      runBtn.addEventListener("click", async () => {
+        const wfType = typeSelect.value;
+        const services = wfType === "self-learning" ? "all" : svcSelect.value;
+        runBtn.textContent = "Starting…"; runBtn.disabled = true;
+        try {
+          const resp = await fetch("/_trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workflow_type: wfType, services }) });
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          closeRunModal();
+          toast("Review started · " + (data.workflow || wfType));
+        } catch (e) {
+          runBtn.textContent = "Run"; runBtn.disabled = false;
+          toast("Failed: " + e.message);
+        }
+      });
+      form.append(typeLabel, typeSelect, svcLabel, svcSelect, runBtn);
+      inner.append(head, form);
+      modal.append(inner);
+      document.body.append(modal);
+    }
+    modal.hidden = false;
+  }
+  function closeRunModal() { const m = $("run-modal"); if (m) m.hidden = true; }
+
   // ---- wiring ------------------------------------------------------------------------------------------------
   $("q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); saveFilter(); });
   $("back").addEventListener("click", () => { location.hash = ""; });
+  const runReviewBtn = $("run-btn"); if (runReviewBtn) runReviewBtn.addEventListener("click", (e) => { e.stopPropagation(); openRunModal(); });
   $("dismissed-toggle").addEventListener("click", () => { state.showDismissed = !state.showDismissed; renderList(); });
 
   // type tabs
