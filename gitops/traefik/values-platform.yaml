@@ -1,4 +1,4 @@
-# platform cluster: the sample API, the frontend and the dummy shop
+# platform cluster: the sample API and the dummy shop
 gateway:
   listeners:
     web:

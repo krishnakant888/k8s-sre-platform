@@ -32,7 +32,7 @@ The script edits the YAML as text so comments and the flow style of the repo sta
 
 Create > pick a template. The requests above are the templates *Scale a service*, *Change the resources of a service*, *Set an environment variable*, *Deploy a new image tag*, *Roll back a service*, *Add a host name to a service*, *Promote a sandbox service to demo*, *Request an alert for a service*, *Request a Grafana dashboard for a service*, *Request a short-lived sandbox namespace*, *Request read-only access to a namespace* and *Run a failure drill*. *New service on the platform* opens its own pull request with the whole service (manifests, Argo CD application, catalog entry in `gitops/backstage/catalog/services/`, which the portal reads from GitHub, so the service shows up in the catalog after the merge).
 
-Services offered in the pickers are the components annotated `selfservice/enabled: "true"` (orders-api, frontend, dummy-shop and the services created from the template).
+Services offered in the pickers are the components annotated `selfservice/enabled: "true"` (orders-api, dummy-shop and the services created from the template).
 
 On a component's page: **Resources** (CPU and memory against request and limit, with hints), **Scorecard** (eight checks of what the platform expects of a service), Argo CD status, firing alerts and RCA reports. The documentation of the platform is in the catalog as `platform-docs` (TechDocs, built from `docs/` with `mkdocs.yml`).
 
@@ -60,6 +60,6 @@ Every request made through the `selfservice` workflow is merged by the workflow 
 ## Run it by hand
 
 ```bash
-python3 scripts/selfservice.py scale '{"service": "frontend", "replicas": 3}'
+python3 scripts/selfservice.py scale '{"service": "orders-api", "replicas": 3}'
 git diff
 ```

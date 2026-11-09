@@ -39,7 +39,6 @@ The values were sized from measured usage, not guessed.
 | Kyverno cleanup | 25m | 64Mi | 256Mi | 30Mi |
 | Sealed Secrets controller | 25m | 64Mi | 256Mi | |
 | orders-api | 100m | 128Mi | 256Mi | 44Mi |
-| frontend | 50m | 64Mi | 128Mi | 19Mi |
 | alert-webhook | 50m | 128Mi | 256Mi | 57Mi |
 | RCA viewer (nginx) | 25m | 32Mi | 128Mi | |
 | RCA reports cleanup job | 10m | 16Mi | 64Mi | |
@@ -56,7 +55,7 @@ Add a VerticalPodAutoscaler in recommendation mode, or Goldilocks, to keep this 
 
 ## Safe scale-down review
 
-The SRE agent runs a daily, guarded scale-down check for `orders-api` and `frontend`. It requires complete coverage of the 24-hour metric window,
+The SRE agent runs a daily, guarded scale-down check for `orders-api`. It requires complete coverage of the 24-hour metric window,
 no matching active alert, no container restarts, all desired replicas available, and no deployment-file change in the last 24 hours.
 It proposes at most one step per workload per run and attempts to auto-merge after those checks; repository protections can keep the PR open.
 The workflow uses the read-only Grafana token in `rca-viewer-grafana`; if that Secret predates this check, run `python3 bootstrap/bootstrap.py --viewer-access` once to add its `token` key.

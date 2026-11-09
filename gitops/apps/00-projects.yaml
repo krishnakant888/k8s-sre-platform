@@ -54,7 +54,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
 spec:
-  description: Sample api, frontend and the sre agent in the platform cluster
+  description: Sample API and the SRE agent in the platform cluster
   sourceRepos:
     - https://github.com/krishnakant888/k8s-sre-platform.git
   destinations:

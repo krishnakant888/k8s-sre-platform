@@ -3,26 +3,11 @@
 Two scripts inject failures so you can see the alerts fire and the SRE agent write an RCA:
 
 - `scripts/drill.sh` faults inside orders-api (latency, errors, OOM, pod kill).
-- `scripts/scenarios.sh` the frontend and broken workloads, described here.
+- `scripts/scenarios.sh` broken workloads, described here.
 
 Workload scenarios live in `scenarios/` and deploy to the `scenarios` namespace. Argo CD does not manage it,
 so nothing gets auto-healed and `scripts/scenarios.sh cleanup` removes everything. Kyverno only audits that
 namespace, so the deliberately bad specs are admitted and show up in the policy reports.
-
-## Frontend traffic
-
-The frontend (`gitops/workloads/frontend`, host `frontend.localhost:8080`, or https on :8443) is a stateless nginx that logs one JSON
-object per request. These scenarios generate those logs.
-
-| Scenario | Sends | Where to look |
-|---|---|---|
-| healthy | 200s | baseline, nothing should alert |
-| error500, error503 | HTTP 5xx | Logs dashboard: `level="error"`, requests by status |
-| notfound | HTTP 404 | Logs dashboard: `level="warn"` |
-| mixed | 200, 404 and 500 mix | all of the above, 5xx should rank above 4xx |
-
-The frontend exposes no metrics, and Mimir only evaluates metric rules, so these do not fire a platform alert.
-They are visible in the Logs dashboard (`{service="frontend"} | json | status >= 500`).
 
 ## Broken workloads
 

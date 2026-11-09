@@ -1,4 +1,4 @@
-# The platform cluster's routes (orders, frontend, dummy shop) live next to their Services in gitops/workloads.
+# The platform cluster's routes (orders and dummy shop) live next to their Services in gitops/workloads.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

@@ -91,7 +91,7 @@ Three clusters, each responsible for one concern, so an outage, upgrade or rebui
 
 ```
 gitops cluster          Argo CD (hub) — deploys both other clusters from this repo
-platform cluster        workloads (orders-api, frontend, dummy-shop), gateway, kyverno, sealed-secrets
+platform cluster        workloads (orders-api, dummy-shop), gateway, kyverno, sealed-secrets
 observability cluster   LGTM stack, Argo Workflows, SRE agent, RCA viewer
 ```
 
@@ -113,7 +113,7 @@ flowchart LR
 
     subgraph PC["🟢  platform cluster  —  the workloads"]
         direction TB
-        WorkloadGrp["⚡ orders-api  🌐 frontend  🛍️ dummy-shop\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nFastAPI + 28-day SLO (99.5% success + p99 ≤ 300ms)\nnginx with traceparent header logging\n─────────────────────────────────────────────────\norders.localhost · app.localhost · dummy.localhost"]:::plat
+        WorkloadGrp["⚡ orders-api  🛍️ dummy-shop\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nFastAPI + 28-day SLO (99.5% success + p99 ≤ 300ms)\n─────────────────────────────────────────────────\norders.localhost · dummy.localhost"]:::plat
         Infra["🛡️ Traefik  (Gateway API controller)\ncert-manager  ·  Kyverno policies\nSealed Secrets controller"]:::plat
         PAlloy["📡 Alloy collector\nkube-state-metrics\n─────────────────\nscrapes: pods · cAdvisor\ntails: pod logs via k8s API\nforwards: OTLP traces"]:::plat
         WorkloadGrp -->|"metrics · logs\nOTLP traces"| PAlloy
@@ -169,7 +169,7 @@ Clusters communicate over the shared Docker network. Collectors push to `observa
 | Namespace | Cluster | Contents |
 |---|---|---|
 | `argocd` | gitops | Argo CD hub — manages itself and both other clusters |
-| `demo` | platform | `orders-api`, `frontend` |
+| `demo` | platform | `orders-api` |
 | `sandbox` | platform | `dummy-shop` (nginx + trace logging, no OTel SDK) |
 | `observability` | platform | Alloy collector, kube-state-metrics |
 | `observability` | observability | Mimir, Loki, Tempo, Grafana, Alloy, kube-state-metrics |
@@ -188,7 +188,7 @@ gitops/apps/            platform cluster Argo CD Applications (one per component
 gitops/observability-cluster/  observability cluster Applications, Alloy values, NodePorts
 gitops/hub/             gitops cluster: Argo CD values, root Applications
 gitops/observability/   Mimir, Loki, Tempo, Grafana configs, alert rules, dashboards
-gitops/workloads/       manifests for orders-api, frontend, sre-agent (WorkflowTemplates, CronWorkflows, UI)
+gitops/workloads/       manifests for orders-api, sre-agent (WorkflowTemplates, CronWorkflows, UI)
 gitops/fault-drills/    fault injection manifests (active, degraded scenarios)
 backstage-portal/       Backstage app + self-service templates
 apps/orders-api/        FastAPI sample service: code, tests, Dockerfile

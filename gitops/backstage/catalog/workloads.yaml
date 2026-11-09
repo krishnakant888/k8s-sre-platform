@@ -29,30 +29,6 @@ spec:
   system: workloads
   providesApis: [orders-api-http]
   dependsOn: [resource:cluster-platform]
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
-  name: frontend
-  description: Stateless nginx frontend that logs one JSON line per request
-  tags: [nginx]
-  annotations:
-    selfservice/enabled: "true"   # the self-service templates offer it (scale, resources, image, alerts ...)
-    github.com/project-slug: krishnakant888/k8s-sre-platform
-    backstage.io/source-location: url:https://github.com/krishnakant888/k8s-sre-platform/tree/main/gitops/workloads/frontend
-    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=frontend
-    backstage.io/kubernetes-namespace: demo
-    argocd/app-name: platform-frontend
-    grafana/alert-label-selector: service=frontend
-  links:
-    - {url: "https://frontend.localhost:8443", title: Open the frontend, icon: web}
-spec:
-  type: website
-  lifecycle: production
-  owner: group:platform-team
-  system: workloads
-  dependsOn: [resource:cluster-platform]
----
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
