@@ -68,6 +68,12 @@ spec:
           args: ["--nginx.scrape-uri=http://127.0.0.1:8080/nginx_status"]
           ports:
             - {name: metrics, containerPort: 9113}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
