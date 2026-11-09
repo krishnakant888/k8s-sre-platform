@@ -1178,9 +1178,11 @@ def analyze(alert: dict, ctx: dict, now: float | None = None) -> RcaReport:
         contrib.append(f"a deploy ({sig['recent_deploy']['revision']}) landed within the hour before the alert")
     if sig.get("tool_errors"):
         contrib.append("some lookups failed, so this analysis may be incomplete: " + "; ".join(sig["tool_errors"]))
+    # ID is stable per (service, started_at, alertname) so re-analyze overwrites the same report
+    _alert_slug = re.sub(r"[^a-z0-9-]+", "-", alertname.lower()).strip("-")[:30]
     run_id = re.sub(r"[^a-z0-9-]+", "-", os.getenv("WORKFLOW_NAME", "").lower()).strip("-") or str(int(now * 1_000_000))
     report = RcaReport(
-        id=f"rca-{re.sub(r'[^a-z0-9-]+', '-', wl.lower()).strip('-')[:40] or 'alert'}-{datetime.fromtimestamp(started, timezone.utc).strftime('%Y%m%d-%H%M%S')}-{run_id}",
+        id=f"rca-{re.sub(r'[^a-z0-9-]+', '-', wl.lower()).strip('-')[:40] or 'alert'}-{datetime.fromtimestamp(started, timezone.utc).strftime('%Y%m%d-%H%M%S')}-incident-{_alert_slug}",
         alert=alertname, service=wl, severity=labels.get("severity", "unknown"), started_at=_iso(started), generated_at=_iso(now), mode="rule_based",
         summary=f"{alertname} on {wl} ({sig['cluster']}): {d.description}",
         what_happened=d.what,
