@@ -4,9 +4,10 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from pydantic import BaseModel
 
 from agent import config, generic, incident
 from agent.logging_setup import setup_logging
@@ -24,6 +25,13 @@ for _name in [*generic.FAMILIES, "OrdersApiErrorBudgetFastBurn", "OrdersApiError
 
 app = FastAPI(title="alert-webhook")
 WORKFLOWS_URL = f"{config.K8S_URL}/apis/argoproj.io/v1alpha1/namespaces/{config.WORKFLOW_NAMESPACE}/workflows"
+_WORKLOADS_DEFAULT = "orders-api:demo,frontend:demo,dummy-shop:sandbox"
+_TRIGGER_TEMPLATES = {
+    "capacity-review": "capacity-review",
+    "floor-review": "weekly-capacity-floor-review",
+    "health-review": "weekly-health-review",
+    "self-learning": "self-learning",
+}
 
 
 @app.get("/healthz")
@@ -70,3 +78,37 @@ async def alertmanager(request: Request):
         log.info("investigation started", extra={"alertname": name, "workflow": workflow_name})
         started.append(workflow_name)
     return {"started": started}
+
+
+class TriggerRequest(BaseModel):
+    workflow_type: str
+    services: str = "all"
+
+
+@app.post("/trigger", status_code=202)
+async def trigger_review(req: TriggerRequest):
+    if req.workflow_type not in _TRIGGER_TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"unknown workflow_type: {req.workflow_type!r}")
+    template_name = _TRIGGER_TEMPLATES[req.workflow_type]
+    workloads = None if req.workflow_type == "self-learning" else (
+        req.services if req.services != "all" else _WORKLOADS_DEFAULT)
+    spec: dict = {"workflowTemplateRef": {"name": template_name}}
+    if workloads:
+        spec["arguments"] = {"parameters": [{"name": "workloads", "value": workloads}]}
+    workflow = {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+            "generateName": f"manual-{req.workflow_type}-",
+            "namespace": config.WORKFLOW_NAMESPACE,
+            "labels": {"sre-agent/trigger": "manual", "sre-agent/review-type": req.workflow_type},
+        },
+        "spec": spec,
+    }
+    token = Path(f"{config.SA_DIR}/token").read_text()
+    async with httpx.AsyncClient(verify=f"{config.SA_DIR}/ca.crt", timeout=15) as client:
+        resp = await client.post(WORKFLOWS_URL, json=workflow, headers={"Authorization": f"Bearer {token}"})
+    resp.raise_for_status()
+    name = resp.json().get("metadata", {}).get("name", "unknown")
+    log.info("manual review triggered", extra={"review_type": req.workflow_type, "workflow": name})
+    return {"workflow": name, "workflow_type": req.workflow_type, "services": req.services}

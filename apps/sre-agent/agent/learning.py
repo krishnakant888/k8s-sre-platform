@@ -459,9 +459,96 @@ def run_threshold_tuning() -> dict:
 # entry point
 # ---------------------------------------------------------------------------
 
+def _write_self_learning_report(
+    rediagnosed: int, gap_issues_opened: int,
+    calibration: dict, thresholds: dict, errors: list,
+) -> None:
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    report_id = "rca-self-learning-" + stamp[:19].replace(":", "").replace("-", "").replace("T", "T")
+    n_families = len([k for k in calibration if not k.startswith("_") and isinstance(calibration[k], dict)])
+    n_services = len([k for k in thresholds if not k.startswith("_") and isinstance(thresholds[k], dict)])
+    parts = []
+    if rediagnosed:
+        parts.append(f"{rediagnosed} unknown{'s' if rediagnosed != 1 else ''} rediagnosed")
+    if gap_issues_opened:
+        parts.append(f"{gap_issues_opened} gap issue{'s' if gap_issues_opened != 1 else ''} opened")
+    if n_families:
+        parts.append(f"{n_families} families calibrated")
+    if n_services:
+        parts.append(f"{n_services} services tuned")
+    if errors:
+        parts.append(f"{len(errors)} error(s)")
+    summary = "Self-learning pass: " + (", ".join(parts) if parts else "nothing to update")
+
+    cal_rows = "\n".join(
+        f"| {cat} | {v.get('total', 0)} | {v.get('accuracy', 0):.0%} | {v.get('confidence_weight', 1.0):.2f} |"
+        for cat, v in calibration.items()
+        if not cat.startswith("_") and isinstance(v, dict) and "total" in v
+    )
+    thr_rows = "\n".join(
+        f"| {svc} | {v.get('cpu_p95_max', '—')} | {v.get('memory_p99_max', '—')} | {v.get('reason', '')} |"
+        for svc, v in thresholds.items()
+        if not svc.startswith("_") and isinstance(v, dict) and "cpu_p95_max" in v
+    )
+    md = f"""# Self-learning report · {stamp[:10]}
+
+**{summary}**
+
+## Summary
+
+- {rediagnosed} unknown root cause(s) rediagnosed from historical Mimir signals
+- {gap_issues_opened} observability gap issue(s) opened on GitHub
+- {n_families} diagnosis families calibrated
+- {n_services} service threshold(s) tuned{chr(10) + "- Errors: " + ", ".join(errors) if errors else ""}
+
+## Calibration
+
+| Family | Incidents | Accuracy | Weight |
+|--------|-----------|----------|--------|
+{cal_rows if cal_rows else "| — | — | — | — |"}
+
+Confidence weight is applied by generic.py when generating reports.
+A weight < 0.5 downgrades "high" → "medium"; < 0.4 downgrades to "low".
+
+## Thresholds
+
+| Service | CPU P95 max | Mem P99 max | Reason |
+|---------|-------------|-------------|--------|
+{thr_rows if thr_rows else "| — | — | — | — |"}
+
+Thresholds are read by scale_down.py at review time.
+"""
+    report = {
+        "id": report_id,
+        "report_type": "self_learning",
+        "generated_at": stamp,
+        "service": "platform",
+        "namespace": "all",
+        "cluster": os.getenv("SCALE_DOWN_CLUSTER", os.getenv("HEALTH_CLUSTER", "platform")),
+        "workflow": os.getenv("WORKFLOW_NAME", ""),
+        "summary": summary,
+        "self_learning": {
+            "rediagnosed": rediagnosed,
+            "gap_issues_opened": gap_issues_opened,
+            "calibration": {k: v for k, v in calibration.items() if not k.startswith("_")},
+            "thresholds": {k: v for k, v in thresholds.items() if not k.startswith("_")},
+            "errors": errors,
+        },
+    }
+    report_dir = REPORTS_DIR / report_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write(report_dir / "report.json", report)
+    (report_dir / "rca.md").write_text(md, encoding="utf-8")
+    log.info("learning: self-learning report written to %s", report_id)
+
+
 def run_self_learning() -> None:
     log.info("learning: starting self-learning pass")
-    errors = []
+    errors: list[str] = []
+    rediagnosed = 0
+    gap_issues_opened = 0
+    calibration: dict = {}
+    thresholds: dict = {}
     for name, fn in [
         ("unknown_rediagnosis", run_unknown_rediagnosis),
         ("gap_tracker", run_gap_tracker),
@@ -469,10 +556,22 @@ def run_self_learning() -> None:
         ("threshold_tuning", run_threshold_tuning),
     ]:
         try:
-            fn()
+            result = fn()
+            if name == "unknown_rediagnosis":
+                rediagnosed = result or 0
+            elif name == "gap_tracker":
+                gap_issues_opened = result or 0
+            elif name == "confidence_calibration":
+                calibration = result or {}
+            elif name == "threshold_tuning":
+                thresholds = result or {}
         except Exception as exc:
             log.exception("learning: %s failed: %s", name, exc)
             errors.append(name)
+    try:
+        _write_self_learning_report(rediagnosed, gap_issues_opened, calibration, thresholds, errors)
+    except Exception as exc:
+        log.exception("learning: could not write self-learning report: %s", exc)
     if errors:
         raise RuntimeError(f"self-learning modules failed: {', '.join(errors)}")
     log.info("learning: self-learning pass complete")

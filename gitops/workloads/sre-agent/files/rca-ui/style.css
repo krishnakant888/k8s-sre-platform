@@ -600,4 +600,34 @@ button, input, select { font: inherit; color: inherit; }
 .facts-grid dt { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-2); font-weight: 700; }
 .facts-grid dd { margin: 3px 0 0; font-weight: 600; overflow-wrap: anywhere; }
 .alert-ann { margin: 10px 0 0; font-size: 13.5px; }
+
+/* ---- run review modal ----------------------------------------------------------------------- */
+.run-modal {
+  position: fixed;
+  top: calc(var(--topnav-h, 48px) + 6px);
+  right: 56px;
+  z-index: 400;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  min-width: 260px;
+}
+.run-modal[hidden] { display: none; }
+.run-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.run-modal-title { font-size: .85rem; font-weight: 600; color: var(--text); }
+.run-modal-close { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 0 2px; }
+.run-modal-close:hover { color: var(--text); }
+.run-modal-form { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.run-modal-label { font-size: .8rem; color: var(--muted); font-weight: 500; display: block; }
+.run-modal-label[hidden] { display: none; }
+.run-modal-select { display: block; width: 100%; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--r-xs); color: var(--text); font-size: .85rem; margin-top: 2px; }
+.run-modal-select[hidden] { display: none; }
+.run-modal-run { align-self: flex-end; margin-top: 4px; }
 .alert-ann b { color: var(--text-2); }

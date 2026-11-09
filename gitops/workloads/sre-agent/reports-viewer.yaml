@@ -57,6 +57,14 @@ data:
           add_header Cache-Control no-store;
           return 503 '{"status":"unavailable"}';
         }
+        location = /_trigger {
+          limit_except POST { deny all; }
+          set $webhook http://alert-webhook.sre-agent.svc.cluster.local:8080;
+          proxy_pass $webhook/trigger;
+          proxy_set_header Host $host;
+          proxy_read_timeout 15s;
+          add_header Cache-Control no-store;
+        }
         location /_list/ {
           alias /reports/;
           autoindex on;
