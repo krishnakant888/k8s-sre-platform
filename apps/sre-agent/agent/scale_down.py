@@ -438,74 +438,6 @@ def _recent_commit(repo: str, path: str) -> bool:
     return time.time() - at < COOLDOWN_SECONDS
 
 
-def _query_peak_replicas(namespace: str, workload: str, window: str = "7d") -> float | None:
-    """Return the max replica count observed over the window."""
-    return _query(
-        f'max_over_time(kube_horizontalpodautoscaler_status_current_replicas'
-        f'{{namespace="{namespace}",horizontalpodautoscaler="{workload}"}}[{window}])'
-    )
-
-
-def _propose_max_replicas(repo: str, branch: str, head_sha: str,
-                           workload: str, namespace: str, cluster: str) -> dict | None:
-    """Lower maxReplicas in the ScaledObject/HPA when 7d peak replicas is well below the ceiling.
-
-    Triggers when: peak_replicas <= maxReplicas * 0.6  (40%+ headroom unused for a week).
-    New ceiling: peak_replicas + 2 (buffer for spikes).
-    Guarded by: active alert, recent commit cooldown, minReplicas floor.
-    """
-    if _active_alert(workload, namespace):
-        return None
-    path = f"gitops/workloads/{workload}/hpa.yaml"
-    loaded = _load_manifest(repo, branch, path)
-    if not loaded:
-        return None
-    content, blob_sha = loaded
-    max_m = re.search(r"maxReplicaCount:\s*(\d+)", content)
-    min_m = re.search(r"minReplicaCount:\s*(\d+)", content)
-    if not max_m:
-        return None
-    current_max = int(max_m.group(1))
-    min_replicas = int(min_m.group(1)) if min_m else 2
-    if _recent_commit(repo, path):
-        return None
-    peak = _query_peak_replicas(namespace, workload)
-    if peak is None:
-        return None
-    peak = int(math.ceil(peak))
-    # only act when peak used less than 60% of the ceiling
-    if peak > current_max * 0.6:
-        log.info("scale-down: %s peak replicas %d is %.0f%% of maxReplicas %d — no change",
-                 workload, peak, 100 * peak / current_max, current_max)
-        return None
-    new_max = max(peak + 2, min_replicas + 1)
-    if new_max >= current_max:
-        return None
-    patched = re.sub(r"(maxReplicaCount:\s*)\d+", lambda m: m.group(1) + str(new_max), content, count=1)
-    ref = f"recommend/max-replicas-{workload}-{int(time.time())}"
-    _post(f"repos/{repo}/git/refs", {"ref": f"refs/heads/{ref}", "sha": head_sha})
-    _put(f"repos/{repo}/contents/{path}", {
-        "message": (f"chore(ops): lower {workload} maxReplicas {current_max} → {new_max}\n\n"
-                    f"7d peak was {peak} replicas ({int(100*peak/current_max)}% of ceiling {current_max}).\n"
-                    f"New ceiling: peak + 2 buffer = {new_max}.\n"),
-        "content": base64.b64encode(patched.encode()).decode(),
-        "sha": blob_sha, "branch": ref,
-    })
-    pr = _post(f"repos/{repo}/pulls", {
-        "title": f"chore(ops): lower {workload} maxReplicas {current_max} → {new_max} (7d peak was {peak})",
-        "head": ref, "base": branch,
-        "body": (f"## Automated capacity planning — maxReplicas reduction\n\n"
-                 f"**Workload:** `{workload}` in `{namespace}`\n"
-                 f"**7d peak replicas:** {peak} ({int(100*peak/current_max)}% of ceiling)\n"
-                 f"**Current maxReplicas:** {current_max}\n"
-                 f"**Proposed maxReplicas:** {new_max} (peak + 2 buffer)\n\n"
-                 f"KEDA will still scale out up to {new_max} replicas on RPS spikes. "
-                 f"If traffic grows beyond this, the agent will raise the ceiling again when HPA is saturated.\n"),
-    })
-    log.info("scale-down: maxReplicas PR opened for %s: %d → %d", workload, current_max, new_max)
-    return {"pr_number": pr["number"], "pr_url": pr["html_url"],
-            "old_max": current_max, "new_max": new_max, "peak": peak}
-
 
 def _has_hpa(repo: str, branch: str, workload: str) -> bool:
     """Return True if any HPA targeting the workload exists in its GitOps directory."""
@@ -698,11 +630,6 @@ def run_daily_review() -> None:
                                                                         "pr_url": pr["html_url"], "merged": pr.get("_merged", False)})
             else:
                 log.info("scale-down skipped", extra={"workload": workload, "reason": review.get("reason")})
-            # Independent of replica floor: right-size maxReplicas from 7d peak
-            max_r_pr = _propose_max_replicas(repo, branch, head_sha, workload, namespace, cluster)
-            if max_r_pr:
-                review["max_replicas_pr"] = max_r_pr
-                log.info("scale-down: maxReplicas reduction PR", extra={"workload": workload, **max_r_pr})
         except Exception as exc:
             log.exception("scale-down review failed for %s: %s", workload, exc)
             review.update(decision="error", reason=str(exc))
