@@ -59,7 +59,7 @@ CLUSTERS = {
     },
     "observability": {
         "kind_config": ROOT / "bootstrap" / "kind-config-observability.yaml",
-        "host_ports": [9180, 9543],
+        "host_ports": [9200, 9201],
         "seed_namespaces": ["observability", "sre-agent", "argo-workflows"],
     },
     "gitops": {
@@ -589,9 +589,9 @@ def summary(clusters, first_run=True):
     if "observability" in clusters:
         gateway_pw = read_secret("observability", GATEWAY_AUTH_NAMESPACES[0], GATEWAY_LOGIN_SECRET, "password") or "(secret not found)"
         gateway_login = f"admin / {gateway_pw}   (gateway basic auth)"
-        show("Grafana", "grafana.localhost", (9543, 9180), "admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
-        show("Argo Workflows", "workflows.localhost", (9543, 9180), gateway_login)
-        show("RCA reports", "reports.localhost", (9543, 9180), gateway_login)
+        show("Grafana", "grafana.localhost", (9201, 9200), "admin / " + (read_secret("observability", "observability", "grafana-admin", "admin-password") or "(secret not found)"))
+        show("Argo Workflows", "workflows.localhost", (9201, 9200), gateway_login)
+        show("RCA reports", "reports.localhost", (9201, 9200), gateway_login)
     if "platform" in clusters:
         show("Orders API", "orders.localhost", (8443, 8080), "sample API, no login", "/orders")
         chaos = read_secret("platform", "demo", "orders-api-chaos", "CHAOS_TOKEN")
