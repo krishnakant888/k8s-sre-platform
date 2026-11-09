@@ -631,9 +631,9 @@ button, input, select { font: inherit; color: inherit; }
 .run-modal-select[hidden] { display: none; }
 .run-modal-run { align-self: flex-end; margin-top: 4px; }
 /* ---- run-in-progress strip ------------------------------------------------ */
-.run-strip { position: fixed; top: 52px; left: 0; right: 0; height: 20px; z-index: 300; background: transparent; display: flex; align-items: flex-start; }
-.run-strip-bar { height: 3px; width: 40%; background: var(--accent, #c2410c); border-radius: 2px; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; flex-shrink: 0; }
-.run-strip-label { font-size: .62rem; color: var(--accent, #c2410c); padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 20px; }
+.run-strip { position: fixed; top: 52px; left: 0; right: 0; height: 20px; z-index: 300; background: rgba(0,0,0,.03); display: flex; align-items: center; }
+.run-strip-bar { height: 3px; width: 40%; background: var(--accent, #c2410c); border-radius: 0 2px 2px 0; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; flex-shrink: 0; transition: width .4s ease; }
+.run-strip-label { font-size: .62rem; color: var(--accent, #c2410c); padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes run-scan { 0% { transform: translateX(-150%); } 100% { transform: translateX(350%); } }
 
 /* ---- notif runs section --------------------------------------------------- */
@@ -649,6 +649,9 @@ button, input, select { font: inherit; color: inherit; }
 .notif-run-body { display: flex; flex-direction: column; min-width: 0; }
 .notif-run-name { font-size: .82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .notif-run-meta { display: flex; align-items: center; gap: 6px; font-size: .72rem; color: var(--muted); margin-top: 1px; }
+.notif-run-pct { font-family: var(--mono); font-size: .68rem; color: var(--accent); }
+.notif-run-track { height: 3px; border-radius: 2px; background: var(--line-2); margin-top: 4px; overflow: hidden; }
+.notif-run-fill { height: 100%; background: var(--accent, #c2410c); border-radius: 2px; transition: width .4s ease; }
 .run-phase-pill { padding: 1px 5px; border-radius: 3px; font-size: .68rem; background: var(--surface-alt, rgba(0,0,0,.05)); }
 .run-phase-pill.running { background: rgba(59,130,246,.12); color: #2563eb; }
 .run-phase-pill.pending { background: rgba(107,114,128,.1); }

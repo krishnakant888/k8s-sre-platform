@@ -1142,16 +1142,34 @@
     if (!active.length) { if (strip) strip.hidden = true; return; }
     if (!strip) {
       strip = el("div", "run-strip"); strip.id = "run-strip";
-      strip.append(el("div", "run-strip-bar"));
-      const lbl = el("span", "run-strip-label"); lbl.id = "run-strip-label";
-      strip.append(lbl);
+      const bar = el("div", "run-strip-bar"); bar.id = "run-strip-bar"; strip.append(bar);
+      const lbl = el("span", "run-strip-label"); lbl.id = "run-strip-label"; strip.append(lbl);
       document.body.append(strip);
+    }
+    // compute combined progress: average of all active runs' pct (or indeterminate if none have progress)
+    const pcts = active.map((r) => parseProgress(r.progress)).filter(Boolean).map((p) => p.pct);
+    const bar = $("run-strip-bar");
+    if (bar) {
+      if (pcts.length) {
+        const avg = Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+        bar.style.width = avg + "%";
+        bar.style.animation = "none";
+        bar.style.transform = "none";
+        bar.dataset.pct = avg;
+      } else {
+        bar.style.width = "40%";
+        bar.style.animation = "";
+        bar.style.transform = "";
+        delete bar.dataset.pct;
+      }
     }
     const lbl = $("run-strip-label");
     if (lbl) {
-      const names = active.map((r) => runLabel(r.workflow_type));
-      const unique = [...new Set(names)];
-      lbl.textContent = unique.join(", ") + " in progress…";
+      const names = active.map((r) => {
+        const p = parseProgress(r.progress);
+        return runLabel(r.workflow_type) + (p ? " " + p.pct + "%" : "");
+      });
+      lbl.textContent = names.join(", ") + "…";
     }
     strip.hidden = false;
   }
@@ -1171,7 +1189,17 @@
       metaRow.append(el("span", "", ago(run.startedAt)));
       const pp = el("span", "run-phase-pill " + run.phase.toLowerCase(), run.phase);
       metaRow.append(pp);
+      const p = parseProgress(run.progress);
+      if (p && !run.done) {
+        const pctSpan = el("span", "notif-run-pct", p.done + "/" + p.total);
+        metaRow.append(pctSpan);
+      }
       body.append(metaRow);
+      if (p && !run.done) {
+        const track = el("div", "notif-run-track");
+        const fill = el("div", "notif-run-fill"); fill.style.width = p.pct + "%";
+        track.append(fill); body.append(track);
+      }
       li.append(icon, body);
       return li;
     }));
@@ -1183,6 +1211,7 @@
       if (resp.ok) {
         const data = await resp.json();
         run.phase = data.phase || "Running";
+        if (data.progress) run.progress = data.progress;
         if (["Succeeded", "Failed", "Error"].includes(run.phase)) {
           run.done = true;
           const ok = run.phase === "Succeeded";
@@ -1210,9 +1239,19 @@
   };
   function runLabel(wt) { return _RUN_LABELS[wt] || (wt ? wt.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Review"); }
 
-  function startRunTracking(name, workflowType, startedAt) {
+  function parseProgress(prog) {
+    // "X/Y" → {done: X, total: Y, pct: 0-100} or null
+    if (!prog) return null;
+    const m = prog.match(/^(\d+)\/(\d+)$/);
+    if (!m) return null;
+    const done = parseInt(m[1], 10), total = parseInt(m[2], 10);
+    if (total === 0) return null;
+    return { done, total, pct: Math.round((done / total) * 100) };
+  }
+
+  function startRunTracking(name, workflowType, startedAt, progress) {
     if (state.runs.some((r) => r.name === name)) return; // already tracked
-    const run = { name, workflow_type: workflowType || name, startedAt: startedAt ? new Date(startedAt) : new Date(), phase: "Pending", done: false };
+    const run = { name, workflow_type: workflowType || name, startedAt: startedAt ? new Date(startedAt) : new Date(), phase: "Pending", progress: progress || "", done: false };
     state.runs.push(run);
     updateNotifBadge(); renderRunStrip(); renderNotifRuns();
     setTimeout(() => pollRun(run), 5000);
@@ -1223,7 +1262,7 @@
       const resp = await fetch("/_active-workflows");
       if (!resp.ok) return;
       const data = await resp.json();
-      (data.workflows || []).forEach((w) => startRunTracking(w.name, w.workflow_type, w.startedAt));
+      (data.workflows || []).forEach((w) => startRunTracking(w.name, w.workflow_type, w.startedAt, w.progress));
     } catch (_) {}
   }
 
