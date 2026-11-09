@@ -27,8 +27,6 @@ app = FastAPI(title="alert-webhook")
 WORKFLOWS_URL = f"{config.K8S_URL}/apis/argoproj.io/v1alpha1/namespaces/{config.WORKFLOW_NAMESPACE}/workflows"
 _WORKLOADS_DEFAULT = "orders-api:demo,dummy-shop:sandbox"
 _TRIGGER_TEMPLATES = {
-    "capacity-review": "capacity-review",
-    "floor-review": "weekly-capacity-floor-review",
     "health-review": "weekly-health-review",
     "self-learning": "self-learning",
 }
