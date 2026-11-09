@@ -15,5 +15,5 @@ spec:
         serverAddress: http://mimir.observability:8080/prometheus
         metricName: nginx_http_requests_total
         # scale out when RPS per pod exceeds 50
-        query: sum(rate(nginx_http_requests_total{namespace="demo"}[2m]))
+        query: sum(rate(nginx_http_requests_total{namespace="demo"}[1m]))
         threshold: "50"
