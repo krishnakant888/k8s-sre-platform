@@ -8,7 +8,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: prod-observability
+  project: default
   source:
     repoURL: https://kubernetes-sigs.github.io/metrics-server/
     chart: metrics-server
