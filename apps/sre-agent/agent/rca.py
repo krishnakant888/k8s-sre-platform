@@ -329,7 +329,7 @@ def remediation(category: str, ctx: dict) -> tuple[str, HowToFix]:
                 "No restarts occurred — this is a performance issue, not a crash."
             )
             immediate = [
-                f"**VPA Auto** will automatically right-size `limits.cpu` on the next pod restart — no manual change needed.",
+                f"**VPA Auto** will evict and reschedule the pod with a higher `limits.cpu` within ~5–10 min — no manual change needed.",
                 f"**KEDA** will scale out replicas if RPS exceeds the threshold. Verify it is active: "
                 f"`kubectl -n {ns} get scaledobject {svc}`.",
                 f"If KEDA is already at `maxReplicaCount`, the agent will automatically raise it — check for a remediation PR.",
@@ -351,7 +351,7 @@ def remediation(category: str, ctx: dict) -> tuple[str, HowToFix]:
                 + (" A fault injection flag is set, so this may be the memory drill." if drill else "")
             )
             immediate = [
-                f"**VPA Auto** will automatically raise `limits.memory` on the next pod restart — no manual change needed.",
+                f"**VPA Auto** will evict and reschedule the pod with a higher `limits.memory` within ~5–10 min — no manual change needed.",
                 f"First rule out a memory leak: check `container_memory_working_set_bytes{{namespace=\"{ns}\", pod=~\"{svc}-.*\"}}`. "
                 "Steady unbounded growth = leak (VPA cannot fix a leak); a plateau at the limit = limit too low (VPA will fix it).",
             ]

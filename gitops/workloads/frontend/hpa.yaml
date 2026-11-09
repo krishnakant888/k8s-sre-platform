@@ -10,10 +10,7 @@ spec:
   maxReplicaCount: 10
   cooldownPeriod: 300
   triggers:
-    - type: prometheus
+    - type: cpu
+      metricType: Utilization
       metadata:
-        serverAddress: http://mimir.observability:8080/prometheus
-        metricName: nginx_http_requests_total
-        # scale out when RPS per pod exceeds 50
-        query: sum(rate(nginx_http_requests_total{namespace="demo"}[2m]))
-        threshold: "50"
+        value: "60"   # scale out when average CPU > 60% of request

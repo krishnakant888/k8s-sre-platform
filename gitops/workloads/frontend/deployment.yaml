@@ -12,7 +12,7 @@ metadata:
   namespace: demo
   labels: {app.kubernetes.io/name: frontend, app.kubernetes.io/version: "1.0.0", team: platform}
 spec:
-  replicas: 5
+  replicas: 2
   revisionHistoryLimit: 5
   strategy:
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
@@ -44,6 +44,10 @@ spec:
           image: nginxinc/nginx-unprivileged:1.27-alpine
           ports:
             - {name: http, containerPort: 8080}
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 5
