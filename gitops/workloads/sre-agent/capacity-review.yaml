@@ -89,7 +89,7 @@ spec:
           - name: GRAFANA_API_TOKEN
             valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
           - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
-          - {name: WEEKLY_FLOOR_WORKLOADS, value: "orders-api:demo,frontend:demo"}
+          - {name: WEEKLY_FLOOR_WORKLOADS, value: "orders-api:demo,frontend:demo,dummy-shop:sandbox"}
           - {name: WEEKLY_FLOOR_CLUSTER, value: platform}
           - {name: WEEKLY_FLOOR_WINDOW, value: 7d}
           - {name: WEEKLY_FLOOR_MIN_COVERAGE_SECONDS, value: "518400"}
