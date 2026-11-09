@@ -1269,7 +1269,7 @@
                 state.reanalyzing.delete(id);
                 reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
                 renderList();
-                if (s.phase === "Succeeded") { toast("Re-analysis complete — refreshing reports…"); await loadList(); renderList(); if (state.current === id) { const newId = id.replace(/-[0-9a-f]{10}$/, ""); const target = (newId !== id && state.reports?.some(r => r.id === newId)) ? newId : id; if (target !== id) location.hash = target; else show(id); } }
+                if (s.phase === "Succeeded") { toast("Re-analysis complete — refreshing reports…"); await loadList(); renderList(); if (state.current === id) show(id); }
                 else { toast(`Re-analysis ${s.phase.toLowerCase()}`); if (state.current === id) show(id); }
               }
             } catch (_) {}

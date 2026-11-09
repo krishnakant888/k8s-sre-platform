@@ -159,9 +159,10 @@ async def re_analyze(report_id: str):
         raise HTTPException(status_code=422, detail="report has no alert_details to re-analyze from")
     # reconstruct minimal Alertmanager alert dict
     # unique fingerprint so each re-analyze gets a fresh workflow name (not a 409 conflict)
+    # reanalyze_report_id tells rca.py to overwrite the original report directory
     alert = {
         "labels": {**ad.get("labels", {}), "alertname": ad["alertname"]},
-        "annotations": ad.get("annotations", {}),
+        "annotations": {**ad.get("annotations", {}), "reanalyze_report_id": report_id},
         "startsAt": ad.get("starts_at", ""),
         "fingerprint": f"reanalysis-{int(time.time())}",
         "status": "firing",
