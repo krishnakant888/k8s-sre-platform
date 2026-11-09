@@ -15,5 +15,5 @@ spec:
         serverAddress: http://mimir.observability:8080/prometheus
         metricName: http_requests_total
         # scale out when RPS per pod exceeds 20
-        query: sum(rate(http_requests_total{namespace="demo",service="orders-api"}[2m]))
+        query: sum(rate(http_requests_total{namespace="demo",service="orders-api"}[1m]))
         threshold: "20"
