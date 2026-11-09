@@ -112,3 +112,31 @@ async def trigger_review(req: TriggerRequest):
     name = resp.json().get("metadata", {}).get("name", "unknown")
     log.info("manual review triggered", extra={"review_type": req.workflow_type, "workflow": name})
     return {"workflow": name, "workflow_type": req.workflow_type, "services": req.services}
+
+
+@app.get("/workloads")
+async def list_workloads():
+    import os
+    raw = os.environ.get("KNOWN_WORKLOADS", _WORKLOADS_DEFAULT)
+    items = [w.strip() for w in raw.split(",") if w.strip()]
+    return {"workloads": items}
+
+
+@app.get("/workflow-status/{name}")
+async def get_workflow_status(name: str):
+    token = Path(f"{config.SA_DIR}/token").read_text()
+    async with httpx.AsyncClient(verify=f"{config.SA_DIR}/ca.crt", timeout=10) as client:
+        resp = await client.get(
+            f"{WORKFLOWS_URL}/{name}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    resp.raise_for_status()
+    status = resp.json().get("status", {})
+    return {
+        "phase": status.get("phase", "Unknown"),
+        "startedAt": status.get("startedAt"),
+        "finishedAt": status.get("finishedAt"),
+        "message": status.get("message", ""),
+    }
