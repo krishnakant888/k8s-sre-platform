@@ -70,6 +70,14 @@ data:
           proxy_read_timeout 15s;
           add_header Cache-Control no-store;
         }
+        location = /_active-workflows {
+          limit_except GET { deny all; }
+          set $webhook http://alert-webhook.sre-agent.svc.cluster.local:8080;
+          proxy_pass $webhook/active-workflows;
+          proxy_set_header Host $host;
+          proxy_read_timeout 15s;
+          add_header Cache-Control no-store;
+        }
         location = /_workloads {
           limit_except GET { deny all; }
           set $webhook http://alert-webhook.sre-agent.svc.cluster.local:8080;

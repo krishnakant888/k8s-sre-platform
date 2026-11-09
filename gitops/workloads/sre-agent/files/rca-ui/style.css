@@ -631,7 +631,7 @@ button, input, select { font: inherit; color: inherit; }
 .run-modal-select[hidden] { display: none; }
 .run-modal-run { align-self: flex-end; margin-top: 4px; }
 /* ---- run-in-progress strip ------------------------------------------------ */
-.run-strip { position: fixed; top: var(--topnav-h, 48px); left: 0; right: 0; height: 3px; z-index: 300; overflow: hidden; background: transparent; }
+.run-strip { position: fixed; top: 52px; left: 0; right: 0; height: 3px; z-index: 300; overflow: hidden; background: transparent; }
 .run-strip-bar { height: 100%; width: 40%; background: var(--accent, #c2410c); border-radius: 2px; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; }
 @keyframes run-scan { 0% { transform: translateX(-150%); } 100% { transform: translateX(350%); } }
 

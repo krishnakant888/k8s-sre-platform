@@ -1039,11 +1039,21 @@
     updateNotifBadge(); renderRunStrip(); renderNotifRuns();
   }
 
-  function startRunTracking(name, workflowType) {
-    const run = { name, workflow_type: workflowType, startedAt: new Date(), phase: "Pending", done: false };
+  function startRunTracking(name, workflowType, startedAt) {
+    if (state.runs.some((r) => r.name === name)) return; // already tracked
+    const run = { name, workflow_type: workflowType || name, startedAt: startedAt ? new Date(startedAt) : new Date(), phase: "Pending", done: false };
     state.runs.push(run);
     updateNotifBadge(); renderRunStrip(); renderNotifRuns();
     setTimeout(() => pollRun(run), 5000);
+  }
+
+  async function pollActiveWorkflows() {
+    try {
+      const resp = await fetch("/_active-workflows");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      (data.workflows || []).forEach((w) => startRunTracking(w.name, w.workflow_type, w.startedAt));
+    } catch (_) {}
   }
 
   function openNotif() {
@@ -1186,6 +1196,7 @@
 
   loadPrefs();
   fetch("/_workloads").then((r) => r.ok ? r.json() : null).then((d) => { if (d && Array.isArray(d.workloads)) state.workloads = d.workloads; }).catch(() => {});
+  pollActiveWorkflows();
   loadList().then(route).catch((e) => { $("count").textContent = "Could not load the reports"; $("list").replaceChildren(el("li", "none", String(e.message))); });
-  setInterval(() => loadList().catch(() => {}), 30000);
+  setInterval(() => { loadList().catch(() => {}); pollActiveWorkflows(); }, 30000);
 })();
