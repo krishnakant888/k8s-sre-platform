@@ -103,6 +103,6 @@ metadata:
   name: dummy-shop
   namespace: sandbox
 spec:
-  minAvailable: 1
+  minAvailable: 2
   selector:
     matchLabels: {app.kubernetes.io/name: dummy-shop}
