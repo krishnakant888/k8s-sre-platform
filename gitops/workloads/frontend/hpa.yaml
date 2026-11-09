@@ -6,7 +6,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: frontend
-  minReplicaCount: 2
+  minReplicaCount: 1
   maxReplicaCount: 10
   cooldownPeriod: 300
   triggers:
