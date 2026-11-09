@@ -13,4 +13,4 @@ spec:
     - type: cpu
       metricType: Utilization
       metadata:
-        value: "60"   # scale out when average CPU > 60% of request
+        value: "10"   # lowered temporarily to demo scaling
