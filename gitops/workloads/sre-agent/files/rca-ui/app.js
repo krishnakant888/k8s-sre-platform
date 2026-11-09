@@ -212,10 +212,10 @@
         if (verificationStatus === "healthy") b.classList.add("capacity-healthy");
         else if (verificationStatus === "needs_attention") b.classList.add("capacity-attention");
       }
-      const capacityTitle = capacity.decision === "proposal" ? "Capacity plan" : "Capacity review";
+      const capacityTitle = capacityLabel(r);
       top.append(el("span", "item-title", isCapacity ? capacityTitle + " · " + (r.service || "workload") : (r.alert || r.id)));
       if (isCapacity) {
-        top.append(pill("Capacity", "soft"));
+        top.append(pill(capacityTitle, "soft"));
         if (verificationStatus) {
           const label2 = verificationStatus === "healthy" ? "Healthy"
             : verificationStatus === "needs_attention" ? "Follow-up"
@@ -501,6 +501,16 @@
     const d = el("div"); d.append(el("dt", "", label), el("dd", "", value)); dl.append(d);
   }
 
+  function capacityLabel(r) {
+    const c = (r && r.capacity) || {};
+    if (c.review_type === "weekly_floor") return "Floor review";
+    if (c.decision !== "proposal") return "Capacity review";
+    const ch = String(c.proposed_change || "");
+    if (/memory limit/i.test(ch)) return "Memory tuning";
+    if (/cpu limit/i.test(ch)) return "CPU tuning";
+    return "Scale-down plan";
+  }
+
   function capacityActionOutcome(c) {
     if (c.review_type === "weekly_floor") return "Recommendation only; no scaling change was applied";
     const verification = c.post_merge || {};
@@ -552,7 +562,11 @@
     const afterMemPct = memMiB != null && newMemoryLimit ? memMiB / newMemoryLimit * 100 : null;
 
     const top = el("div", "capacity-plan-top");
-    const overview = section(weeklyFloor ? "Weekly replica-floor recommendation" : "Capacity action", "capacity-action-panel");
+    const actionTitle = weeklyFloor ? "Weekly replica-floor recommendation"
+      : /memory limit/i.test(changeText) ? "Memory limit reduction"
+      : /cpu limit/i.test(changeText) ? "CPU limit reduction"
+      : "Replica scale-down";
+    const overview = section(actionTitle, "capacity-action-panel");
     overview.append(el("p", "capacity-eyebrow", (c.namespace ? c.namespace + " / " : "") + (c.workload || r.service || "workload")));
     overview.append(el("p", "capacity-change", String(c.proposed_change || "No configuration change proposed").replace(/`/g, "")));
     overview.append(el("p", "capacity-reason", c.reason || r.summary || "Capacity signals reviewed."));
@@ -650,7 +664,10 @@
     const basis = el("dl", "capacity-basis");
     fact(basis, "Action outcome", capacityActionOutcome(c));
     fact(basis, "Review decision", c.decision);
-    fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review" : "Daily scale-down review");
+    fact(basis, "Review type", weeklyFloor ? "Weekly replica-floor review"
+      : /memory limit/i.test(changeText) ? "Daily resource review (memory)"
+      : /cpu limit/i.test(changeText) ? "Daily resource review (CPU)"
+      : "Daily scale-down review");
     if (weeklyFloor) fact(basis, "Configured minimum", c.configured_floor);
     fact(basis, weeklyFloor ? "Candidate replica count" : "Replica floor", c.candidate_floor);
     fact(basis, "Review window", c.window);
@@ -677,7 +694,7 @@
     const lv = level(r);
     if (lv) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
     if (isCapacity) {
-      pills.append(pill("Capacity plan", "soft"));
+      pills.append(pill(capacityLabel(r), "soft"));
       const priorityPill = pills.querySelector(".pill");
       if (priorityPill) priorityPill.remove();
     }
@@ -710,7 +727,7 @@
       dp.title = (ch.note || "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
-    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : "Capacity plan for ") + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
+    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : capacityLabel(r) + " for ") + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
     $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.") : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
     if (isCapacity) {
@@ -796,7 +813,7 @@
     const staleBanner = $("incident-banner");
     if (staleBanner) staleBanner.hidden = true;
     $("main").scrollTo({ top: 0 });
-    if (isCapacity) document.title = "Capacity plan | " + (r.service || "workload");
+    if (isCapacity) document.title = capacityLabel(r) + " | " + (r.service || "workload");
   }
 
   function route() {
