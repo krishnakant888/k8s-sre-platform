@@ -350,8 +350,11 @@ def remediation(category: str, ctx: dict) -> tuple[str, HowToFix]:
                 "each restart drops the in-flight work and, when the component is on the request path, fails requests until it is ready again."
                 + (" A fault injection flag is set, so this may be the memory drill." if drill else "")
             )
+            new_limit = _bigger_memory(limit)
+            limit_advice = (f" from {limit} to {new_limit} in {files}") if limit else ""
             immediate = [
                 f"**VPA Auto** will evict and reschedule the pod with a higher `limits.memory` within ~5–10 min — no manual change needed.",
+                f"If VPA is not active, raise the memory limit{limit_advice}.",
                 f"First rule out a memory leak: check `container_memory_working_set_bytes{{namespace=\"{ns}\", pod=~\"{svc}-.*\"}}`. "
                 "Steady unbounded growth = leak (VPA cannot fix a leak); a plateau at the limit = limit too low (VPA will fix it).",
             ]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from agent import config, insights, llm, rca, remediate
+from agent import config, insights, llm, rca
 from agent.models import RcaReport, TimelineEntry
 
 log = logging.getLogger("sre-agent")
@@ -34,25 +34,6 @@ def analyze(alert: dict, ctx: dict) -> dict:
         log.warning("insights failed: %s", exc)
     report.alert_details = alert_details(alert)
     report.incident = incident_details(report.mode)
-    try:
-        pr = remediate.maybe_open_pr(ctx, report)
-        if pr:
-            report.remediation = pr
-            log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct"), "old_cpu_limit": pr.get("old_cpu_limit"), "new_cpu_limit": pr.get("new_cpu_limit")})
-            status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
-            change_desc = f"maxReplicas {pr.get('old_max_replicas')} → {pr.get('new_max_replicas')}"
-            sync_msg = "Remediation already applied — wait for Argo CD to sync the new maxReplicas"
-            report.timeline.append(TimelineEntry(
-                time=report.generated_at,
-                event=f"remediation {status_label}: {change_desc} ({pr['file']})",
-            ))
-            if pr["status"] == "merged":
-                report.how_to_fix.immediate.insert(0, f"{sync_msg}: {pr['pr_url']}")
-            else:
-                report.how_to_fix.immediate.insert(0, f"Review and merge the remediation PR: {pr['pr_url']}")
-            report.rca_markdown = report.rca_markdown.rstrip("\n") + _remediation_section(pr)
-    except Exception as exc:
-        log.warning("remediation failed: %s", exc)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + incident_section(report.incident)
     report.rca_markdown = report.rca_markdown.rstrip("\n") + alert_section(report.alert_details)
     return report.model_dump()
@@ -70,19 +51,6 @@ def incident_details(mode: str, now: datetime | None = None) -> dict:
         pass
     return {"id": os.environ.get("WORKFLOW_NAME", ""), "started_at": created, "finished_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "took_seconds": took, "analysis_mode": mode}
 
-
-def _remediation_section(pr: dict) -> str:
-    status = pr.get("status", "pr_opened")
-    status_note = "auto-merged" if status == "merged" else "opened — requires review"
-    change = f"`{pr['file']}` — `maxReplicas` raised from `{pr.get('old_max_replicas')}` to `{pr.get('new_max_replicas')}`"
-    action = "Argo CD will apply the new maxReplicas; KEDA will scale out pods and VPA Auto will right-size them."
-    return (
-        f"\n\n## Remediation taken\n"
-        f"A PR was automatically {status_note} while this issue is being investigated.\n"
-        f"- **PR:** [{pr['pr_url']}]({pr['pr_url']})\n"
-        f"- **Change:** {change}\n"
-        f"- **Action:** {action}\n"
-    )
 
 
 def incident_section(d: dict) -> str:

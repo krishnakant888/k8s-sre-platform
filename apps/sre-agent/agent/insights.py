@@ -15,9 +15,8 @@ from agent import config
 # what stops working with a component (extend for your own services)
 DEPENDENTS = {
     "traefik": ["every URL behind the gateway of that cluster (the apps, Grafana, Argo CD, the report viewer)"],
-    "inventory": ["orders-api (its inventory lookups)", "checkout in the frontend"],
-    "orders-api": ["the frontend (orders and checkout)", "the orders URL through the gateway"],
-    "frontend": ["users of the web shop"],
+    "inventory": ["orders-api (its inventory lookups)"],
+    "orders-api": ["the orders URL through the gateway"],
     "grafana": ["dashboards and alert rules evaluation", "the portal's Grafana pages"],
     "loki": ["log search and log based evidence in reports"],
     "mimir": ["metrics, alert rules and every dashboard"],
