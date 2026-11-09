@@ -206,16 +206,19 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     d0 = recent[0]
                     deploy_ts = rca.parse_ts(d0["deployed_at"])
                     mins_before = int((started - deploy_ts) / 60)
-                    paths = ", ".join(res.get("source_files", [])[:3]) or "unknown path"
+                    source_files = res.get("source_files", [])
+                    paths_str = ", ".join(source_files[:3]) or "unknown path"
                     gh = tools.get_github_deploy_info(d0["revision"])
                     pr_detail = ""
                     if "pr_number" in gh:
                         pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
                     elif gh.get("message"):
                         pr_detail = f"; commit: {gh['message']}"
+                    sig["recent_deploy"] = {**d0, "application": name, "paths": source_files,
+                                            **{k: gh[k] for k in ("pr_number", "pr_title", "pr_url", "message") if k in gh}}
                     add("argocd", f"history {name}",
                         f"deploy {d0['revision']} at {d0['deployed_at']} ({mins_before}m before the alert); "
-                        f"source: {paths}{pr_detail}")
+                        f"source: {paths_str}{pr_detail}")
                     return
                 # no recent deploy for this app — keep trying others
         # fallback: scan all apps targeting the namespace(s)
@@ -239,8 +242,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     # sort by most recent pre-alert deploy first
                     pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
                     if pre_alert:
-                        d0 = pre_alert[0]["history"][0]
-                        sig["recent_deploy"] = d0
+                        a0 = pre_alert[0]
+                        d0 = a0["history"][0]
                         mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
                         summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in pre_alert[:3])
                         window_label = f"{ns_minutes // 60}h" if ns_minutes >= 60 else f"{ns_minutes}m"
@@ -250,6 +253,11 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                             pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
                         elif gh.get("message"):
                             pr_detail = f"; commit: {gh['message']}"
+                        sig["recent_deploy"] = {**d0,
+                                                "application": a0.get("application", ""),
+                                                "destination_namespace": a0.get("destination_namespace", fallback_namespace),
+                                                "paths": a0.get("paths", []),
+                                                **{k: gh[k] for k in ("pr_number", "pr_title", "pr_url", "message") if k in gh}}
                         add("argocd", f"namespace deploys {fallback_namespace}",
                             f"{len(pre_alert)} app(s) deployed in the {window_label} window: {summary} ({mins_before}m before alert){pr_detail}")
                         return
@@ -267,7 +275,8 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     cw_pre.append({**a, "history": before})
             cw_pre.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
             if cw_pre:
-                d0 = cw_pre[0]["history"][0]
+                a0 = cw_pre[0]
+                d0 = a0["history"][0]
                 sig["recent_deploy"] = d0
                 mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
                 summary = "; ".join(
@@ -280,6 +289,11 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                     pr_detail = f"; PR #{gh['pr_number']}: {gh.get('pr_title', '')} ({gh.get('pr_url', '')})"
                 elif gh.get("message"):
                     pr_detail = f"; commit: {gh['message']}"
+                sig["recent_deploy"] = {**d0,
+                                        "application": a0.get("application", ""),
+                                        "destination_namespace": a0.get("destination_namespace", ""),
+                                        "paths": a0.get("paths", []),
+                                        **{k: gh[k] for k in ("pr_number", "pr_title", "pr_url", "message") if k in gh}}
                 add("argocd", "cluster-wide deploy scan",
                     f"{len(cw_pre)} app(s) deployed in the 24h window: {summary} ({mins_before}m before alert){pr_detail}")
                 return
@@ -1103,23 +1117,41 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
         rd = sig["recent_deploy"]
         mins_before = int((ctx["started"] - _rca.parse_ts(rd["deployed_at"])) / 60)
         confidence = "high" if mins_before <= 120 else "medium" if mins_before <= 480 else "low"
+        app_name = rd.get("application", "")
+        dest_ns = rd.get("destination_namespace", "") or ns
+        paths = rd.get("paths", [])
+        pr_num = rd.get("pr_number")
+        pr_title = rd.get("pr_title", "")
+        pr_url = rd.get("pr_url", "")
+        commit_msg = rd.get("message", "")
+        rev = (rd.get("revision") or "")[:10]
+        # human-readable deploy identity
+        pr_ref = f"PR #{pr_num} "{pr_title}"" if pr_num and pr_title else (f"PR #{pr_num}" if pr_num else (f'"{commit_msg}"' if commit_msg else f"commit {rev}"))
+        svc_ref = f"`{app_name}` (namespace `{dest_ns}`)" if app_name else f"`{wl}` (namespace `{dest_ns or ns}`)"
+        paths_line = f"Changed paths: {', '.join(paths[:4])}" if paths else ""
+        pr_link = f" — {pr_url}" if pr_url else ""
+        description = f"{pr_ref} deployed to {svc_ref} {mins_before}m before the alert"
+        what = (
+            f"{pr_ref}{pr_link} was deployed to {svc_ref} {mins_before} minutes before `{alertname}` fired. "
+            + (f"{paths_line}. " if paths_line else "")
+            + "No other independent root cause was identified — the deploy is the most probable trigger."
+        )
         return Diag(
-            "deploy", "application", wl or alertname, confidence,
-            f"a deploy ({rd['revision']}) {mins_before}m before the alert is the most likely cause",
-            f"Deploy `{rd['revision']}` synced {mins_before} minutes before `{alertname}` fired on "
-            f"`{ns + '/' if ns else ''}{wl}`. No other independent signal was found — the deploy is the most probable trigger.",
-            [f"deploy ({rd['revision']}) landed {mins_before}m before the alert", "no other root cause isolated"],
+            "deploy", "application", app_name or wl or alertname, confidence,
+            description,
+            what,
+            [f"{pr_ref} deployed to {svc_ref} {mins_before}m before the alert", "no other root cause isolated"],
             [
-                f"{k} -n {ns or 'default'} rollout status deploy/{wl}  # is the rollout still in progress?",
+                f"{k} -n {dest_ns or ns or 'default'} rollout status deploy/{wl}  # is the rollout still in progress?",
                 f"if still rolling out: wait for it to complete — the alert may clear on its own once all pods are healthy",
-                f"if the alert persists after the rollout finishes: inspect the diff at {rd['revision']} and roll back — git revert {rd['revision']} && git push",
+                f"if the alert persists after the rollout finishes: review the changes in {pr_ref} and roll back — git revert {rev} && git push",
             ],
             [
                 "add a smoke-test or readiness probe that catches the regression before traffic shifts to new pods",
                 "use a canary or progressive rollout strategy to limit blast radius on future deploys",
             ],
             [f"the alert {alertname} stops firing after the rollout completes or after a rollback"],
-            f"Deploy `{rd['revision']}` synced {mins_before}m before the alert.",
+            f"{pr_ref} synced to {svc_ref} {mins_before}m before the alert.",
         )
 
     # ------------------------------------------------------------------ unknown fallback
