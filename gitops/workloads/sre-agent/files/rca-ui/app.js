@@ -11,6 +11,7 @@
     dismissed: new Set(), showDismissed: false,
     read: new Set(), notifOpen: false,
     runs: [], workloads: [],
+    reanalyzing: new Map(), // reportId -> { workflow, interval }
   };
   const meta = new Map(); // id -> report.json
 
@@ -316,6 +317,12 @@
       if (r.root_cause && r.root_cause.category && !isHealthReport && !isSelfLearning) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
+
+      // reanalyzing badge
+      if (state.reanalyzing.has(r.id)) {
+        const badge = el("span", "item-reanalyzing", "Reanalyzing");
+        b.append(badge);
+      }
 
       // dismiss button
       const dismiss = el("button", "item-dismiss", "×");
@@ -996,6 +1003,13 @@
     document.querySelectorAll(".item").forEach((b) => (b.dataset.id === id ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
     $("app").classList.add("reading");
     $("empty").hidden = true; $("report").hidden = false;
+    if (state.reanalyzing.has(id)) {
+      $("body").replaceChildren();
+      const ov = el("div", "reanalyzing-overlay");
+      ov.append(el("div", "reanalyzing-spinner"), el("div", "reanalyzing-title", "Reanalyzing"), el("div", "reanalyzing-sub", "Please wait — running investigation with the current agent version…"));
+      $("body").append(ov);
+      return;
+    }
     $("body").replaceChildren(el("p", "muted", "Loading…"));
     let r = meta.get(id);
     if (!r) { try { r = await getJson(`/${id}/report.json`); meta.set(id, r); } catch (_) { r = { id, alert: id }; } }
@@ -1237,14 +1251,34 @@
     });
     const reanalyze = el("button", "btn", "Re-analyze"); reanalyze.type = "button";
     reanalyze.title = "Re-run investigation with the current agent version";
+    if (state.reanalyzing.has(id)) { reanalyze.disabled = true; reanalyze.textContent = "Reanalyzing…"; }
     reanalyze.addEventListener("click", async () => {
+      if (state.reanalyzing.has(id)) return;
       reanalyze.disabled = true; reanalyze.textContent = "Starting…";
       try {
         const resp = await fetch(`/_re-analyze/${id}`, { method: "POST" });
-        if (resp.ok) { toast("Re-analysis started — new report will appear when done"); }
-        else { toast(`Failed: ${resp.status}`); }
-      } catch (e) { toast("Failed to reach webhook"); }
-      reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
+        if (resp.ok) {
+          const data = await resp.json();
+          reanalyze.textContent = "Reanalyzing…";
+          renderList(); // show blinking badge on list item
+          const iv = setInterval(async () => {
+            try {
+              const sr = await fetch(`/_workflow-status/${data.workflow}`);
+              if (!sr.ok) return;
+              const s = await sr.json();
+              if (s.phase === "Succeeded" || s.phase === "Failed" || s.phase === "Error") {
+                clearInterval(iv);
+                state.reanalyzing.delete(id);
+                reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
+                renderList();
+                if (s.phase === "Succeeded") { toast("Re-analysis complete — refreshing reports…"); await loadList(); renderList(); if (state.current === id) show(id); }
+                else { toast(`Re-analysis ${s.phase.toLowerCase()}`); if (state.current === id) show(id); }
+              }
+            } catch (_) {}
+          }, 5000);
+          state.reanalyzing.set(id, { workflow: data.workflow, interval: iv });
+        } else { toast(`Failed: ${resp.status}`); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
+      } catch (e) { toast("Failed to reach webhook"); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
     });
     actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, reanalyze, dimBtn);
 
