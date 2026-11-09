@@ -184,7 +184,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     deploys = tools.call_tool("get_recent_deploys", {"application": sig["app"]})
     raw["deploys"] = deploys
     sig["source_files"] = deploys.get("source_files", [])
-    recent = [d for d in deploys.get("history", []) if d.get("deployed_at") and parse_ts(d["deployed_at"]) > started - 3600]
+    recent = [d for d in deploys.get("history", []) if d.get("deployed_at") and started - 3600 < parse_ts(d["deployed_at"]) <= started]
     sig["recent_deploy"] = recent[0] if recent else None
     if "error" in deploys:
         # named-app lookup failed — scan all apps in the namespace for any recent deploy
