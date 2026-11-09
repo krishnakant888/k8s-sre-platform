@@ -11,7 +11,7 @@ spec:
   updatePolicy:
     # Initial: applies right-sized requests/limits only when pods are created.
     # Safe alongside HPA (no eviction of running pods, no conflict on CPU metric).
-    updateMode: "Initial"
+    updateMode: "Auto"
   resourcePolicy:
     containerPolicies:
       - containerName: frontend

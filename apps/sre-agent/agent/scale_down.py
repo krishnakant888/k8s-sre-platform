@@ -533,11 +533,6 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
     min_replicas = 2 if workload in config.USER_FACING_SERVICES else 1
     review.update(current_replicas=replicas, candidate_floor=min_replicas)
     requests, limits = _quantity_values(content, "requests"), _quantity_values(content, "limits")
-    cpu_capacity = _cpu_millicores(limits.get("cpu") or requests.get("cpu"))
-    cpu_request = _cpu_millicores(requests.get("cpu"))
-    memory_limit, memory_request = _memory_mib(limits.get("memory")), _memory_mib(requests.get("memory"))
-    if not cpu_capacity or not memory_limit or memory_request is None or cpu_request is None:
-        return skip("CPU or memory requests/limits could not be parsed from the manifest.")
 
     metrics = _metrics(cluster, namespace, workload)
     review["metrics"] = metrics
@@ -554,70 +549,49 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
     if metrics["available_replicas"] < replicas:
         return skip("Not all desired replicas are currently available.", metrics)
 
-    cpu_pct = 100 * metrics["cpu_p95_cores"] * 1000 / cpu_capacity
-    memory_pct = 100 * metrics["memory_p99_bytes"] / (memory_limit * 1024 * 1024)
     throttle_pct = 100 * metrics["cpu_throttle"]
     _cpu_max, _mem_max = _service_thresholds(workload)
-    low_cpu = cpu_pct < _cpu_max * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
-    low_memory = memory_pct < _mem_max * 100
-    review.update(cpu_pct=cpu_pct, memory_pct=memory_pct, throttle_pct=throttle_pct,
-                  low_cpu=low_cpu, low_memory=low_memory)
+    # VPA owns limits — use raw usage vs threshold directly (no limit denominator needed)
+    low_cpu = throttle_pct < CPU_THROTTLE_MAX * 100
+    low_memory = True  # VPA manages memory; only throttle guards replica floor
+    review.update(throttle_pct=throttle_pct, low_cpu=low_cpu, low_memory=low_memory)
 
+    # VPA Auto manages limits+requests at runtime — scale-down agent only proposes
+    # replica floor reduction for workloads without an HPA.
     changed = None
     if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
         changed = _replace_replicas(content, replicas, min_replicas)
         operation = f"replicas `{replicas}` → `{min_replicas}` (candidate floor)"
-    elif low_memory and memory_limit - memory_request >= 128:
-        step = 512 if memory_limit >= 2048 else 128
-        new_mib = max(memory_request, memory_limit - step)
-        if new_mib < memory_limit:
-            new_value = f"{new_mib}Mi"
-            changed = _replace_resource(content, "limits", "memory", limits["memory"], new_value)
-            operation = f"memory limit `{limits['memory']}` → `{new_value}`"
-    elif low_cpu and limits.get("cpu") and (_cpu_millicores(limits["cpu"]) or 0) - cpu_request >= 50:
-        old_cpu = _cpu_millicores(limits["cpu"])
-        new_cpu = max(cpu_request, old_cpu - 50)
-        changed = _replace_resource(content, "limits", "cpu", limits["cpu"], f"{new_cpu}m")
-        operation = f"CPU limit `{limits['cpu']}` → `{new_cpu}m`"
     if not changed:
-        if replicas <= min_replicas and not low_memory and not low_cpu:
-            reason = "At the replica floor; CPU and memory evidence do not support reducing resource limits."
-        elif replicas <= min_replicas and not low_memory:
-            reason = "At the replica floor; memory P99 is too high to reduce the memory limit."
-        elif replicas <= min_replicas and not low_cpu:
-            reason = "At the replica floor; CPU P95 or throttling is too high to reduce the CPU limit."
-        else:
-            reason = "Metrics do not support a safe replica-floor or resource-limit proposal."
+        reason = (
+            "VPA manages resource limits at runtime. "
+            + ("Replica floor already reached." if replicas <= min_replicas
+               else "HPA manages replica count." if hpa_active
+               else "Metrics do not support a safe replica-floor proposal.")
+        )
         return skip(reason, metrics)
 
-    if not hpa_active and replicas > min_replicas and low_cpu and low_memory:
-        decision_reason = (
-            f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% are below their thresholds, "
-            f"and memory P99 is {memory_pct:.1f}%; proposing the configured floor."
-        )
-    elif operation.startswith("memory limit"):
-        decision_reason = f"Memory P99 is {memory_pct:.1f}% of the current limit; reducing one memory step at the replica floor."
-    else:
-        decision_reason = f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% support reducing one CPU step at the replica floor."
+    decision_reason = (
+        f"CPU P95 {cpu_pct:.1f}% and throttling {throttle_pct:.2f}% are below their thresholds, "
+        f"and memory P99 is {memory_pct:.1f}%; proposing the configured floor."
+    )
     review.update(decision="proposal", reason=decision_reason, proposed_change=operation,
-                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}))
+                  candidate_floor=min_replicas)
     pr = _open_recommendation(repo, branch, head_sha, path, blob_sha, changed,
                               workload, operation, {
                                   "cpu_pct": cpu_pct, "throttle_pct": throttle_pct,
                                   "memory_pct": memory_pct,
-                                  **({"candidate_floor": min_replicas} if not hpa_active and replicas > min_replicas and low_cpu and low_memory else {}),
+                                  "candidate_floor": min_replicas,
                               })
     review.update(pr_number=pr.get("number"), pr_url=pr.get("html_url"), merged=pr.get("_merged", False))
     if review["merged"]:
         target_replicas = re.search(r"\breplicas:\s*(\d+)", changed)
-        target_requests = _quantity_values(changed, "requests")
-        target_limits = _quantity_values(changed, "limits")
         review["merged_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         review["post_merge"] = _verify_post_merge(
             workload, namespace, cluster,
             expected_replicas=int(target_replicas.group(1)) if target_replicas else replicas,
-            expected_memory_mib=_memory_mib(target_limits.get("memory")),
-            expected_cpu_millicores=_cpu_millicores(target_limits.get("cpu") or target_requests.get("cpu")),
+            expected_memory_mib=None,
+            expected_cpu_millicores=None,
         )
     else:
         review["post_merge"] = {"status": "not_merged", "checks": [],

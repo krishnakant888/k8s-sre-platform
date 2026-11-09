@@ -1,32 +1,19 @@
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
 metadata:
   name: frontend
   namespace: demo
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
     name: frontend
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 80
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-        - type: Pods
-          value: 1
-          periodSeconds: 60
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  cooldownPeriod: 300
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://mimir.observability:8080/prometheus
+        metricName: nginx_http_requests_total
+        # scale out when RPS per pod exceeds 50
+        query: sum(rate(nginx_http_requests_total{namespace="demo"}[2m]))
+        threshold: "50"

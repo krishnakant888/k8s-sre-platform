@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: orders-api
   updatePolicy:
-    updateMode: "Initial"
+    updateMode: "Auto"
   resourcePolicy:
     containerPolicies:
       - containerName: orders-api

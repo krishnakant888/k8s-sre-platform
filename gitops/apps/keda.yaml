@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-keda
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    targetRevision: 2.15.1
+    helm:
+      values: |
+        resources:
+          operator:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          metricsApiServer:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 128Mi}
+  destination:
+    name: platform
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
