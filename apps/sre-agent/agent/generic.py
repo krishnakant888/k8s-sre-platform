@@ -311,6 +311,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + ("routes with 5xx: " + ", ".join(f"{r[0]}/{r[1]} {r[2]:.2f}/s" for r in sig["failing_routes"][:3]) if sig["failing_routes"] else "no route stands out")
             + f"; configuration reload failures in 15m: {sig['reload_failures']:.0f}")
         logs_for(f'cluster="{cluster}", namespace="{ns}"', "gateway error lines")
+        deploys(["platform-traefik", "traefik"])
         # a configuration error in the log (a middleware that does not exist) lasts until someone fixes it
         config_error = bool(re.search(r"does not exist|failed to load|error while reading", _msgs(sig)))
         sig["ongoing"] = sig["error_ratio_last"] > 0.02 or sig["reload_failures"] > 0 or config_error
@@ -442,6 +443,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             f"HPA {hpa_name}: current={sig['hpa_current']}, max={sig['hpa_max']}, min={sig['hpa_min']}"
             + (f", cpu utilization={sig['hpa_cpu_utilization']:.0%}" if sig["hpa_cpu_utilization"] is not None else ""))
         pods_and_events(hpa_name, ns)
+        deploys([f"platform-{hpa_name}", hpa_name])
         sig["desired"] = sig["hpa_current"]
         sig["ongoing"] = sig["hpa_current"] is not None and sig["hpa_max"] is not None and sig["hpa_current"] >= sig["hpa_max"]
 
