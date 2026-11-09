@@ -1067,6 +1067,8 @@
       : (r.summary || "");
     const staleRootCause = $("report").querySelector(".root-cause-callout");
     if (staleRootCause) staleRootCause.remove();
+    const staleDeployCallout = $("report").querySelector(".deploy-callout");
+    if (staleDeployCallout) staleDeployCallout.remove();
     const facts = $("facts"); facts.replaceChildren();
     if (isHealthReport) {
       const healthData = r[r.report_type] || {};
