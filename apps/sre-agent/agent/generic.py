@@ -32,6 +32,8 @@ FAMILIES = {
     "PodCrashLooping": "container", "PodOOMKilled": "memory", "DeploymentReplicasUnavailable": "rollout",
     "PodFailed": "container", "CriticalAddonDown": "rollout", "InvestigationWorkflowFailed": "pipeline",
     "DatasourceError": "datasource", "DatasourceNoData": "datasource",   # Grafana's own alerts when a rule cannot query its datasource
+    "PodRestartStorm": "container",   # sustained restart burst across a deployment
+    "HpaAtMaxReplicas": "hpa",        # HPA ceiling-bound: needs maxReplicas raised
 }
 
 ERROR_LINES = r"(?i)error|fatal|panic|exception|traceback|refused|denied|timeout|unable|failed|cannot"
@@ -391,6 +393,24 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         # Broad error log for overall context
         logs_for('cluster="observability", namespace="sre-agent"', "error lines of the investigation steps and the webhook")
         sig["ongoing"] = True
+
+    elif family == "hpa":
+        hpa_name = labels.get("horizontalpodautoscaler", workload)
+        sel_hpa = f'cluster="{cluster}", namespace="{ns}", horizontalpodautoscaler="{hpa_name}"'
+        cur = _q(f'max(kube_horizontalpodautoscaler_status_current_replicas{{{sel_hpa}}})', 30)
+        max_r = _q(f'max(kube_horizontalpodautoscaler_spec_max_replicas{{{sel_hpa}}})', 5)
+        min_r = _q(f'max(kube_horizontalpodautoscaler_spec_min_replicas{{{sel_hpa}}})', 5)
+        cpu_util = _q(f'max(kube_horizontalpodautoscaler_status_target_metric_value{{cluster="{cluster}", namespace="{ns}", horizontalpodautoscaler="{hpa_name}", metric_name="cpu"}})', 30)
+        sig["hpa_current"] = _num(cur, "last")
+        sig["hpa_max"] = _num(max_r, "last")
+        sig["hpa_min"] = _num(min_r, "last")
+        sig["hpa_cpu_utilization"] = _num(cpu_util, "max")
+        add("mimir", sel_hpa,
+            f"HPA {hpa_name}: current={sig['hpa_current']}, max={sig['hpa_max']}, min={sig['hpa_min']}"
+            + (f", cpu utilization={sig['hpa_cpu_utilization']:.0%}" if sig["hpa_cpu_utilization"] is not None else ""))
+        pods_and_events(hpa_name, ns)
+        sig["desired"] = sig["hpa_current"]
+        sig["ongoing"] = sig["hpa_current"] is not None and sig["hpa_max"] is not None and sig["hpa_current"] >= sig["hpa_max"]
 
     elif family == "telemetry":
         target = labels.get("cluster") or cluster
@@ -919,6 +939,23 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     ["pods are ready", "only the scrape fails"], [f"{k} -n {ns} get networkpolicy  # does one allow the collector (namespace observability, alloy) in?", f"{k} -n {ns} describe pod {pod.get('pod', wl)} | grep -i -A3 annotations  # port and path of the scrape"],
                     ["Name the metrics port `metrics` (the collector then finds it with no annotation) and allow the collector in the namespace's network policy"], [f"up{{cluster=\"{cluster}\",namespace=\"{ns}\"}} == 1"], f"No metrics (and no alerts based on them) for {wl}.")
 
+    if family == "hpa":
+        hpa_name = labels.get("horizontalpodautoscaler", wl)
+        cur = int(sig.get("hpa_current") or 0)
+        max_r = int(sig.get("hpa_max") or 0)
+        cpu_util = sig.get("hpa_cpu_utilization")
+        cpu_note = f"; CPU utilization is {cpu_util:.0%}" if cpu_util is not None else ""
+        return Diag("hpa_saturation", "infrastructure", f"HPA {hpa_name} maxReplicas={max_r}", "medium",
+                    f"The HPA {hpa_name} has been at its maximum of {max_r} replicas for over 30 minutes{cpu_note}.",
+                    f"The HPA `{ns}/{hpa_name}` ({cluster}) has been running at its `maxReplicas` ceiling of {max_r} for at least 30 minutes{cpu_note}. The autoscaler wants to scale further but cannot; if load continues to rise, error rates or latency will degrade. This needs `maxReplicas` raised in the manifest.",
+                    [f"kube_horizontalpodautoscaler_status_current_replicas >= kube_horizontalpodautoscaler_spec_max_replicas for 30m"
+                     + (f"; CPU utilization {cpu_util:.0%}" if cpu_util is not None else "")],
+                    [f"Raise `maxReplicas` for `{hpa_name}` in its GitOps manifest (gitops/workloads/{wl}/hpa.yaml)",
+                     f"kubectl -n {ns} describe hpa {hpa_name}  # see current utilization and desired replicas"],
+                    ["Set maxReplicas to at least 2× the typical peak current replicas with a 30% buffer; review monthly in the HPA saturation report"],
+                    [f"kube_horizontalpodautoscaler_status_current_replicas{{namespace=\"{ns}\",horizontalpodautoscaler=\"{hpa_name}\"}} < {max_r}  # scaling room restored"],
+                    f"Load cannot be absorbed; {wl} is at its replica ceiling.")
+
     # ------------------------------------------------------------------ fallback
     return Diag("unknown", "unknown", f"{wl or alertname}", "low", f"{alertname} fired but the collected signals do not point to a single cause.",
                 f"The alert {alertname} fired for `{ns + '/' if ns else ''}{wl}` in the {cluster} cluster. The metrics, logs and events gathered do not isolate a cause; see the evidence below for what was checked.",
@@ -959,7 +996,7 @@ def _priority(alert: dict, ctx: dict, d: Diag) -> Priority:
             why.append(f"{len(ready)} replica(s) still serve, so users see reduced capacity, not an outage")
     else:
         why.append("no direct user traffic depends on it" if family not in ("controlplane", "dns", "telemetry", "argocd") else "it is platform infrastructure")
-        if family in ("container", "memory", "cpu", "rollout", "job", "target", "scheduling", "datasource"):
+        if family in ("container", "memory", "cpu", "rollout", "job", "target", "scheduling", "datasource", "hpa"):
             level = max(level, 3)   # a platform component without user impact never outranks next business day
             why.append("a platform component with no direct user impact is capped at P3")
 

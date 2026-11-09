@@ -53,7 +53,7 @@
     saveRead(); updateNotifBadge(); renderList(); renderNotifList();
   }
   function updateNotifBadge() {
-    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && r.report_type !== "capacity").length;
+    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)).length;
     const badge = $("notif-badge");
     if (badge) { badge.hidden = unread === 0; badge.textContent = unread > 9 ? "9+" : unread; }
   }
@@ -95,6 +95,9 @@
   const getJson = async (url) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
   const getText = async (url) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.text(); };
   const reportType = (r) => {
+    if (r.report_type === "restart_storm") return "restart_storm";
+    if (r.report_type === "hpa_saturation") return "hpa_saturation";
+    if (r.report_type === "change_risk") return "change_risk";
     if (r.report_type !== "capacity") return "incident";
     if (r.capacity && r.capacity.review_type === "weekly_floor") return "weekly_floor";
     return "capacity";
@@ -103,7 +106,7 @@
   // ---- tab counts --------------------------------------------------------------------------------------------
   function updateTabCounts() {
     const active = state.reports.filter((r) => !state.dismissed.has(r.id));
-    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0 };
+    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0, restart_storm: 0, hpa_saturation: 0, change_risk: 0 };
     for (const r of active) counts[reportType(r)] = (counts[reportType(r)] || 0) + 1;
     for (const [type, n] of Object.entries(counts)) {
       const ct = $("tc-" + type);
@@ -123,7 +126,7 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-        if (r.report_type === "capacity") { state.live[r.id] = "capacity"; continue; }
+        if (["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)) { state.live[r.id] = "capacity"; continue; }
         if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
@@ -160,6 +163,9 @@
       if (state.type === "incident" && rt !== "incident") return false;
       if (state.type === "capacity" && rt !== "capacity") return false;
       if (state.type === "weekly_floor" && rt !== "weekly_floor") return false;
+      if (state.type === "restart_storm" && rt !== "restart_storm") return false;
+      if (state.type === "hpa_saturation" && rt !== "hpa_saturation") return false;
+      if (state.type === "change_risk" && rt !== "change_risk") return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
         r.root_cause && r.root_cause.category, r.fault_domain && r.fault_domain.layer, level(r)].join(" ").toLowerCase().includes(q);
@@ -198,7 +204,8 @@
       const liveState = state.live[r.id];
       if (liveState === "firing") b.dataset.live = "firing";
       else if (liveState === "resolved") b.dataset.live = "resolved";
-      if (!state.read.has(r.id) && r.report_type !== "capacity") b.dataset.unread = level(r).toLowerCase() || "p4";
+      const isHealthReport = ["restart_storm","hpa_saturation","change_risk"].includes(r.report_type);
+      if (!state.read.has(r.id) && r.report_type !== "capacity" && !isHealthReport) b.dataset.unread = level(r).toLowerCase() || "p4";
       if (state.current === r.id) b.setAttribute("aria-current", "true");
       if (state.dismissed.has(r.id)) b.classList.add("is-dismissed");
       const top = el("div", "item-top");
@@ -213,7 +220,12 @@
         else if (verificationStatus === "needs_attention") b.classList.add("capacity-attention");
       }
       const capacityTitle = capacityLabel(r);
-      top.append(el("span", "item-title", isCapacity ? capacityTitle + " · " + (r.service || "workload") : (r.alert || r.id)));
+      const healthLabel = { restart_storm: "Restart storm", hpa_saturation: "HPA saturation", change_risk: "Change risk" }[r.report_type];
+      const healthData = r[r.report_type] || {};
+      top.append(el("span", "item-title",
+        isCapacity ? capacityTitle + " · " + (r.service || "workload") :
+        isHealthReport ? healthLabel + " · " + (r.service || "platform") :
+        (r.alert || r.id)));
       if (isCapacity) {
         top.append(pill(capacityTitle, "soft"));
         if (verificationStatus) {
@@ -223,9 +235,15 @@
           top.append(pill(label2, verificationStatus === "healthy" ? "ok" : verificationStatus === "needs_attention" ? "p1" : "soft"));
         }
       }
+      if (isHealthReport) {
+        const flagged = healthData.flagged_count || 0;
+        top.append(pill(healthLabel, "soft"));
+        if (flagged > 0) top.append(pill(flagged + " flagged", "p2"));
+        else top.append(pill("All clear", "ok"));
+      }
       const done = state.live[r.id] === "resolved";
       if (done) b.classList.add("resolved");
-      if (level(r)) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
+      if (level(r) && !isHealthReport) top.append(pill(done ? level(r) + " ✓" : level(r), done ? "ok big" : level(r).toLowerCase() + " big"));
       if (r.insights?.change?.likely) {
         const ch = r.insights.change;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
@@ -239,6 +257,9 @@
         if (capacity.review_type === "weekly_floor") top.append(pill("Weekly floor", "ok"));
         const action = (capacity.proposed_change || capacity.reason || r.summary || "No change proposed").replace(/`/g, "");
         b.append(top, el("div", "item-sub item-action", action), el("div", "item-sub", "ID: " + r.id));
+      } else if (isHealthReport) {
+        const sub = (r.summary || "").replace(/`/g, "");
+        b.append(top, el("div", "item-sub item-action", sub), el("div", "item-sub", "ID: " + r.id));
       } else b.append(top, el("div", "item-sub", "ID: " + r.id + (r.service ? " - " + r.service : "")));
       const m = el("div", "item-meta");
       m.append(el("span", "", ago(d)));
@@ -249,7 +270,7 @@
         else if (capacity.review_type === "weekly_floor") m.append(el("span", "", "recommendation only"));
         else if (!verificationStatus && capacity.decision) m.append(el("span", "", words(capacity.decision)));
       }
-      if (r.root_cause && r.root_cause.category) m.append(el("span", "", "· " + words(r.root_cause.category)));
+      if (r.root_cause && r.root_cause.category && !isHealthReport) m.append(el("span", "", "· " + words(r.root_cause.category)));
       b.append(m);
       b.addEventListener("click", () => { location.hash = r.id; });
 
@@ -459,7 +480,7 @@
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
     body.replaceChildren();
-    if (r.report_type === "capacity") { card.hidden = true; return; }
+    if (["capacity","restart_storm","hpa_saturation","change_risk"].includes(r.report_type)) { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
     const grid = el("dl", "facts-grid");
@@ -691,12 +712,20 @@
 
     const pills = $("pills"); pills.replaceChildren();
     const isCapacity = r.report_type === "capacity";
+    const isHealthReport = ["restart_storm","hpa_saturation","change_risk"].includes(r.report_type);
     const lv = level(r);
-    if (lv) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
+    if (lv && !isHealthReport) pills.append(pill(`${lv}${r.priority.respond_within ? " · respond " + r.priority.respond_within : ""}`, lv.toLowerCase()));
     if (isCapacity) {
       pills.append(pill(capacityLabel(r), "soft"));
       const priorityPill = pills.querySelector(".pill");
       if (priorityPill) priorityPill.remove();
+    }
+    if (isHealthReport) {
+      const healthLabel = { restart_storm: "Restart storm", hpa_saturation: "HPA saturation", change_risk: "Change risk" }[r.report_type];
+      const healthData = r[r.report_type] || {};
+      const flagged = healthData.flagged_count || 0;
+      pills.append(pill(healthLabel, "soft"));
+      pills.append(pill(flagged > 0 ? flagged + " flagged" : "All clear", flagged > 0 ? "p2" : "ok"));
     }
     const decision = r.capacity && r.capacity.decision;
     const postMergeStatus = isCapacity && r.capacity.post_merge && r.capacity.post_merge.status;
@@ -719,7 +748,7 @@
     }
     if (r.severity && !isCapacity) pills.append(pill("alert severity " + r.severity, "soft"));
     if (r.mode && !isCapacity) pills.append(pill(words(r.mode), "soft"));
-    if (r.insights?.change?.likely && !isCapacity) {
+    if (r.insights?.change?.likely && !isCapacity && !isHealthReport) {
       const ch = r.insights.change;
       const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert} min before alert` : (ch.revision || "").slice(0, 8);
       const files = (ch.files || []).join(", ");
@@ -727,10 +756,21 @@
       dp.title = (ch.note || "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
-    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : capacityLabel(r) + " for ") + (r.service || "workload") : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
-    $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.") : (r.summary || "");
+    const healthTitles = { restart_storm: "Restart storm review", hpa_saturation: "HPA saturation review", change_risk: "Change risk report" };
+    $("title").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly replica-floor review for " : capacityLabel(r) + " for ") + (r.service || "workload")
+      : isHealthReport ? (healthTitles[r.report_type] || "Health review") + " · " + (r.service || "platform")
+      : `${r.alert || id}${r.service ? " on " + r.service : ""}`;
+    $("summary").textContent = isCapacity ? (r.capacity.review_type === "weekly_floor" ? "Weekly service floor recommendation with telemetry coverage and availability evidence. No scaling action is applied." : "Capacity review, change record, and post-change health evidence.")
+      : (r.summary || "");
     const facts = $("facts"); facts.replaceChildren();
-    if (isCapacity) {
+    if (isHealthReport) {
+      const healthData = r[r.report_type] || {};
+      fact(facts, "Cluster", healthData.cluster || CLUSTER || "platform");
+      fact(facts, "Window", healthData.window || "7d");
+      fact(facts, "Flagged", (healthData.flagged_count || 0) + " workload(s)");
+      fact(facts, "Report written", fmtTime(when(r.generated_at)));
+      fact(facts, "Report ID", id);
+    } else if (isCapacity) {
       fact(facts, "Cluster", r.capacity.cluster || "not recorded");
       fact(facts, "Namespace", r.capacity.namespace || "not recorded");
       fact(facts, "Workload", r.service || r.capacity.workload || "not recorded");
@@ -740,7 +780,7 @@
       fact(facts, r.capacity.review_type === "weekly_floor" ? "Configured minimum" : "Replica floor",
         r.capacity.review_type === "weekly_floor" ? r.capacity.configured_floor : r.capacity.candidate_floor);
       fact(facts, "Reviewed", fmtTime(when(r.started_at)));
-    } else {
+    } else if (!isHealthReport) {
       fact(facts, "Where", r.fault_domain && r.fault_domain.layer ? `${r.fault_domain.layer} level` : "");
       fact(facts, "Component", r.fault_domain && r.fault_domain.component);
       fact(facts, "Root cause", r.root_cause && r.root_cause.category ? `${words(r.root_cause.category)}${r.root_cause.confidence ? " (" + r.root_cause.confidence + " confidence)" : ""}` : "");
@@ -750,7 +790,7 @@
       // root cause callout — prominent above-fold anchor for incident responders
       const oldCallout = $("report").querySelector(".root-cause-callout");
       if (oldCallout) oldCallout.remove();
-      if (!isCapacity && r.root_cause && r.root_cause.category) {
+      if (!isCapacity && !isHealthReport && r.root_cause && r.root_cause.category) {
         const callout = el("div", "root-cause-callout");
         const icon = el("span", "rc-icon", "🔍");
         const content = el("div");
@@ -782,7 +822,7 @@
       // re-render action bar to reflect new state
       show(id);
     });
-    actions.append(copy, link(isCapacity ? "Capacity plan" : "Markdown", `/${id}/rca.md`), link(isCapacity ? "Report data" : "JSON", `/${id}/report.json`), print, dimBtn);
+    actions.append(copy, link(isCapacity || isHealthReport ? "Markdown" : "Markdown", `/${id}/rca.md`), link(isCapacity || isHealthReport ? "Report data" : "JSON", `/${id}/report.json`), print, dimBtn);
 
     const body = $("body");
     const toc = $("toc");
@@ -790,6 +830,12 @@
       toc.replaceChildren(); toc.hidden = true;
       body.parentElement.classList.add("capacity-grid");
       renderCapacityPlan(body, r);
+    } else if (isHealthReport) {
+      toc.replaceChildren(); toc.hidden = false;
+      body.parentElement.classList.remove("capacity-grid");
+      body.innerHTML = DOMPurify.sanitize(marked.parse(md), { ADD_ATTR: ["target"] });
+      enhance(body);
+      buildToc(body);
     } else {
       toc.hidden = false;
       body.parentElement.classList.remove("capacity-grid");
@@ -797,7 +843,7 @@
       enhance(body);
       buildToc(body);
     }
-    renderInsights(r);
+    if (!isHealthReport) renderInsights(r);
     renderAlertDetails(r);
     $("arch").closest(".arch-card").hidden = isCapacity;
     if (!isCapacity) {
