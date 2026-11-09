@@ -182,8 +182,8 @@
       if (!state.showDismissed && state.dismissed.has(r.id)) return false;
       if (state.filter.size && !state.filter.has(level(r))) return false;
       const rt = reportType(r);
+      if (CAPACITY_TYPES.has(rt)) return false;  // capacity planning removed; hide old reports
       if (state.type === "incident" && rt !== "incident") return false;
-      if (state.type === "capacity" && !CAPACITY_TYPES.has(rt)) return false;
       if (state.type === "health" && !HEALTH_TYPES.has(rt)) return false;
       if (state.type === "self_learning" && rt !== "self_learning") return false;
       if (!q) return true;
