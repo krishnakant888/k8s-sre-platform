@@ -21,6 +21,10 @@ spec:
   template:
     metadata:
       labels: {app.kubernetes.io/name: frontend, app.kubernetes.io/version: "1.0.0", team: platform}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+        prometheus.io/path: /metrics
     spec:
       serviceAccountName: frontend
       automountServiceAccountToken: false
@@ -47,9 +51,6 @@ spec:
             httpGet: {path: /healthz, port: http}
             initialDelaySeconds: 10
             periodSeconds: 10
-          resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -58,6 +59,17 @@ spec:
             - {name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf}
             - {name: html, mountPath: /usr/share/nginx/html}
             - {name: tmp, mountPath: /tmp}
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:1.3.0
+          args: ["--nginx.scrape-uri=http://127.0.0.1:8080/nginx_status"]
+          ports:
+            - {name: metrics, containerPort: 9113}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities: {drop: [ALL]}
       volumes:
         - name: nginx-conf
           configMap: {name: frontend-nginx}

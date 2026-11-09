@@ -32,6 +32,7 @@ data:
         add_header X-Request-Id $request_id always;
 
         location = /healthz { access_log off; return 200 "ok\n"; }
+        location = /nginx_status { stub_status; access_log off; allow 127.0.0.1; deny all; }
 
         # fault injection for the failure scenarios (scripts/scenarios.sh), local demo only
         location = /_scenarios/error500 { return 500 "injected failure\n"; }
