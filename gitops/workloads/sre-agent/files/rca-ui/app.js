@@ -791,7 +791,8 @@
       metric("Rediagnosed", String(sl.rediagnosed || 0), "unknown → known root cause"),
       metric("Gap issues", String((sl.gap_results || []).filter((g) => g.is_new).length) + " new / " + (sl.gap_results || []).length + " total", "GitHub issues"),
       metric("Families calibrated", String(Object.keys(sl.calibration || {}).length), "confidence updated"),
-      metric("Services tuned", String(Object.keys(sl.thresholds || {}).length), "thresholds updated")
+      metric("Services tuned", String(Object.keys(sl.thresholds || {}).length), "thresholds updated"),
+      metric("LLM-reviewed", String((sl.llm_reviewed || []).length), "rule_based → improved")
     );
     stats.append(grid);
     top.append(overview, stats);
@@ -899,6 +900,37 @@
         thrSec.append(card);
       }
       container.append(thrSec);
+    }
+
+    // --- llm report review ---
+    const llmReviewed = sl.llm_reviewed || [];
+    if (llmReviewed.length) {
+      const llmSec = mkSection("LLM report review (" + llmReviewed.length + " improved)", "capacity-action-panel");
+      const llmList = el("ul", "capacity-check-list");
+      const confIcon = { low: "🔺", medium: "⚠️", high: "✅" };
+      for (const rp of llmReviewed) {
+        const row = el("li", "capacity-check passed");
+        row.append(el("span", "capacity-check-icon", "✦"));
+        const text = el("span", "capacity-check-text");
+        const link = el("a", "sl-report-link"); link.href = "/" + rp.id + "/rca.md"; link.textContent = rp.id; link.target = "_blank";
+        text.append(link);
+        text.append(el("span", "", " · " + (rp.service || "") + " · " + (rp.alert || "")));
+        if (rp.was_confidence || rp.now_confidence) {
+          const conf = el("span", "sl-thr-detail");
+          conf.textContent = " · confidence: " + (confIcon[rp.was_confidence] || "") + " " + (rp.was_confidence || "?") + " → " + (confIcon[rp.now_confidence] || "") + " " + (rp.now_confidence || "?");
+          text.append(conf);
+        }
+        row.append(text); llmList.append(row);
+      }
+      llmSec.append(llmList);
+      llmSec.append(el("p", "muted", "Reports tagged mode: llm_reviewed · rca.md replaced in-place with improved narrative."));
+      container.append(llmSec);
+    } else if (!sl.errors?.includes("llm_report_review")) {
+      const noKey = mkSection("LLM report review", "capacity-health-panel");
+      noKey.append(el("p", "muted", config.anthropic_api_key_set
+        ? "No rule_based reports eligible this run."
+        : "Set ANTHROPIC_API_KEY to enable retroactive LLM review of rule_based reports."));
+      container.append(noKey);
     }
 
     if (errors.length) {
@@ -1015,6 +1047,7 @@
       fact(facts, "Gap issues", newIssues + " new · " + gapResults.length + " total tracked");
       fact(facts, "Families calibrated", String(Object.keys(slFacts.calibration || {}).length));
       fact(facts, "Services tuned", String(Object.keys(slFacts.thresholds || {}).length));
+      fact(facts, "LLM-reviewed", String((slFacts.llm_reviewed || []).length) + " reports");
       fact(facts, "Report written", fmtTime(when(r.generated_at)));
       fact(facts, "Report ID", id);
     } else if (!isHealthReport) {

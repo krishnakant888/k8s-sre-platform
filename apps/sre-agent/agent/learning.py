@@ -530,6 +530,142 @@ def run_threshold_tuning() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 5. LLM review of past rule_based reports
+# ---------------------------------------------------------------------------
+
+_LLM_REVIEW_SYSTEM = """You are an SRE reviewing a previously written rule-based incident report.
+You have the alert details, the evidence collected at incident time, and the current report fields.
+Treat the evidence as ground truth — do not invent facts not in it.
+
+Improve the report by:
+1. what_happened — 3-5 plain sentences: what broke, when, how bad, exact numbers, cause chain.
+2. root_cause_description — specific reasoning from evidence; not generic.
+3. root_cause_confidence — low / medium / high; downgrade if evidence is thin.
+4. how_to_fix_immediate — exact kubectl/helm commands, file paths, expected values.
+5. how_to_fix_permanent — the specific config or code change that prevents recurrence.
+6. how_to_fix_verify — a PromQL / LogQL query or kubectl command and the value to expect when fixed.
+7. observability_gaps — precise gaps; exact metric name, log field, or alert expression to add.
+8. rca_markdown — full blameless postmortem: summary, impact, timeline, root cause, action items.
+
+If the rule-based hypothesis looks wrong, say so and explain from the evidence.
+Distinguish symptoms (errors, latency) from causes (killed pod, slow dep, deploy, limit).
+Respond ONLY with a JSON object with keys:
+  what_happened, root_cause_description, root_cause_confidence,
+  how_to_fix_immediate (list), how_to_fix_permanent (list), how_to_fix_verify (list),
+  observability_gaps (list), rca_markdown."""
+
+_LLM_REVIEW_BATCH = int(os.getenv("LLM_REVIEW_BATCH", "10"))
+
+
+def run_llm_report_review() -> list[dict]:
+    """Use Claude to improve rule_based incident reports using their stored evidence.
+
+    Does NOT re-run live queries — evidence was stored at incident time and may predate
+    Mimir/Loki retention. Instead, Claude reasons over the stored evidence to produce
+    better narrative, more specific fix commands and tighter gap descriptions.
+
+    Reports with mode=llm or llm_reviewed_at set are skipped.
+    Processes at most LLM_REVIEW_BATCH (default 10) reports per run to bound API cost.
+    Returns list of {id, service, alert, was_confidence, now_confidence}.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        log.info("learning: llm_review skipped (no ANTHROPIC_API_KEY)")
+        return []
+
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        log.warning("learning: llm_review skipped (anthropic package not installed)")
+        return []
+
+    reports = _load_all_reports()
+    eligible = [
+        r for r in reports
+        if r.get("report_type", "incident") == "incident"
+        and r.get("mode") == "rule_based"
+        and not r.get("llm_reviewed_at")
+        and r.get("evidence")
+    ]
+
+    if not eligible:
+        log.info("learning: llm_review: no eligible rule_based reports")
+        return []
+
+    log.info("learning: llm_review: %d eligible, processing up to %d", len(eligible), _LLM_REVIEW_BATCH)
+    client = _anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    improved: list[dict] = []
+
+    for r in eligible[:_LLM_REVIEW_BATCH]:
+        rid = r.get("id", "?")
+        rp = REPORTS_DIR / rid / "report.json"
+        if not rp.exists():
+            continue
+        try:
+            evidence_text = json.dumps(r.get("evidence", []), indent=2)[:6000]
+            current = (
+                f"Alert: {r.get('alert', '')} | Service: {r.get('service', '')} | "
+                f"Severity: {r.get('severity', '')} | Started: {r.get('started_at', '')}\n\n"
+                f"Current root_cause: {json.dumps(r.get('root_cause', {}))}\n"
+                f"Current what_happened: {r.get('what_happened', '')}\n"
+                f"Current how_to_fix: {json.dumps(r.get('how_to_fix', {}))}\n"
+                f"Current observability_gaps: {json.dumps(r.get('observability_gaps', []))}\n\n"
+                f"Evidence:\n{evidence_text}"
+            )
+            resp = client.messages.create(
+                model=config.ANTHROPIC_MODEL,
+                max_tokens=2048,
+                system=_LLM_REVIEW_SYSTEM,
+                messages=[{"role": "user", "content": current + "\n\nRespond with JSON only."}],
+            )
+            raw = resp.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = "\n".join(raw.split("\n")[1:])
+                if raw.endswith("```"):
+                    raw = raw[: raw.rfind("```")]
+            data = json.loads(raw)
+
+            stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            old_conf = (r.get("root_cause") or {}).get("confidence", "")
+            r["llm_reviewed_at"] = stamp
+            r["mode"] = "llm_reviewed"
+            if data.get("what_happened"):
+                r["what_happened"] = data["what_happened"]
+            rc = r.setdefault("root_cause", {})
+            if data.get("root_cause_description"):
+                rc["description"] = data["root_cause_description"]
+            if data.get("root_cause_confidence"):
+                rc["confidence"] = data["root_cause_confidence"]
+            htf = r.setdefault("how_to_fix", {})
+            if data.get("how_to_fix_immediate"):
+                htf["immediate"] = data["how_to_fix_immediate"]
+            if data.get("how_to_fix_permanent"):
+                htf["permanent"] = data["how_to_fix_permanent"]
+            if data.get("how_to_fix_verify"):
+                htf["verify"] = data["how_to_fix_verify"]
+            if data.get("observability_gaps"):
+                r["observability_gaps"] = data["observability_gaps"]
+            if data.get("rca_markdown"):
+                (REPORTS_DIR / rid / "rca.md").write_text(data["rca_markdown"], encoding="utf-8")
+
+            _atomic_write(rp, r)
+            new_conf = rc.get("confidence", "")
+            improved.append({
+                "id": rid,
+                "service": r.get("service", ""),
+                "alert": r.get("alert", ""),
+                "was_confidence": old_conf,
+                "now_confidence": new_conf,
+            })
+            log.info("learning: llm_review improved %s (%s → %s)", rid, old_conf, new_conf)
+        except Exception as exc:
+            log.warning("learning: llm_review failed for %s: %s", rid, exc)
+
+    log.info("learning: llm_review complete; improved %d / %d eligible reports",
+             len(improved), len(eligible))
+    return improved
+
+
+# ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
 
@@ -559,15 +695,18 @@ def _write_self_learning_report(
     calibration: dict,
     thresholds: dict,
     errors: list,
+    llm_reviewed: list[dict] | None = None,
 ) -> None:
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     report_id = "rca-self-learning-" + stamp[:19].replace(":", "").replace("-", "").replace("T", "T")
+    llm_reviewed = llm_reviewed or []
 
     n_rediag = len(rediagnosed_reports)
     new_issues = [g for g in gap_results if g.get("is_new")]
     n_new_issues = len(new_issues)
     n_families = len([k for k in calibration if not k.startswith("_") and isinstance(calibration[k], dict)])
     n_services = len([k for k in thresholds if not k.startswith("_") and isinstance(thresholds[k], dict)])
+    n_llm = len(llm_reviewed)
 
     parts = []
     if n_rediag:
@@ -578,6 +717,8 @@ def _write_self_learning_report(
         parts.append(f"{n_families} families calibrated")
     if n_services:
         parts.append(f"{n_services} services tuned")
+    if n_llm:
+        parts.append(f"{n_llm} report{'s' if n_llm != 1 else ''} LLM-reviewed")
     if errors:
         parts.append(f"{len(errors)} error(s)")
     summary = "Self-learning pass: " + (", ".join(parts) if parts else "nothing to update")
@@ -685,10 +826,34 @@ Defaults: CPU P95 ≤ {_DEFAULT_CPU_MAX}, Mem P99 ≤ {_DEFAULT_MEM_MAX}.
     else:
         thr_section = "## Threshold decisions\n\nNo services with capacity history found.\n"
 
+    # --- llm review section ---
+    if llm_reviewed:
+        conf_arrow = {"low": "🔺", "medium": "⚠️", "high": "✅"}
+        llm_rows = "\n".join(
+            f"| [{r['id']}](/{r['id']}/rca.md) | {r['service']} | {r['alert']} | "
+            f"{conf_arrow.get(r['was_confidence'], r['was_confidence'])} {r['was_confidence']} | "
+            f"{conf_arrow.get(r['now_confidence'], r['now_confidence'])} {r['now_confidence']} |"
+            for r in llm_reviewed
+        )
+        llm_review_section = f"""## LLM report review
+
+Claude re-reviewed these `rule_based` reports using their stored evidence.
+Improvements: narrative (`what_happened`), fix commands (`how_to_fix`), gap descriptions, full RCA Markdown.
+
+| Report | Service | Alert | Was | Now |
+|--------|---------|-------|-----|-----|
+{llm_rows}
+
+Reports are tagged `mode: llm_reviewed` and their `rca.md` is replaced in-place.
+"""
+    else:
+        no_key_note = " (set ANTHROPIC_API_KEY to enable)" if not config.ANTHROPIC_API_KEY else ""
+        llm_review_section = f"## LLM report review\n\nNo rule_based reports eligible or pass skipped{no_key_note}.\n"
+
     # --- errors ---
     err_section = ""
     if errors:
-        err_section = f"\n## Errors\n\nThe following modules failed this run:\n\n" + "\n".join(f"- `{e}`" for e in errors) + "\n"
+        err_section = "\n## Errors\n\nThe following modules failed this run:\n\n" + "\n".join(f"- `{e}`" for e in errors) + "\n"
 
     md = f"""# Self-learning report · {stamp[:10]}
 
@@ -702,12 +867,14 @@ Defaults: CPU P95 ≤ {_DEFAULT_CPU_MAX}, Mem P99 ≤ {_DEFAULT_MEM_MAX}.
 | Gap tracker | {n_new_issues} new issue(s) opened · {len(gap_results)} total tracked gaps |
 | Confidence calibration | {n_families} famil{'ies' if n_families != 1 else 'y'} |
 | Threshold tuning | {n_services} service{'s' if n_services != 1 else ''} |
+| LLM report review | {n_llm} report{'s' if n_llm != 1 else ''} improved |
 {"| **Errors** | " + ", ".join(errors) + " |" if errors else ""}
 
 {rediag_section}
 {gap_section}
 {cal_section}
-{thr_section}{err_section}"""
+{thr_section}
+{llm_review_section}{err_section}"""
 
     report = {
         "id": report_id,
@@ -725,6 +892,7 @@ Defaults: CPU P95 ≤ {_DEFAULT_CPU_MAX}, Mem P99 ≤ {_DEFAULT_MEM_MAX}.
             "gap_results": gap_results,
             "calibration": {k: v for k, v in calibration.items() if not k.startswith("_")},
             "thresholds": {k: v for k, v in thresholds.items() if not k.startswith("_")},
+            "llm_reviewed": llm_reviewed,
             "errors": errors,
         },
     }
@@ -742,11 +910,13 @@ def run_self_learning() -> None:
     gap_results: list[dict] = []
     calibration: dict = {}
     thresholds: dict = {}
+    llm_reviewed: list[dict] = []
     for name, fn in [
         ("unknown_rediagnosis", run_unknown_rediagnosis),
         ("gap_tracker", run_gap_tracker),
         ("confidence_calibration", run_confidence_calibration),
         ("threshold_tuning", run_threshold_tuning),
+        ("llm_report_review", run_llm_report_review),
     ]:
         try:
             result = fn()
@@ -758,11 +928,13 @@ def run_self_learning() -> None:
                 calibration = result or {}
             elif name == "threshold_tuning":
                 thresholds = result or {}
+            elif name == "llm_report_review":
+                llm_reviewed = result or []
         except Exception as exc:
             log.exception("learning: %s failed: %s", name, exc)
             errors.append(name)
     try:
-        _write_self_learning_report(rediagnosed_reports, gap_results, calibration, thresholds, errors)
+        _write_self_learning_report(rediagnosed_reports, gap_results, calibration, thresholds, errors, llm_reviewed)
     except Exception as exc:
         log.exception("learning: could not write self-learning report: %s", exc)
     if errors:
