@@ -43,6 +43,9 @@ def analyze(alert: dict, ctx: dict) -> dict:
             if pr.get("type") == "cpu_scaleup":
                 change_desc = f"CPU limit {pr.get('old_cpu_limit')} → {pr.get('new_cpu_limit')}"
                 sync_msg = "Remediation already applied — wait for Argo CD to sync the new CPU limit"
+            elif pr.get("type") == "hpa_maxreplicas":
+                change_desc = f"HPA maxReplicas {pr.get('old_max_replicas')} → {pr.get('new_max_replicas')}"
+                sync_msg = "Remediation already applied — wait for Argo CD to sync the new maxReplicas"
             else:
                 change_desc = f"memory limit {pr.get('old_limit')} → {pr.get('new_limit')}"
                 sync_msg = "Remediation already applied — wait for Argo CD to sync the new limit"
@@ -78,9 +81,9 @@ def incident_details(mode: str, now: datetime | None = None) -> dict:
 def _remediation_section(pr: dict) -> str:
     status = pr.get("status", "pr_opened")
     status_note = "auto-merged" if status == "merged" else "opened — requires review"
-    if pr.get("type") == "scaleout":
-        change = f"`{pr['file']}` — `replicas` raised from `{pr['old_replicas']}` to `{pr['new_replicas']}`"
-        action = "Argo CD will scale the deployment once the PR is synced. Monitor CPU throttle ratio after rollout."
+    if pr.get("type") == "hpa_maxreplicas":
+        change = f"`{pr['file']}` — `maxReplicas` raised from `{pr['old_max_replicas']}` to `{pr['new_max_replicas']}`"
+        action = "Argo CD will apply the new maxReplicas; the HPA will scale out pods and VPA will right-size them on creation."
     elif pr.get("type") == "cpu_scaleup":
         change = f"`{pr['file']}` — `limits.cpu` raised from `{pr.get('old_cpu_limit')}` to `{pr.get('new_cpu_limit')}` (replica cap reached)"
         action = "Argo CD will apply the new CPU limit once synced. Monitor CPU throttle ratio after rollout."

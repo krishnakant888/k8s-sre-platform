@@ -504,6 +504,70 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
     }
 
 
+def _remediate_hpa_maxreplicas(ctx: dict, report, repo: str, default_branch: str, head_sha: str) -> dict | None:
+    """Raise maxReplicas in the HPA manifest when HPA is saturated and CPU is throttled."""
+    sig = ctx["signals"]
+    wl, ns = sig["workload"], sig["namespace"]
+    source_files = sig.get("source_files") or []
+    if not source_files:
+        return None
+
+    result = _find_resource_file(repo, source_files[0], default_branch, r"maxReplicas:\s*\d+")
+    if not result:
+        # try sibling hpa.yaml
+        hpa_path = source_files[0].rsplit("/", 1)[0] + "/hpa.yaml"
+        result = _find_resource_file(repo, hpa_path, default_branch, r"maxReplicas:\s*\d+")
+    if not result:
+        log.info("remediate: no HPA manifest with maxReplicas found for %s", wl)
+        return None
+    file_path, content, blob_sha = result
+
+    m = re.search(r"maxReplicas:\s*(\d+)", content)
+    if not m:
+        return None
+    old_max = int(m.group(1))
+    new_max = max(old_max + 2, math.ceil(old_max * 1.5))
+
+    patched = re.sub(r"(maxReplicas:\s*)\d+", lambda mo: mo.group(1) + str(new_max), content, count=1)
+
+    branch = f"remediate/hpa-maxreplicas-{wl}-{ns}-{int(time.time())}"
+    commit_msg = (
+        f"fix(ops): raise {wl} HPA maxReplicas {old_max} → {new_max} in {ns}\n\n"
+        f"Automated remediation triggered by RCA {report.id}.\n"
+        f"HPA was saturated (at ceiling) while CPU was throttled; raising maxReplicas allows the HPA to scale out.\n"
+    )
+    pr_title = f"fix(ops): raise {wl} HPA maxReplicas {old_max} → {new_max} ({ns})"
+    pr_body = (
+        f"## Automated remediation — HPA maxReplicas raised\n\n"
+        f"**RCA:** `{report.id}`  \n"
+        f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
+        f"**Change:** `{file_path}` — `maxReplicas` `{old_max}` → `{new_max}`\n\n"
+        f"**Why:** HPA was at its ceiling (`{old_max}` replicas) while CPU was throttled. "
+        f"VPA handles per-pod sizing; this PR gives the HPA room to scale out.\n\n"
+        f"**Verify:** `kubectl -n {ns} get hpa {wl}` — `currentReplicas` rises above `{old_max}` and throttle ratio drops.\n"
+    )
+
+    try:
+        pr = _open_and_merge_pr(
+            repo, default_branch, head_sha, branch, file_path, blob_sha, patched,
+            commit_msg, pr_title, pr_body,
+        )
+    except Exception as exc:
+        log.warning("remediate: hpa maxreplicas PR failed: %s", exc)
+        return None
+
+    return {
+        "type": "hpa_maxreplicas",
+        "pr_url": pr["html_url"],
+        "pr_number": pr["number"],
+        "old_max_replicas": old_max,
+        "new_max_replicas": new_max,
+        "file": file_path,
+        "branch": branch,
+        "status": "merged" if pr.get("_merged") else "pr_opened",
+    }
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def maybe_open_pr(ctx: dict, report) -> dict | None:
@@ -536,8 +600,10 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
     if is_memory_pressure:
         return _remediate_oom(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
 
-    # CPU throttling — raise CPU limit only when HPA is saturated (at maxReplicas).
-    # If HPA still has room it will scale out pods and resolve throttling on its own.
+    # CPU throttling:
+    #   HPA has room        → do nothing (HPA adds pods, throttle resolves)
+    #   HPA saturated       → raise maxReplicas so HPA can scale out (VPA sizes the new pods)
+    #   No HPA / query fail → raise CPU limit directly (no autoscaler present)
     sig = ctx["signals"]
     cpu_throttled = (
         sig.get("cpu_throttled")
@@ -547,9 +613,14 @@ def maybe_open_pr(ctx: dict, report) -> dict | None:
     if cpu_throttled:
         saturated = _hpa_is_saturated(sig["namespace"], sig["workload"])
         if saturated is False:
-            log.info("remediate: CPU throttled on %s but HPA has room — skipping vertical scale-up", sig["workload"])
+            log.info("remediate: CPU throttled on %s but HPA has room — no action needed", sig["workload"])
             return None
-        # saturated is True (at max) or None (no HPA / query failed) — raise the limit
-        return _remediate_cpu_scaleup(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
+        if saturated is True:
+            return _remediate_hpa_maxreplicas(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
+        # No HPA found — fall back to vertical only if VERTICAL_REMEDIATION is enabled
+        if config.VERTICAL_REMEDIATION:
+            return _remediate_cpu_scaleup(ctx, report, config.GITOPS_REPO, default_branch, head_sha)
+        log.info("remediate: CPU throttled on %s, no HPA, VERTICAL_REMEDIATION disabled — skipping", sig["workload"])
+        return None
 
     return None
