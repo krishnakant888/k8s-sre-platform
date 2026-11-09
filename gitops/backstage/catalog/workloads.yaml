@@ -29,6 +29,7 @@ spec:
   system: workloads
   providesApis: [orders-api-http]
   dependsOn: [resource:cluster-platform]
+---
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
