@@ -4,7 +4,7 @@ metadata:
   name: frontend
   namespace: demo
 spec:
-  minAvailable: 2
+  minAvailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: frontend
