@@ -72,7 +72,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: alert-webhook}
       containers:
         - name: webhook
-          image: ghcr.io/krishnakant888/sre-agent:sha-b5187899e1e7f53dbc7edec2300d7d1e1d03583b
+          image: ghcr.io/krishnakant888/sre-agent:sha-1c7ff639a8346d362a602df5cf735066b3ef78a5
           command: [uvicorn, "agent.webhook:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
           ports:
             - {name: http, containerPort: 8080}
