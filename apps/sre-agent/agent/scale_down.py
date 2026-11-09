@@ -438,6 +438,7 @@ def _recent_commit(repo: str, path: str) -> bool:
     return time.time() - at < COOLDOWN_SECONDS
 
 
+
 def _has_hpa(repo: str, branch: str, workload: str) -> bool:
     """Return True if any HPA targeting the workload exists in its GitOps directory."""
     try:

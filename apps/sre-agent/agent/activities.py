@@ -40,15 +40,8 @@ def analyze(alert: dict, ctx: dict) -> dict:
             report.remediation = pr
             log.info("remediation taken", extra={"remediation_type": pr.get("type"), "workload": report.service, "pr_status": pr["status"], "pr_number": pr["pr_number"], "pr_url": pr.get("pr_url", ""), "file": pr.get("file", ""), "old_limit": pr.get("old_limit"), "new_limit": pr.get("new_limit"), "peak_mib": pr.get("peak_mib"), "old_replicas": pr.get("old_replicas"), "new_replicas": pr.get("new_replicas"), "throttle_pct": pr.get("throttle_pct"), "old_cpu_limit": pr.get("old_cpu_limit"), "new_cpu_limit": pr.get("new_cpu_limit")})
             status_label = "merged" if pr["status"] == "merged" else f"PR #{pr['pr_number']} opened"
-            if pr.get("type") == "cpu_scaleup":
-                change_desc = f"CPU limit {pr.get('old_cpu_limit')} → {pr.get('new_cpu_limit')}"
-                sync_msg = "Remediation already applied — wait for Argo CD to sync the new CPU limit"
-            elif pr.get("type") == "hpa_maxreplicas":
-                change_desc = f"HPA maxReplicas {pr.get('old_max_replicas')} → {pr.get('new_max_replicas')}"
-                sync_msg = "Remediation already applied — wait for Argo CD to sync the new maxReplicas"
-            else:
-                change_desc = f"memory limit {pr.get('old_limit')} → {pr.get('new_limit')}"
-                sync_msg = "Remediation already applied — wait for Argo CD to sync the new limit"
+            change_desc = f"maxReplicas {pr.get('old_max_replicas')} → {pr.get('new_max_replicas')}"
+            sync_msg = "Remediation already applied — wait for Argo CD to sync the new maxReplicas"
             report.timeline.append(TimelineEntry(
                 time=report.generated_at,
                 event=f"remediation {status_label}: {change_desc} ({pr['file']})",
@@ -81,15 +74,8 @@ def incident_details(mode: str, now: datetime | None = None) -> dict:
 def _remediation_section(pr: dict) -> str:
     status = pr.get("status", "pr_opened")
     status_note = "auto-merged" if status == "merged" else "opened — requires review"
-    if pr.get("type") == "hpa_maxreplicas":
-        change = f"`{pr['file']}` — `maxReplicas` raised from `{pr['old_max_replicas']}` to `{pr['new_max_replicas']}`"
-        action = "Argo CD will apply the new maxReplicas; the HPA will scale out pods and VPA will right-size them on creation."
-    elif pr.get("type") == "cpu_scaleup":
-        change = f"`{pr['file']}` — `limits.cpu` raised from `{pr.get('old_cpu_limit')}` to `{pr.get('new_cpu_limit')}` (replica cap reached)"
-        action = "Argo CD will apply the new CPU limit once synced. Monitor CPU throttle ratio after rollout."
-    else:
-        change = f"`{pr['file']}` — `limits.memory` raised from `{pr.get('old_limit')}` to `{pr.get('new_limit')}`"
-        action = "Argo CD will apply the new limit once synced. Monitor `container_memory_working_set_bytes` after rollout."
+    change = f"`{pr['file']}` — `maxReplicas` raised from `{pr.get('old_max_replicas')}` to `{pr.get('new_max_replicas')}`"
+    action = "Argo CD will apply the new maxReplicas; KEDA will scale out pods and VPA Auto will right-size them."
     return (
         f"\n\n## Remediation taken\n"
         f"A PR was automatically {status_note} while this issue is being investigated.\n"
