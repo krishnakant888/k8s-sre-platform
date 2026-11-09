@@ -1259,8 +1259,6 @@
         const resp = await fetch(`/_re-analyze/${id}`, { method: "POST" });
         if (resp.ok) {
           const data = await resp.json();
-          reanalyze.textContent = "Reanalyzing…";
-          renderList(); // show blinking badge on list item
           const iv = setInterval(async () => {
             try {
               const sr = await fetch(`/_workflow-status/${data.workflow}`);
@@ -1277,6 +1275,8 @@
             } catch (_) {}
           }, 5000);
           state.reanalyzing.set(id, { workflow: data.workflow, interval: iv });
+          renderList();
+          if (state.current === id) show(id);
         } else { toast(`Failed: ${resp.status}`); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
       } catch (e) { toast("Failed to reach webhook"); reanalyze.disabled = false; reanalyze.textContent = "Re-analyze"; }
     });
