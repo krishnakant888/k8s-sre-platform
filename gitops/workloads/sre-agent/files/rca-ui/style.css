@@ -380,6 +380,10 @@ button, input, select { font: inherit; color: inherit; }
   background: rgb(251 146 60/.08); border-color: rgb(251 146 60/.2);
   border-left-color: rgb(251 146 60/.7);
 }
+.deploy-callout-possible {
+  background: rgb(234 179 8/.08); border-color: rgb(234 179 8/.2);
+  border-left-color: rgb(234 179 8/.6);
+}
 .deploy-callout-none {
   background: rgb(255 255 255/.03); border-color: rgb(255 255 255/.07);
   border-left-color: rgb(255 255 255/.15);

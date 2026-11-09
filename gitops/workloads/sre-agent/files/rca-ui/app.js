@@ -271,7 +271,7 @@
         const ch = r.insights.change;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
         const autoResolved = done && !r.ongoing;
-        const dpLabel = autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore;
+        const dpLabel = autoResolved ? "Deploy · auto-resolved" : ch.high_confidence ? "Deploy · " + minBefore : "Deploy? · " + minBefore;
         const dp = pill(dpLabel, autoResolved ? "ok" : "deploy");
         const files = (ch.files || []).join(", ");
         dp.title = (ch.note || "") + (autoResolved ? "\n\nThe alert has since resolved — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
@@ -1054,7 +1054,7 @@
       const files = (ch.files || []).join(", ");
       const liveResolved = state.live[id] === "resolved";
       const autoResolved = liveResolved && !r.ongoing;
-      const dp = pill(autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore, autoResolved ? "ok" : "deploy");
+      const dp = pill(autoResolved ? "Deploy · auto-resolved" : ch.high_confidence ? "Deploy · " + minBefore : "Deploy? · " + minBefore, autoResolved ? "ok" : "deploy");
       dp.title = (ch.note || "") + (autoResolved ? "\n\nAlert cleared — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
@@ -1124,17 +1124,23 @@
         const liveResolved = state.live[id] === "resolved";
         const autoResolved = liveResolved && !r.ongoing;
         const likely = ch.likely;
+        const highConf = ch.high_confidence;    // ≤60 min; likely but not high_confidence = 61–120 min
         const deployCallout = el("div", "deploy-callout");
-        const dcls = likely ? (autoResolved ? "deploy-callout-auto" : "deploy-callout-likely") : "deploy-callout-none";
+        const dcls = !likely ? "deploy-callout-none"
+          : autoResolved ? "deploy-callout-auto"
+          : highConf ? "deploy-callout-likely"
+          : "deploy-callout-possible";
         deployCallout.classList.add(dcls);
         const dIcon = el("span", "deploy-callout-icon", likely ? "🔀" : "—");
         const dContent = el("div", "deploy-callout-body");
         const dLabel = el("span", "rc-label", "Deploy correlation");
-        const confidenceText = likely
-          ? (autoResolved
-            ? `Deploy ${(ch.revision || "").slice(0, 8)} caused a temporary blip that auto-resolved · ${ch.minutes_before_alert}m before alert`
-            : `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · likely cause`)
-          : "No deploy in the 2 h before this alert";
+        const confidenceText = !likely
+          ? (ch.revision ? `Deploy found but ${Math.abs(ch.minutes_before_alert ?? 0)}m ${(ch.minutes_before_alert ?? 0) < 0 ? "after" : "before"} alert — unlikely causal` : "No deploy in the 2 h before this alert")
+          : autoResolved
+            ? `Deploy ${(ch.revision || "").slice(0, 8)} · auto-resolved · ${ch.minutes_before_alert}m before alert`
+            : highConf
+              ? `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · likely cause`
+              : `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · possible cause`;
         const dText = el("p", "rc-text", confidenceText);
         dContent.append(dLabel, dText);
         if (likely && ch.files && ch.files.length) {
@@ -1142,8 +1148,10 @@
         }
         if (likely && autoResolved) {
           dContent.append(el("p", "rc-desc deploy-auto-hint", "Alert cleared — the deploy caused a transient spike. No rollback needed unless it recurs."));
-        } else if (likely) {
+        } else if (likely && highConf) {
           dContent.append(el("p", "rc-desc deploy-revert-hint", `Suggested fix: git revert ${ch.revision || "HEAD"} && git push`));
+        } else if (likely) {
+          dContent.append(el("p", "rc-desc muted", "Deploy is a possible contributing cause — check changelogs and correlate with error timeline."));
         }
         deployCallout.append(dIcon, dContent);
         // insert after root-cause callout if present, else after facts
