@@ -1097,7 +1097,26 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                     [f"kube_horizontalpodautoscaler_status_current_replicas{{namespace=\"{ns}\",horizontalpodautoscaler=\"{hpa_name}\"}} < {max_r}  # scaling room restored"],
                     f"Load cannot be absorbed; {wl} is at its replica ceiling.")
 
-    # ------------------------------------------------------------------ fallback
+    # ------------------------------------------------------------------ deploy-triggered fallback
+    if sig.get("recent_deploy"):
+        from agent import rca as _rca
+        rd = sig["recent_deploy"]
+        mins_before = int((ctx["started"] - _rca.parse_ts(rd["deployed_at"])) / 60)
+        confidence = "high" if mins_before <= 120 else "medium" if mins_before <= 480 else "low"
+        manifest = _manifest(sig, rd.get("revision", "the recent deploy"))
+        return Diag(
+            "deploy", "application", wl or alertname, confidence,
+            f"a deploy ({rd['revision']}) {mins_before}m before the alert is the most likely cause",
+            f"Deploy `{rd['revision']}` was synced {mins_before} minutes before `{alertname}` fired on `{ns + '/' if ns else ''}{wl}`. "
+            f"No other signal isolates an independent cause, so the deploy is the most probable trigger.",
+            [f"a deploy ({rd['revision']}) landed {mins_before}m before the alert and no other root cause was identified"],
+            [f"git revert {rd['revision']} && git push  # roll back the change", f"{k} -n {ns or 'default'} get pods,events  # check for crashloops after the deploy"],
+            ["Add the missing signal named in the observability gaps"],
+            [f"the alert resolves after rolling back or the deploy is confirmed safe"],
+            f"Deploy `{rd['revision']}` synced {mins_before}m before the alert.",
+        )
+
+    # ------------------------------------------------------------------ unknown fallback
     return Diag("unknown", "unknown", f"{wl or alertname}", "low", f"{alertname} fired but the collected signals do not point to a single cause.",
                 f"The alert {alertname} fired for `{ns + '/' if ns else ''}{wl}` in the {cluster} cluster. The metrics, logs and events gathered do not isolate a cause; see the evidence below for what was checked.",
                 ["no signal stood out"], [f"{k} -n {ns or 'default'} get pods,events", f"Open the dashboard 'Workload detail' for {wl}"], ["Add the missing signal named in the observability gaps"], ["the alert resolves"], "Unknown.")
