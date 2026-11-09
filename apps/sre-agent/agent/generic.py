@@ -197,7 +197,9 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             if "error" not in res:
                 raw["deploys"] = res
                 sig["source_files"] = res.get("source_files", [])
-                recent = [d for d in res.get("history", []) if d.get("deployed_at") and rca.parse_ts(d["deployed_at"]) > started - lookback_seconds]
+                # only deploys that landed BEFORE the alert (within lookback window)
+                recent = [d for d in res.get("history", []) if d.get("deployed_at")
+                          and started - lookback_seconds < rca.parse_ts(d["deployed_at"]) <= started]
                 sig["recent_deploy"] = recent[0] if recent else None
                 if recent:
                     d0 = recent[0]
@@ -215,15 +217,23 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_ns, "minutes": ns_minutes})
             if "error" not in ns_res:
                 raw["deploys"] = ns_res
-                recent_any = [a for a in ns_res.get("apps", []) if a.get("history")]
-                if recent_any:
-                    summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in recent_any[:3])
-                    sig["recent_deploy"] = recent_any[0]["history"][0]
-                    mins_before = int((started - rca.parse_ts(recent_any[0]["history"][0]["deployed_at"])) / 60) if rca.parse_ts(recent_any[0]["history"][0].get("deployed_at", "")) else None
+                # keep only history entries that landed before the alert
+                pre_alert = []
+                for a in ns_res.get("apps", []):
+                    before = [h for h in a.get("history", []) if h.get("deployed_at")
+                              and rca.parse_ts(h["deployed_at"]) <= started]
+                    if before:
+                        pre_alert.append({**a, "history": before})
+                # sort by most recent pre-alert deploy first
+                pre_alert.sort(key=lambda a: a["history"][0]["deployed_at"], reverse=True)
+                if pre_alert:
+                    d0 = pre_alert[0]["history"][0]
+                    sig["recent_deploy"] = d0
+                    mins_before = int((started - rca.parse_ts(d0["deployed_at"])) / 60)
+                    summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in pre_alert[:3])
                     window_label = f"{ns_minutes // 60}h" if ns_minutes >= 60 else f"{ns_minutes}m"
                     add("argocd", f"namespace deploys {fallback_ns}",
-                        f"{len(recent_any)} app(s) deployed in the {window_label} window: {summary}"
-                        + (f" ({mins_before}m before alert)" if mins_before is not None else ""))
+                        f"{len(pre_alert)} app(s) deployed in the {window_label} window: {summary} ({mins_before}m before alert)")
                     return
         add("argocd", f"history {app_names[0] if app_names else '?'}", "no deploy in the 2 hours before the alert")
 
