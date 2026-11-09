@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alert-webhook
+  namespace: sre-agent
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: alert-webhook}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rca-viewer
+  namespace: sre-agent
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: rca-viewer}
