@@ -100,6 +100,24 @@ def _parse_ts(iso: str) -> float | None:
         return None
 
 
+def _mimir_range(query: str, start: float, end: float, step: int = 86400) -> list[tuple[int, float]]:
+    """Return (unix_day_ts, value) pairs from a Mimir range query at daily resolution."""
+    try:
+        r = httpx.get(
+            f"{config.MIMIR_URL}/api/v1/query_range",
+            params={"query": query, "start": str(int(start)), "end": str(int(end)), "step": str(step)},
+            timeout=25,
+        )
+        r.raise_for_status()
+        results = r.json().get("data", {}).get("result", [])
+        if not results:
+            return []
+        return [(int(ts), round(float(v), 4)) for ts, v in results[0].get("values", []) if v not in ("NaN", "+Inf", "-Inf")]
+    except Exception as exc:
+        log.debug("learning: mimir_range failed: %s", exc)
+    return []
+
+
 # ---------------------------------------------------------------------------
 # 1. Unknown rediagnosis
 # ---------------------------------------------------------------------------
@@ -145,13 +163,13 @@ def _rediagnose_signals(labels: dict, t: float) -> str | None:
     return None
 
 
-def run_unknown_rediagnosis() -> int:
+def run_unknown_rediagnosis() -> list[dict]:
     """Re-diagnose reports with unknown root cause using historical Mimir data.
-    Returns the number of reports successfully updated."""
+    Returns list of {id, service, old_cause, new_cause} for each updated report."""
     reports = _load_all_reports()
     now = datetime.now(timezone.utc).timestamp()
     min_age = REDIAGNOSIS_MIN_AGE_HOURS * 3600
-    updated = 0
+    updated: list[dict] = []
 
     for r in reports:
         if r.get("report_type", "incident") != "incident":
@@ -176,23 +194,31 @@ def run_unknown_rediagnosis() -> int:
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         r["learning_rediagnosed_at"] = stamp
         if new_cat:
+            old_cat = rc.get("category", "unknown")
             r["root_cause"] = {
                 **rc,
                 "category": new_cat,
                 "confidence": "low",
                 "description": (
                     f"Re-diagnosed from historical Mimir signals at incident time "
-                    f"(original: {rc.get('category', 'unknown')})."
+                    f"(original: {old_cat})."
                 ),
             }
-            updated += 1
+            updated.append({
+                "id": r["id"],
+                "service": r.get("service", ""),
+                "namespace": r.get("namespace", ""),
+                "old_cause": old_cat,
+                "new_cause": new_cat,
+                "generated_at": r.get("generated_at", ""),
+            })
             log.info("learning: rediagnosed %s → %s", r["id"], new_cat)
         else:
             log.debug("learning: rediagnosis inconclusive for %s", r["id"])
 
         _atomic_write(rp, r)
 
-    log.info("learning: rediagnosis complete; updated %d of eligible reports", updated)
+    log.info("learning: rediagnosis complete; updated %d of eligible reports", len(updated))
     return updated
 
 
@@ -225,12 +251,12 @@ def _classify_gap(gap: str) -> tuple[str, str] | None:
     return None
 
 
-def run_gap_tracker() -> int:
+def run_gap_tracker() -> list[dict]:
     """Open GitHub issues for observability gaps that repeat ≥ MIN_GAP_COUNT times.
-    Returns number of new issues opened."""
+    Returns list of all tracked gaps: {service, gap_type, count, issue_url, example_reports, is_new}."""
     if not ISSUES_REPO or not getattr(config, "GITHUB_TOKEN", ""):
         log.info("learning: gap_tracker skipped (no ISSUES_REPO or GITHUB_TOKEN)")
-        return 0
+        return []
 
     filed: dict[str, str] = {}  # "{service}:{gap_type}" -> issue_url
     if GAP_ISSUES_FILE.exists():
@@ -254,43 +280,54 @@ def run_gap_tracker() -> int:
             by_svc_gap[key]["hint"] = hint
             by_svc_gap[key]["ids"].append(r["id"])
 
+    result: list[dict] = []
     opened = 0
     for (svc, gap_type), data in by_svc_gap.items():
         if data["count"] < MIN_GAP_COUNT:
             continue
         issue_key = f"{svc}:{gap_type}"
-        if issue_key in filed:
-            continue
+        is_new = issue_key not in filed
 
-        title = f"[sre-gap] {svc}: {gap_type.replace('_', ' ')} ({data['count']} reports)"
-        body = (
-            f"## Observability gap: {gap_type.replace('_', ' ')}\n\n"
-            f"**Service:** `{svc}`  \n"
-            f"**Occurrences:** {data['count']} SRE reports in the reports volume  \n\n"
-            f"### What to fix\n{data['hint']}\n\n"
-            f"### Example reports\n"
-            + "\n".join(f"- `{rid}`" for rid in data["ids"][:5])
-            + "\n\n"
-            "_Opened automatically by the SRE agent self-learning pass. "
-            "Close once the gap is resolved and the agent stops reporting it._"
-        )
-        try:
-            issue = _gh_post(f"repos/{ISSUES_REPO}/issues", {
-                "title": title,
-                "body": body,
-                "labels": ["sre-gap", "observability"],
-            })
-            filed[issue_key] = issue["html_url"]
-            log.info("learning: opened gap issue %s/%s → %s",
-                     svc, gap_type, issue["html_url"])
-            opened += 1
-        except Exception as exc:
-            log.warning("learning: could not open gap issue for %s/%s: %s",
-                        svc, gap_type, exc)
+        if is_new:
+            title = f"[sre-gap] {svc}: {gap_type.replace('_', ' ')} ({data['count']} reports)"
+            body = (
+                f"## Observability gap: {gap_type.replace('_', ' ')}\n\n"
+                f"**Service:** `{svc}`  \n"
+                f"**Occurrences:** {data['count']} SRE reports in the reports volume  \n\n"
+                f"### What to fix\n{data['hint']}\n\n"
+                f"### Example reports\n"
+                + "\n".join(f"- `{rid}`" for rid in data["ids"][:5])
+                + "\n\n"
+                "_Opened automatically by the SRE agent self-learning pass. "
+                "Close once the gap is resolved and the agent stops reporting it._"
+            )
+            try:
+                issue = _gh_post(f"repos/{ISSUES_REPO}/issues", {
+                    "title": title,
+                    "body": body,
+                    "labels": ["sre-gap", "observability"],
+                })
+                filed[issue_key] = issue["html_url"]
+                log.info("learning: opened gap issue %s/%s → %s",
+                         svc, gap_type, issue["html_url"])
+                opened += 1
+            except Exception as exc:
+                log.warning("learning: could not open gap issue for %s/%s: %s",
+                            svc, gap_type, exc)
+
+        result.append({
+            "service": svc,
+            "gap_type": gap_type,
+            "count": data["count"],
+            "hint": data["hint"],
+            "issue_url": filed.get(issue_key, ""),
+            "example_reports": data["ids"][:5],
+            "is_new": is_new and issue_key in filed,
+        })
 
     _atomic_write(GAP_ISSUES_FILE, filed)
     log.info("learning: gap_tracker complete; opened %d new issues", opened)
-    return opened
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +457,24 @@ def run_threshold_tuning() -> dict:
                     and cap.get("review_type") != "weekly_floor"):
                 clean_caps[svc] += 1
 
+    # collect per-service incident and capacity-review dates for telemetry annotation
+    incident_dates: dict[str, list[str]] = defaultdict(list)
+    cap_review_dates: dict[str, list[dict]] = defaultdict(list)
+    for r in reports:
+        svc = r.get("service", "")
+        if not svc:
+            continue
+        rt = r.get("report_type", "incident")
+        date_str = (r.get("started_at") or r.get("generated_at", ""))[:10]
+        if rt == "incident" and (r.get("root_cause") or {}).get("category") == "resource_exhaustion":
+            incident_dates[svc].append(date_str)
+        if rt == "capacity" and r.get("capacity", {}).get("review_type") != "weekly_floor":
+            cap = r.get("capacity", {}) or {}
+            cap_review_dates[svc].append({"date": date_str, "decision": cap.get("decision", "")})
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+    thirty_ago = now_ts - 30 * 86400
+
     thresholds: dict = {}
     for svc in set(oom_counts) | set(clean_caps):
         ooms = oom_counts[svc]
@@ -442,12 +497,29 @@ def run_threshold_tuning() -> dict:
             mem = round(min(0.75, _DEFAULT_MEM_MAX + 0.05), 2)
             reason = f"slightly relaxed: {cleans} clean capacity reviews, no resource incidents"
 
+        # fetch 30-day telemetry series
+        svc_name = svc.split(":")[0]
+        ns = svc.split(":")[1] if ":" in svc else "default"
+        sel = f'namespace="{ns}",container=~"{svc_name}"'
+        cpu_series = _mimir_range(
+            f"max(quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{{{sel}}}[30m])[1d:30m]))",
+            thirty_ago, now_ts)
+        mem_series = _mimir_range(
+            f"max(quantile_over_time(0.99, container_memory_working_set_bytes{{{sel}}}[1d]))",
+            thirty_ago, now_ts)
+
         thresholds[svc] = {
             "cpu_p95_max": cpu,
             "memory_p99_max": mem,
             "reason": reason,
             "oom_incidents": ooms,
             "clean_capacity_reviews": cleans,
+            "telemetry": {
+                "cpu_p95_cores": [{"t": t, "v": v} for t, v in cpu_series],
+                "mem_p99_gib": [{"t": t, "v": round(v / 1073741824, 4)} for t, v in mem_series],
+                "incident_dates": sorted(set(incident_dates.get(svc, []))),
+                "cap_review_dates": cap_review_dates.get(svc, [])[-30:],
+            },
         }
 
     thresholds["_generated_at"] = (
@@ -461,19 +533,47 @@ def run_threshold_tuning() -> dict:
 # entry point
 # ---------------------------------------------------------------------------
 
+def _grafana_explore_url(service: str, namespace: str) -> str:
+    """Return a Grafana Explore deep-link for CPU + memory P95/P99 for the service, or ''."""
+    base = os.getenv("GRAFANA_PUBLIC_URL", "").rstrip("/")
+    if not base:
+        return ""
+    import urllib.parse
+    ns = namespace or "default"
+    cpu_expr = f'quantile(0.95, rate(container_cpu_usage_seconds_total{{namespace="{ns}",container=~"{service}"}}[5m]))'
+    mem_expr = f'quantile(0.99, container_memory_working_set_bytes{{namespace="{ns}",container=~"{service}"}})'
+    q = urllib.parse.quote(json.dumps({
+        "datasource": "mimir",
+        "queries": [
+            {"expr": cpu_expr, "refId": "CPU"},
+            {"expr": mem_expr, "refId": "MEM"},
+        ],
+        "range": {"from": "now-30d", "to": "now"},
+    }))
+    return f"{base}/explore?left={q}"
+
+
 def _write_self_learning_report(
-    rediagnosed: int, gap_issues_opened: int,
-    calibration: dict, thresholds: dict, errors: list,
+    rediagnosed_reports: list[dict],
+    gap_results: list[dict],
+    calibration: dict,
+    thresholds: dict,
+    errors: list,
 ) -> None:
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     report_id = "rca-self-learning-" + stamp[:19].replace(":", "").replace("-", "").replace("T", "T")
+
+    n_rediag = len(rediagnosed_reports)
+    new_issues = [g for g in gap_results if g.get("is_new")]
+    n_new_issues = len(new_issues)
     n_families = len([k for k in calibration if not k.startswith("_") and isinstance(calibration[k], dict)])
     n_services = len([k for k in thresholds if not k.startswith("_") and isinstance(thresholds[k], dict)])
+
     parts = []
-    if rediagnosed:
-        parts.append(f"{rediagnosed} unknown{'s' if rediagnosed != 1 else ''} rediagnosed")
-    if gap_issues_opened:
-        parts.append(f"{gap_issues_opened} gap issue{'s' if gap_issues_opened != 1 else ''} opened")
+    if n_rediag:
+        parts.append(f"{n_rediag} unknown{'s' if n_rediag != 1 else ''} rediagnosed")
+    if n_new_issues:
+        parts.append(f"{n_new_issues} gap issue{'s' if n_new_issues != 1 else ''} opened")
     if n_families:
         parts.append(f"{n_families} families calibrated")
     if n_services:
@@ -482,44 +582,133 @@ def _write_self_learning_report(
         parts.append(f"{len(errors)} error(s)")
     summary = "Self-learning pass: " + (", ".join(parts) if parts else "nothing to update")
 
-    cal_rows = "\n".join(
-        f"| {cat} | {v.get('total', 0)} | {v.get('accuracy', 0):.0%} | {v.get('confidence_weight', 1.0):.2f} |"
-        for cat, v in calibration.items()
-        if not cat.startswith("_") and isinstance(v, dict) and "total" in v
-    )
-    thr_rows = "\n".join(
-        f"| {svc} | {v.get('cpu_p95_max', '—')} | {v.get('memory_p99_max', '—')} | {v.get('reason', '')} |"
-        for svc, v in thresholds.items()
-        if not svc.startswith("_") and isinstance(v, dict) and "cpu_p95_max" in v
-    )
+    # --- rediagnosed reports section ---
+    if rediagnosed_reports:
+        rediag_rows = "\n".join(
+            f"| [{r['id']}](/{r['id']}/rca.md) | {r['service']} | {r['old_cause']} | → {r['new_cause']} |"
+            for r in rediagnosed_reports
+        )
+        rediag_section = f"""## Rediagnosed reports
+
+These previously-unknown incidents were re-diagnosed from historical Mimir signals at incident time.
+
+| Report | Service | Was | Now |
+|--------|---------|-----|-----|
+{rediag_rows}
+
+Root cause confidence is set to **low**; it will be promoted on the next calibration pass once the alert shows cleared-within-1h.
+"""
+    else:
+        rediag_section = "## Rediagnosed reports\n\nNo unknown-root-cause reports eligible this week.\n"
+
+    # --- gap issues section ---
+    if gap_results:
+        gap_rows = "\n".join(
+            (
+                f"| {g['service']} | {g['gap_type'].replace('_', ' ')} | {g['count']} | "
+                + (f"[#{g['issue_url'].split('/')[-1]}]({g['issue_url']})" if g["issue_url"] else "—")
+                + (" 🆕" if g.get("is_new") else "")
+                + f" | {', '.join(('[' + rid + '](/' + rid + '/rca.md)') for rid in g['example_reports'][:3])} |"
+            )
+            for g in sorted(gap_results, key=lambda x: -x["count"])
+        )
+        gap_section = f"""## Observability gap issues
+
+Gaps that appear in ≥ {MIN_GAP_COUNT} reports trigger a GitHub issue. 🆕 = opened this run.
+
+| Service | Gap type | Reports | Issue | Example reports |
+|---------|----------|---------|-------|-----------------|
+{gap_rows}
+"""
+    else:
+        gap_section = f"## Observability gap issues\n\nNo gaps reached the {MIN_GAP_COUNT}-report threshold, or gap tracker was skipped.\n"
+
+    # --- calibration section ---
+    def _weight_arrow(w: float) -> str:
+        if w >= 0.9:
+            return "✅ high"
+        if w >= 0.5:
+            return "⚠️ medium"
+        return "🔻 low"
+
+    if n_families:
+        cal_rows = "\n".join(
+            f"| {cat} | {v.get('total', 0)} | {v.get('cleared_within_1h', 0)} | "
+            f"{v.get('wrong_rediagnosis', 0)} | {v.get('accuracy', 0):.0%} | "
+            f"{v.get('confidence_weight', 1.0):.2f} | {_weight_arrow(v.get('confidence_weight', 1.0))} |"
+            for cat, v in sorted(calibration.items(), key=lambda x: -(x[1].get("total", 0) if isinstance(x[1], dict) else 0))
+            if not cat.startswith("_") and isinstance(v, dict) and "total" in v
+        )
+        cal_section = f"""## Confidence calibration
+
+Accuracy = 1 − (wrong re-diagnoses / total). Weight < 0.5 → confidence downgraded to medium; < 0.4 → low.
+
+| Family | Incidents | Cleared ≤1h | Wrong re-diag | Accuracy | Weight | Level |
+|--------|-----------|-------------|---------------|----------|--------|-------|
+{cal_rows}
+"""
+    else:
+        cal_section = "## Confidence calibration\n\nNo incident families with enough history to calibrate.\n"
+
+    # --- threshold section ---
+    def _thr_direction(v: dict) -> str:
+        cpu = v.get("cpu_p95_max", _DEFAULT_CPU_MAX)
+        ooms = v.get("oom_incidents", 0)
+        cleans = v.get("clean_capacity_reviews", 0)
+        if ooms >= 2:
+            return "🔽 tightened"
+        if ooms == 1:
+            return "↘ slightly tightened"
+        if cleans >= 3:
+            return "↗ slightly relaxed"
+        return "→ default"
+
+    if n_services:
+        thr_rows = "\n".join(
+            f"| {svc} | {v.get('cpu_p95_max', '—')} | {v.get('memory_p99_max', '—')} | "
+            f"{v.get('oom_incidents', 0)} | {v.get('clean_capacity_reviews', 0)} | "
+            f"{_thr_direction(v)} |"
+            + (f" [telemetry]({_grafana_explore_url(svc.split(':')[0], svc.split(':')[1] if ':' in svc else '')}) |"
+               if _grafana_explore_url(svc.split(':')[0], svc.split(':')[1] if ':' in svc else "") else " — |")
+            for svc, v in sorted(thresholds.items(), key=lambda x: x[0])
+            if not svc.startswith("_") and isinstance(v, dict) and "cpu_p95_max" in v
+        )
+        thr_section = f"""## Threshold decisions
+
+Thresholds are written to `.thresholds.json` and read by `scale_down.py` on every daily run.
+Defaults: CPU P95 ≤ {_DEFAULT_CPU_MAX}, Mem P99 ≤ {_DEFAULT_MEM_MAX}.
+
+| Service | CPU P95 max | Mem P99 max | OOM incidents | Clean reviews | Decision | Telemetry |
+|---------|-------------|-------------|---------------|---------------|----------|-----------|
+{thr_rows}
+"""
+    else:
+        thr_section = "## Threshold decisions\n\nNo services with capacity history found.\n"
+
+    # --- errors ---
+    err_section = ""
+    if errors:
+        err_section = f"\n## Errors\n\nThe following modules failed this run:\n\n" + "\n".join(f"- `{e}`" for e in errors) + "\n"
+
     md = f"""# Self-learning report · {stamp[:10]}
 
 **{summary}**
 
 ## Summary
 
-- {rediagnosed} unknown root cause(s) rediagnosed from historical Mimir signals
-- {gap_issues_opened} observability gap issue(s) opened on GitHub
-- {n_families} diagnosis families calibrated
-- {n_services} service threshold(s) tuned{chr(10) + "- Errors: " + ", ".join(errors) if errors else ""}
+| Pass | Result |
+|------|--------|
+| Unknown rediagnosis | {n_rediag} report(s) updated |
+| Gap tracker | {n_new_issues} new issue(s) opened · {len(gap_results)} total tracked gaps |
+| Confidence calibration | {n_families} famil{'ies' if n_families != 1 else 'y'} |
+| Threshold tuning | {n_services} service{'s' if n_services != 1 else ''} |
+{"| **Errors** | " + ", ".join(errors) + " |" if errors else ""}
 
-## Calibration
+{rediag_section}
+{gap_section}
+{cal_section}
+{thr_section}{err_section}"""
 
-| Family | Incidents | Accuracy | Weight |
-|--------|-----------|----------|--------|
-{cal_rows if cal_rows else "| — | — | — | — |"}
-
-Confidence weight is applied by generic.py when generating reports.
-A weight < 0.5 downgrades "high" → "medium"; < 0.4 downgrades to "low".
-
-## Thresholds
-
-| Service | CPU P95 max | Mem P99 max | Reason |
-|---------|-------------|-------------|--------|
-{thr_rows if thr_rows else "| — | — | — | — |"}
-
-Thresholds are read by scale_down.py at review time.
-"""
     report = {
         "id": report_id,
         "report_type": "self_learning",
@@ -530,8 +719,10 @@ Thresholds are read by scale_down.py at review time.
         "workflow": os.getenv("WORKFLOW_NAME", ""),
         "summary": summary,
         "self_learning": {
-            "rediagnosed": rediagnosed,
-            "gap_issues_opened": gap_issues_opened,
+            "rediagnosed": n_rediag,
+            "rediagnosed_reports": rediagnosed_reports,
+            "gap_issues_opened": n_new_issues,
+            "gap_results": gap_results,
             "calibration": {k: v for k, v in calibration.items() if not k.startswith("_")},
             "thresholds": {k: v for k, v in thresholds.items() if not k.startswith("_")},
             "errors": errors,
@@ -547,8 +738,8 @@ Thresholds are read by scale_down.py at review time.
 def run_self_learning() -> None:
     log.info("learning: starting self-learning pass")
     errors: list[str] = []
-    rediagnosed = 0
-    gap_issues_opened = 0
+    rediagnosed_reports: list[dict] = []
+    gap_results: list[dict] = []
     calibration: dict = {}
     thresholds: dict = {}
     for name, fn in [
@@ -560,9 +751,9 @@ def run_self_learning() -> None:
         try:
             result = fn()
             if name == "unknown_rediagnosis":
-                rediagnosed = result or 0
+                rediagnosed_reports = result or []
             elif name == "gap_tracker":
-                gap_issues_opened = result or 0
+                gap_results = result or []
             elif name == "confidence_calibration":
                 calibration = result or {}
             elif name == "threshold_tuning":
@@ -571,7 +762,7 @@ def run_self_learning() -> None:
             log.exception("learning: %s failed: %s", name, exc)
             errors.append(name)
     try:
-        _write_self_learning_report(rediagnosed, gap_issues_opened, calibration, thresholds, errors)
+        _write_self_learning_report(rediagnosed_reports, gap_results, calibration, thresholds, errors)
     except Exception as exc:
         log.exception("learning: could not write self-learning report: %s", exc)
     if errors:
