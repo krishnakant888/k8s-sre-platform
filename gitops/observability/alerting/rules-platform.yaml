@@ -67,3 +67,37 @@ data:
             labels: {severity: ticket}
             annotations:
               summary: A deployment has had unavailable replicas for 3 minutes
+          - uid: platform-restart-storm
+            title: PodRestartStorm
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 3600, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "sum by (cluster, namespace, deployment) (increase(kube_pod_container_status_restarts_total{container!=\"\"}[1h]))", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A >= 5"}
+            noDataState: OK
+            execErrState: Error
+            for: 5m
+            labels: {severity: ticket}
+            annotations:
+              summary: A deployment has had 5 or more container restarts in the last hour
+          - uid: platform-hpa-maxed-out
+            title: HpaAtMaxReplicas
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 300, to: 0}
+                datasourceUid: mimir
+                model: {refId: A, expr: "max by (cluster, namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_current_replicas >= kube_horizontalpodautoscaler_spec_max_replicas)", instant: true}
+              - refId: C
+                datasourceUid: __expr__
+                model: {refId: C, type: math, expression: "$A > 0"}
+            noDataState: OK
+            execErrState: Error
+            for: 30m
+            labels: {severity: ticket}
+            annotations:
+              summary: An HPA has been at its maximum replica count for 30 minutes
