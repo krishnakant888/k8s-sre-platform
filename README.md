@@ -18,13 +18,14 @@ alert fires (Grafana alerting)
 
 ## Runs on
 
-Linux or WSL2 with Docker Engine, `kind`, `kubectl`, `helm` and Python 3.9+. `bootstrap/bootstrap.py` checks the PATH.
+Linux or WSL2. Required on PATH: `docker`, `kind`, `kubectl`, `helm`, `python3` (3.9+). `bootstrap/bootstrap.py` checks each one at startup and stops with an install hint if any is missing.
 
 | | Requirement |
 |---|---|
-| Docker memory | Three clusters use ~9 GB idle; 16 GB is the practical minimum |
-| WSL2 | `memory=16GB`, `swap=8GB` in `%UserProfile%\.wslconfig`; `vmIdleTimeout=-1` to survive a closed terminal |
+| Docker memory | Three clusters use ~9 GB idle; 16 GB is the practical minimum (at 12 GB the WSL VM stopped answering under 30 broken workloads) |
+| WSL2 | `memory=16GB`, `swap=8GB` in `%UserProfile%\.wslconfig`; `vmIdleTimeout=-1` so the VM survives a closed terminal |
 | CPU | 4 cores minimum; 8 recommended |
+| Ports | 7080/7443, 9080/9443, 8080/8443 on localhost — `bootstrap.py` stops with the port number if one is already taken |
 
 ---
 
@@ -36,13 +37,26 @@ export ANTHROPIC_API_KEY=sk-...        # optional — enables LLM analysis in th
 python3 bootstrap/bootstrap.py
 ```
 
-The script creates three kind clusters (`platform`, `observability`, `gitops`) with Calico for NetworkPolicy, installs Argo CD in `gitops`, registers the other two clusters, and seeds all secrets with random values. The first Argo CD sync takes about 10 minutes. All URLs, logins and tokens are printed at the end. Print them again any time:
+What the script does:
+
+1. Creates three kind clusters with Calico for NetworkPolicy:
+   - `platform` — 1 control plane + 2 workers
+   - `observability` — 1 control plane + 1 worker
+   - `gitops` — 1 control plane
+2. Installs Argo CD in the `gitops` cluster only
+3. Registers `platform` and `observability` as spoke clusters in Argo CD
+4. Seeds all Secrets with random values (Argo CD admin password, Grafana admin password, gateway basic-auth, API fault token, GitHub/Grafana tokens as empty placeholders)
+5. Applies the root Application — Argo CD takes over from there and syncs everything from this repo (first sync ~10 minutes)
+
+All URLs, logins and tokens are printed at the end. Print them again any time:
 
 ```bash
 python3 bootstrap/bootstrap.py --credentials
 ```
 
-Partial operations: `--only platform`, `--only observability`, `--only gitops`. Destroy: `python3 bootstrap/bootstrap.py --destroy`.
+**Partial operations:** `--only platform`, `--only observability`, or `--only gitops` to create (or with `--destroy`, tear down) one cluster without touching the others.
+
+**Full teardown:** `python3 bootstrap/bootstrap.py --destroy`
 
 ### URLs
 
@@ -82,33 +96,44 @@ observability cluster   LGTM stack, Argo Workflows, SRE agent, RCA viewer
 ```
 
 ```mermaid
-flowchart LR
-  Git[(this repo)] --> Argo
-  subgraph gitops cluster
-    Argo[Argo CD hub]
+flowchart TB
+  Git[(GitHub\nthis repo)]
+
+  subgraph GC["🔵 gitops cluster  —  the deployer"]
+    direction TB
+    ArgoCD["Argo CD\nhub + spoke\n───────────\nmanages both\nother clusters"]
   end
-  subgraph platform cluster
-    Platform[traefik · cert-manager · kyverno · sealed-secrets]
-    Demo[demo: orders-api · frontend]
-    Sandbox[sandbox: dummy-shop]
-    Collect[Alloy · kube-state-metrics]
-    Demo -->|metrics, logs, OTLP traces| Collect
-    Sandbox -->|logs| Collect
+
+  subgraph PC["🟢 platform cluster  —  the workloads"]
+    direction TB
+    Infra["traefik · cert-manager\nkyverno · sealed-secrets"]
+    Demo["demo namespace\norders-api  ·  frontend"]
+    Sandbox["sandbox namespace\ndummy-shop  (nginx + trace logging)"]
+    Alloy["Alloy collector\nkube-state-metrics"]
+    Demo -->|"metrics · logs\nOTLP traces"| Alloy
+    Sandbox -->|logs| Alloy
   end
-  subgraph observability cluster
-    Stack[Mimir · Loki · Tempo · Grafana · alerting]
-    AW[Argo Workflows]
-    Agent[sre-agent: webhook · RCA viewer]
-    Stack -->|alert webhook| Agent
-    Agent -->|create Workflow| AW
-    AW -->|run agent image| Agent
-    Agent -->|read-only queries| Stack
+
+  subgraph OC["🟠 observability cluster  —  the tools"]
+    direction TB
+    LGTM["Mimir  ·  Loki  ·  Tempo\nGrafana  +  alert rules"]
+    AW["Argo Workflows\n(runs agent steps as pods)"]
+    Agent["SRE agent\nwebhook  ·  RCA viewer\n4 scheduled CronWorkflows"]
+    Reports[("reports PVC\nrca.md + report.json\n14-day retention")]
+
+    LGTM -->|"alert fires\n→ POST /webhook"| Agent
+    Agent -->|"create Workflow\nper alert fingerprint"| AW
+    AW -->|"execute steps\n(collect → analyze → store → notify)"| Agent
+    Agent -->|"read-only queries\n(Mimir, Loki, Tempo)"| LGTM
+    Agent -->|write report| Reports
   end
-  Argo -->|registered| Platform
-  Argo -->|registered| Stack
-  Collect -->|push NodePorts| Stack
-  Agent -->|read-only: pods, events, Argo CD apps| Platform
-  Agent -.->|deploy history| Argo
+
+  Git -->|"GitOps pull\n(app-of-apps)"| ArgoCD
+  ArgoCD -->|"sync manifests\n→ platform cluster"| Infra
+  ArgoCD -->|"sync manifests\n→ observability cluster"| LGTM
+  Alloy -->|"remote-write metrics\npush logs + traces\n(NodePorts, Docker network)"| LGTM
+  Agent -->|"read-only k8s API\npods · events"| PC
+  Agent -.->|"Argo CD API\ndeploy history"| GC
 ```
 
 Clusters communicate over the shared Docker network. Collectors push to `observability-worker:<NodePort>`; the agent reads `platform-control-plane:6443` and `gitops-control-plane:6443` with read-only tokens created at bootstrap.
