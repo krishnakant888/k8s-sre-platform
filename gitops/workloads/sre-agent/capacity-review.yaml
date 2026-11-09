@@ -185,3 +185,65 @@ spec:
   workflowSpec:
     workflowTemplateRef:
       name: weekly-health-review
+---
+# Self-learning: re-diagnose unknowns, track gaps→issues, calibrate confidence, tune thresholds.
+# Runs Sundays 09:00 IST — after weekly health reports land — so all fresh data is available.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: self-learning
+  namespace: sre-agent
+spec:
+  entrypoint: review
+  serviceAccountName: sre-agent
+  activeDeadlineSeconds: 3600
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+  templates:
+    - name: review
+      container:
+        image: ghcr.io/krishnakant888/sre-agent:sha-b5187899e1e7f53dbc7edec2300d7d1e1d03583b
+        command: [python, -m, agent.steps, self-learning-review]
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom: {secretKeyRef: {name: github-token, key: GITHUB_TOKEN, optional: true}}
+          - name: GRAFANA_API_TOKEN
+            valueFrom: {secretKeyRef: {name: rca-viewer-grafana, key: token, optional: true}}
+          - {name: GRAFANA_URL, value: "http://grafana.observability.svc.cluster.local"}
+          - {name: LEARNING_ISSUES_REPO, value: "krishnakant888/k8s-sre-platform"}
+          - {name: GAP_ISSUE_MIN_COUNT, value: "3"}
+          - {name: REDIAGNOSIS_MIN_AGE_HOURS, value: "2"}
+          - {name: CPU_P95_MAX_DEFAULT, value: "0.50"}
+          - {name: MEMORY_P99_MAX_DEFAULT, value: "0.60"}
+          - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts:
+          - {name: reports, mountPath: /reports}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # writes .calibration.json, .thresholds.json, .gap-issues.json
+          capabilities: {drop: [ALL]}
+      volumes:
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: sre-self-learning
+  namespace: sre-agent
+spec:
+  schedules: ["30 3 * * 0"]  # Sundays 09:00 IST
+  timezone: Asia/Kolkata
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 5
+  workflowSpec:
+    workflowTemplateRef:
+      name: self-learning

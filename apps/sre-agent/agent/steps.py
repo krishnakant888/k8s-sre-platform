@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from agent import activities, incident, scale_down, weekly_health
+from agent import activities, incident, scale_down, weekly_health, learning
 from agent.logging_setup import setup_logging
 
 IN_DIR = Path(os.getenv("STEP_IN_DIR", "/tmp/in"))
@@ -56,9 +56,13 @@ def weekly_health_review() -> None:
     weekly_health.run_weekly_health_review()
 
 
+def self_learning_review() -> None:
+    learning.run_self_learning()
+
+
 STEPS = {"collect": collect, "analyze": analyze, "store": store, "notify": notify,
          "scale-down-review": scale_down_review, "weekly-floor-review": weekly_floor_review,
-         "weekly-health-review": weekly_health_review}
+         "weekly-health-review": weekly_health_review, "self-learning-review": self_learning_review}
 
 
 def main(argv: list[str]) -> int:
