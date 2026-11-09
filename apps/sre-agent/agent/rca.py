@@ -188,7 +188,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
     sig["recent_deploy"] = recent[0] if recent else None
     if "error" in deploys:
         # named-app lookup failed — scan all apps in the namespace for any recent deploy
-        ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 120})
+        ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 240})
         raw["ns_deploys"] = ns_deploys
         ns_apps = ns_deploys.get("apps", [])
         if ns_apps:
@@ -204,7 +204,7 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             add("argocd", f"history {svc}", f"deploy {recent[0]['revision']} at {recent[0]['deployed_at']}")
         else:
             # named app found but no deploy in the 1h window — also scan namespace for related deploys
-            ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 120})
+            ns_deploys = tools.call_tool("list_namespace_deploys", {"namespace": ns, "minutes": 240})
             raw["ns_deploys"] = ns_deploys
             ns_apps = [a for a in ns_deploys.get("apps", []) if a["application"] != deploys.get("application")]
             if ns_apps:
