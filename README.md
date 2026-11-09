@@ -353,6 +353,4 @@ Only environment specifics change: storage classes (`gp3` / `managed-csi`), gate
 
 ---
 
-## AI usage
 
-Built with Claude Code as a pair engineer: architecture, manifests, the agent, tests, and debugging. Full session log: [docs/ai-log](docs/ai-log).
