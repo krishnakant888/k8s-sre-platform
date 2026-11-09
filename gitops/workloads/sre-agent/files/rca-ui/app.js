@@ -54,7 +54,7 @@
     saveRead(); updateNotifBadge(); renderList(); renderNotifList();
   }
   function updateNotifBadge() {
-    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)).length;
+    const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && reportType(r) === "incident").length;
     const active = state.runs.filter((r) => !r.done).length;
     const total = unread + active;
     const badge = $("notif-badge");
@@ -117,10 +117,19 @@
   };
 
   // ---- tab counts --------------------------------------------------------------------------------------------
+  const HEALTH_TYPES = new Set(["restart_storm", "hpa_saturation", "change_risk"]);
+  const CAPACITY_TYPES = new Set(["capacity", "weekly_floor"]);
+
   function updateTabCounts() {
     const active = state.reports.filter((r) => !state.dismissed.has(r.id));
-    const counts = { all: active.length, incident: 0, capacity: 0, weekly_floor: 0, restart_storm: 0, hpa_saturation: 0, change_risk: 0, self_learning: 0 };
-    for (const r of active) counts[reportType(r)] = (counts[reportType(r)] || 0) + 1;
+    const counts = { all: active.length, incident: 0, capacity: 0, health: 0, self_learning: 0 };
+    for (const r of active) {
+      const rt = reportType(r);
+      if (rt === "incident") counts.incident++;
+      else if (CAPACITY_TYPES.has(rt)) counts.capacity++;
+      else if (HEALTH_TYPES.has(rt)) counts.health++;
+      else if (rt === "self_learning") counts.self_learning++;
+    }
     for (const [type, n] of Object.entries(counts)) {
       const ct = $("tc-" + type);
       if (ct) ct.textContent = n > 0 ? n : "";
@@ -139,7 +148,7 @@
     try {
       const data = await getJson("/_status/rules");
       for (const r of state.reports) {
-        if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { state.live[r.id] = "capacity"; continue; }
+        if (reportType(r) !== "incident") { state.live[r.id] = "capacity"; continue; }
         if (savedResolved(r.id)) { state.live[r.id] = "resolved"; continue; }
         const s = statusFrom(data, r);
         state.live[r.id] = s.state;
@@ -174,11 +183,8 @@
       if (state.filter.size && !state.filter.has(level(r))) return false;
       const rt = reportType(r);
       if (state.type === "incident" && rt !== "incident") return false;
-      if (state.type === "capacity" && rt !== "capacity") return false;
-      if (state.type === "weekly_floor" && rt !== "weekly_floor") return false;
-      if (state.type === "restart_storm" && rt !== "restart_storm") return false;
-      if (state.type === "hpa_saturation" && rt !== "hpa_saturation") return false;
-      if (state.type === "change_risk" && rt !== "change_risk") return false;
+      if (state.type === "capacity" && !CAPACITY_TYPES.has(rt)) return false;
+      if (state.type === "health" && !HEALTH_TYPES.has(rt)) return false;
       if (state.type === "self_learning" && rt !== "self_learning") return false;
       if (!q) return true;
       return [r.id, r.alert, r.service, r.summary, r.report_type, r.capacity && r.capacity.decision,
@@ -517,7 +523,7 @@
     const card = $("alert-card"), body = $("alert-body");
     const d = r.alert_details;
     body.replaceChildren();
-    if (["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)) { card.hidden = true; return; }
+    if (reportType(r) !== "incident") { card.hidden = true; return; }
     card.hidden = false;
     if (!d || !d.labels) { body.append(el("p", "muted", "The details of the alert were not recorded for this report (it was written before the agent saved them).")); return; }
     const grid = el("dl", "facts-grid");
