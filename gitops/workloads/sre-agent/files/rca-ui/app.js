@@ -892,14 +892,16 @@
       for (const [svc, v] of thrEntries) {
         const ooms = v.oom_incidents || 0;
         const cleans = v.clean_capacity_reviews || 0;
+        const cpuPct = Math.round((v.cpu_p95_max || 0) * 100);
+        const memPct = Math.round((v.memory_p99_max || 0) * 100);
         const directionLabel = ooms >= 2 ? "🔽 Tightened — OOMs detected" : ooms === 1 ? "↘ Slightly tightened — 1 OOM" : cleans >= 3 ? "↗ Relaxed — consistent headroom" : "→ Default thresholds";
         const directionTip = ooms >= 2
-          ? `${ooms} OOM kills in the last 30 days. CPU and memory scale-down thresholds have been lowered (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max} of limit). The agent will not propose scale-down unless usage stays well below these tighter limits, reducing the risk of another OOM after a resource cut.`
+          ? `${ooms} OOM kills in the last 30 days. Scale-down is blocked unless CPU P95 stays below ${cpuPct}% of limit AND memory P99 stays below ${memPct}% of limit. These are tighter than default to reduce the risk of another OOM after a resource cut.`
           : ooms === 1
-          ? `1 OOM kill in the last 30 days. Thresholds are slightly tighter than default (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent applies a small safety margin before recommending any resource reduction.`
+          ? `1 OOM kill in the last 30 days. Scale-down is blocked unless CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their limits. Slightly tighter than default as a safety margin.`
           : cleans >= 3
-          ? `${cleans} consecutive clean capacity reviews with no incidents. Thresholds are relaxed (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}), so the agent can recommend scale-down at a higher usage level than it would for a service with OOM history.`
-          : `No OOM history and fewer than 3 consecutive clean reviews. Using default thresholds (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent recommends scale-down only when usage is below these limits with no active alerts or restarts.`;
+          ? `${cleans} consecutive clean reviews with no incidents. Scale-down can be proposed when CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their limits — relaxed from default because this service has shown consistent headroom.`
+          : `No OOM history. Scale-down is proposed only when CPU P95 < ${cpuPct}% and memory P99 < ${memPct}% of their current limits, with no active alerts or recent restarts.`;
         const cls = ooms >= 1 ? "sl-thr-card ooms" : cleans >= 3 ? "sl-thr-card clean" : "sl-thr-card";
         const card = el("div", cls);
         const header = el("div", "sl-thr-header");
@@ -909,7 +911,7 @@
         dirPill.title = directionTip;
         meta.append(
           dirPill,
-          el("span", "sl-thr-detail", "CPU ≤" + v.cpu_p95_max + "  Mem ≤" + v.memory_p99_max),
+          el("span", "sl-thr-detail", `Scale-down blocked above CPU ${cpuPct}% · Mem ${memPct}%`),
           el("span", "sl-thr-detail", ooms + " OOM · " + cleans + " clean")
         );
         header.append(meta);
@@ -926,7 +928,7 @@
         const leg = el("div", "sl-spark-legend");
         leg.append(el("span", "sl-spark-leg-cpu", "── CPU P95 (cores)"));
         leg.append(el("span", "sl-spark-leg-mem", "── Mem P99 (GiB)"));
-        leg.append(el("span", "sl-spark-leg-thr", "- - threshold fraction"));
+        leg.append(el("span", "sl-spark-leg-thr", `- - scale-down limit (CPU ${cpuPct}% · Mem ${memPct}%)`));
         if ((tele.incident_dates || []).length) leg.append(el("span", "sl-spark-leg-inc", "│ OOM incident"));
         card.append(leg);
         // impact explanation
