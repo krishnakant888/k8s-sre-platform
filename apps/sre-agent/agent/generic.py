@@ -191,15 +191,24 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
             + (f", pressure {', '.join(sig['node_pressure'])}" if sig["node_pressure"] else ", no pressure")
             + f", CPU {sig['node_cpu']:.0%} and memory {sig['node_mem']:.0%} of allocatable")
 
-    def deploys(app_names: list[str]):
+    def deploys(app_names: list[str], lookback_seconds: int = 7200):
         for name in app_names:
             res = tools.call_tool("get_recent_deploys", {"application": name})
             if "error" not in res:
                 raw["deploys"] = res
                 sig["source_files"] = res.get("source_files", [])
-                recent = [d for d in res.get("history", []) if d.get("deployed_at") and rca.parse_ts(d["deployed_at"]) > started - 3600]
+                recent = [d for d in res.get("history", []) if d.get("deployed_at") and rca.parse_ts(d["deployed_at"]) > started - lookback_seconds]
                 sig["recent_deploy"] = recent[0] if recent else None
-                add("argocd", f"history {name}", f"deploy {recent[0]['revision']} at {recent[0]['deployed_at']}" if recent else "no deploy in the hour before the alert")
+                if recent:
+                    d0 = recent[0]
+                    deploy_ts = rca.parse_ts(d0["deployed_at"])
+                    mins_before = int((started - deploy_ts) / 60)
+                    paths = ", ".join(res.get("source_files", [])[:3]) or "unknown path"
+                    add("argocd", f"history {name}",
+                        f"deploy {d0['revision']} at {d0['deployed_at']} ({mins_before}m before the alert); "
+                        f"source: {paths}")
+                else:
+                    add("argocd", f"history {name}", "no deploy in the 2 hours before the alert")
                 return
         add("argocd", f"history {app_names[0] if app_names else '?'}", "no Argo CD application of that name could be read")
 
@@ -339,11 +348,17 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
         sig["app"] = res
         if "error" in res:
             sig["tool_errors"].append(f"Argo CD lookup failed: {res['error'][:120]}")
-        add("argocd", f"application {app}", f"sync {res.get('sync_status')}, health {res.get('health_status')}, destination {res.get('destination')}"
+        last_rev = res.get("last_revision", "")
+        last_dep = res.get("last_deployed_at", "")
+        add("argocd", f"application {app}",
+            f"sync {res.get('sync_status')}, health {res.get('health_status')}, destination {res.get('destination')}"
+            + (f"; last deploy: {last_rev} at {last_dep}" if last_rev else "")
             + (f"; operation {res.get('operation', {}).get('phase')}: {res.get('operation', {}).get('message', '')[:160]}" if res.get("operation") else "")
             + (f"; conditions: {'; '.join(c[:120] for c in res.get('conditions', [])[:3])}" if res.get("conditions") else "")
             + (f"; unhealthy resources: {', '.join(res.get('unhealthy', [])[:4])}" if res.get("unhealthy") else ""))
         sig["ongoing"] = res.get("sync_status") != "Synced" or res.get("health_status") not in ("Healthy", None)
+        # always fetch deploy history so the report can name the commit that caused the issue
+        deploys([app, app.removeprefix("platform-").removeprefix("observability-").removeprefix("gitops-")])
         dest = res.get("destination_cluster") or ""
         if res.get("unhealthy") and res.get("destination_namespace") and dest:
             first = res["unhealthy"][0]
@@ -828,10 +843,35 @@ def diagnose(alert: dict, ctx: dict) -> Diag:
                         ["the error comes from admission (Pod Security / Kyverno / RBAC)", "Git and the cluster connection are fine"], [f"Read the policy message, then change the manifest to comply (securityContext, limits, tag)", f"Check: {k} get clusterpolicy; {k} get events -A | grep -i violat"],
                         ["Run the Kyverno CLI against the manifests in CI so the PR fails before it merges"], [f"argocd app sync {name}  # succeeds"], f"{name} cannot be updated.")
         if app.get("health_status") in ("Degraded", "Missing") and app.get("unhealthy"):
-            return Diag("deploy_regression", "application", f"resources of {name}: {', '.join(app['unhealthy'][:3])}", "medium", f"The application deployed but its resources are unhealthy: {', '.join(app['unhealthy'][:2])}.",
-                        f"`{name}` is synced from Git but its health is {app.get('health_status')}: {', '.join(app['unhealthy'][:4])} (destination {dest}). The Git change itself applied; what it deployed does not run correctly" + (f". Recent deploy {sig['recent_deploy']['revision']}." if sig.get("recent_deploy") else "."),
-                        ["sync is fine, health is not", "see the pod status and events of the unhealthy resource in the evidence"], [f"Look at the unhealthy resource ({app['unhealthy'][0]}): its pods, events and logs", "Revert the last commit to the app if it started with that deploy"],
-                        ["Use sync waves and progressive delivery so a bad release stops early"], [f"argocd app get {name}  # Healthy"], f"{name} is partly or fully down.")
+            rd = sig.get("recent_deploy")
+            deploy_ctx = ""
+            revert_cmd = "git revert HEAD && git push  # then wait for Argo CD to sync"
+            if rd:
+                deploy_ts = rca.parse_ts(rd["deployed_at"])
+                mins_before = int((started - deploy_ts) / 60)
+                paths = ", ".join(sig.get("source_files", [])[:3]) or "the app path"
+                deploy_ctx = (
+                    f" Commit {rd['revision']} was deployed {mins_before}m before the alert "
+                    f"(at {rd['deployed_at']}) from {paths}."
+                )
+                revert_cmd = f"git revert {rd['revision']} && git push  # reverts commit {rd['revision']}; Argo CD syncs automatically"
+            return Diag(
+                "deploy_regression", "application",
+                f"resources of {name}: {', '.join(app['unhealthy'][:3])}",
+                "medium",
+                f"The application deployed but its resources are unhealthy: {', '.join(app['unhealthy'][:2])}.",
+                f"`{name}` is synced from Git but its health is {app.get('health_status')}: "
+                f"{', '.join(app['unhealthy'][:4])} (destination {dest}). "
+                f"The Git change applied; what it deployed does not run correctly.{deploy_ctx}",
+                ["sync is fine, health is not",
+                 "see the pod status and events of the unhealthy resource in the evidence"]
+                + ([f"commit {rd['revision']} deployed {mins_before}m before the alert"] if rd else []),
+                [f"Inspect the unhealthy resource: {k} -n {dest.split('/')[-1] if '/' in dest else ns} describe {app['unhealthy'][0].split(':')[0]}",
+                 revert_cmd],
+                ["Use sync waves and progressive delivery so a bad release stops early"],
+                [f"argocd app get {name}  # Healthy"],
+                f"{name} is partly or fully down.",
+            )
         return Diag("gitops_sync_failure", "application", f"drift between Git and {name}", "medium", f"{name} is {app.get('sync_status', 'not synced')}: live state differs from Git.",
                     f"`{name}` (destination {dest}) has been {app.get('sync_status', 'out of sync')} for a while. Either automated sync is paused, a sync keeps failing, or someone changed the live objects by hand and self-heal is not reverting them. Operation: {op[:160] or 'none recorded'}.",
                     ["sync status is not Synced", "no connection or rendering error found"], [f"argocd app diff {name}  # shows exactly what differs", f"argocd app sync {name}"], ["Keep automated sync with selfHeal on and forbid manual kubectl edits (RBAC)"], [f"argocd app get {name}  # Synced"], f"Changes in Git may not be live for {name}.")
