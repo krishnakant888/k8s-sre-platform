@@ -14,6 +14,7 @@ data:
       '"bytes":$body_bytes_sent,"duration":$request_time,'
       '"trace_id":"$http_traceparent","request_id":"$http_x_request_id"}';
     access_log /dev/stdout json_trace;
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
