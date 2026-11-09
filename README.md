@@ -1,245 +1,358 @@
 # k8s-sre-platform
 
-A local, production-style platform for a B2B SaaS + AI product, running on upstream Kubernetes (kind) and managed entirely by Argo CD:
-GitOps, the LGTM observability stack, Argo Workflows, a sample API with an SLO, and an **AI SRE agent that investigates alerts on its own**
-and writes a structured, blameless RCA.
+A local, production-style platform for a B2B SaaS + AI product, running on upstream Kubernetes (kind) managed entirely by Argo CD:
+GitOps, the LGTM observability stack (Mimir · Loki · Tempo · Grafana), Argo Workflows, and an **AI SRE agent that investigates alerts on its own**, writes structured RCAs, runs four scheduled proactive reviews, and improves its own accuracy week-over-week through self-learning.
 
-One command creates the cluster and installs Argo CD. Everything else is pulled from this repo.
+One command creates the three clusters and installs Argo CD. Everything else is pulled from this repo.
 
 ```
-alert fires (Grafana alerting) -> webhook -> Argo Workflow -> SRE agent queries Mimir, Loki, Tempo,
-Kubernetes and Argo CD -> structured RCA (files on a volume, JSON log in Loki, optional chat webhook)
+alert fires (Grafana alerting)
+  → webhook (Flask, sre-agent namespace)
+  → Argo Workflow (incident-investigation WorkflowTemplate)
+  → agent queries Mimir, Loki, Tempo, Kubernetes, Argo CD
+  → structured RCA report (Markdown + JSON, stored on a PVC)
+  → notification (chat webhook or Slack)
 ```
+
+---
 
 ## Runs on
 
-Linux. You need Docker Engine, `kind`, `kubectl`, `helm` and Python 3; `bootstrap/bootstrap.py` checks that they are on the PATH.
+Linux or WSL2 with Docker Engine, `kind`, `kubectl`, `helm` and Python 3.9+. `bootstrap/bootstrap.py` checks the PATH.
 
-| | What to know |
+| | Requirement |
 |---|---|
-| Docker memory | The three clusters need about 10 GB and 4 CPUs. |
-| Ports | 7080/7443, 9080/9443 and 8080/8443 on localhost. `bootstrap.py` stops with the port number if one is taken. |
+| Docker memory | Three clusters use ~9 GB idle; 16 GB is the practical minimum |
+| WSL2 | `memory=16GB`, `swap=8GB` in `%UserProfile%\.wslconfig`; `vmIdleTimeout=-1` to survive a closed terminal |
+| CPU | 4 cores minimum; 8 recommended |
+
+---
 
 ## Quick start
 
-Needs Linux or WSL2 with: Docker, [kind](https://kind.sigs.k8s.io), kubectl, helm, Python 3.9+ (standard library only). About 16 GB of RAM for Docker (WSL2: `memory=16GB` in `.wslconfig`, see Sizing); the three clusters use about 9 GB idle.
-
 ```bash
 git clone https://github.com/krishnakant888/k8s-sre-platform && cd k8s-sre-platform
-export ANTHROPIC_API_KEY=...        # optional, enables LLM analysis in the agent
+export ANTHROPIC_API_KEY=sk-...        # optional — enables LLM analysis in the agent
 python3 bootstrap/bootstrap.py
 ```
 
-The script creates three kind clusters with Calico for NetworkPolicy and the few secrets each needs with random values: `platform` (1 control plane, 2 workers), `observability` (1 control plane, 1 worker) and `gitops` (1 control plane).
-Argo CD is installed **only in the gitops cluster**. The script registers the other two clusters in it, and that one Argo CD deploys both from this repo. The first sync takes about 10 minutes. It prints every URL (https and http) and login at the end (Argo CD and Grafana `admin` with random passwords, a random gateway login for the Workflows UI and the RCA reports, plus the token for the sample API's fault endpoints). The passwords are random per bootstrap, so each person who bootstraps gets their own. Print them again at any time with:
+The script creates three kind clusters (`platform`, `observability`, `gitops`) with Calico for NetworkPolicy, installs Argo CD in `gitops`, registers the other two clusters, and seeds all secrets with random values. The first Argo CD sync takes about 10 minutes. All URLs, logins and tokens are printed at the end. Print them again any time:
 
 ```bash
 python3 bootstrap/bootstrap.py --credentials
 ```
 
-Use `--only platform`, `--only observability` or `--only gitops` to create or destroy one of them.
+Partial operations: `--only platform`, `--only observability`, `--only gitops`. Destroy: `python3 bootstrap/bootstrap.py --destroy`.
 
-| What | Cluster | URL (https, self-signed certificate) | Login |
+### URLs
+
+| What | Cluster | URL | Auth |
 |---|---|---|---|
-| Argo CD (deploys the other two) | gitops | https://argocd.localhost:7443 | `admin`, own login |
-| Grafana | observability | https://grafana.localhost:9443 | `admin`, own login |
-| Developer portal (Backstage) | gitops | https://backstage-portal.localhost:7443 | guest sign-in, read-only |
+| Argo CD | gitops | https://argocd.localhost:7443 | `admin` / own random login |
+| Grafana | observability | https://grafana.localhost:9443 | `admin` / own random login |
+| Developer portal (Backstage) | gitops | https://backstage-portal.localhost:7443 | guest sign-in (read-only) |
 | Argo Workflows UI | observability | https://workflows.localhost:9443 | gateway basic auth |
-| RCA reports | observability | https://reports.localhost:9443 | gateway basic auth |
+| RCA reports viewer | observability | https://reports.localhost:9443 | gateway basic auth |
 | Sample API | platform | https://orders.localhost:8443/orders | none |
+| dummy-shop | platform | http://dummy.localhost:8080 | none |
 
-Each URL also works over plain http on the `…080` port of its cluster (7080, 9080, 8080). The HTTPS certificate is issued by cert-manager and self-signed, so browsers warn once. Argo CD and Grafana have their own logins. The Workflows UI and the RCA viewer have none, so the gateway asks for a basic-auth login (user `admin`, a random password created by `bootstrap.py` in the `gateway-login` Secret, hashed into `gateway-basic-auth` for Traefik and printed at the end): a local stopgap, SSO (OIDC) is the production answer.
+Each URL also works over plain HTTP on the `…080` port (7080, 9080, 8080). TLS certificates are self-signed (cert-manager), so browsers warn once. The Workflows UI and RCA viewer are protected by Traefik basic auth (`admin` / random, created at bootstrap) — a local stopgap for SSO.
 
-The developer portal is a catalog of everything here, a live view of pods, Argo CD and alerts per component, and a template for a new service: see [docs/portal.md](docs/portal.md).
-
-Mimir, Loki, Tempo and Alloy are not published on a gateway, because they have no login of their own. Query them in Grafana (Explore, dashboards), or from an operator's machine with a port-forward:
-
-```bash
-kubectl --context kind-observability -n observability port-forward svc/mimir 8081:8080     # http://localhost:8081/prometheus/api/v1/query?query=up (Mimir serves the Prometheus API)
-kubectl --context kind-observability -n observability port-forward svc/loki 3100:3100      # http://localhost:3100/loki/api/v1/labels
-kubectl --context kind-observability -n observability port-forward svc/tempo 3200:3200     # http://localhost:3200/api/search
-kubectl --context kind-observability -n observability port-forward svc/alloy 12345:12345   # http://localhost:12345 (Alloy UI)
-```
-
-`*.localhost` resolves to 127.0.0.1 in browsers, no hosts file changes. Tear down with `python3 bootstrap/bootstrap.py --destroy` (add `--only platform` to keep the others running).
-
-## Try the failure drill
+The LGTM backends (Mimir, Loki, Tempo, Alloy) are not published on the gateway; query them in Grafana or via port-forward:
 
 ```bash
-scripts/drill.sh latency     # also: errors, oom, kill, reset
+kubectl --context kind-observability -n observability port-forward svc/mimir 8081:8080
+kubectl --context kind-observability -n observability port-forward svc/loki 3100:3100
+kubectl --context kind-observability -n observability port-forward svc/tempo 3200:3200
+kubectl --context kind-observability -n observability port-forward svc/alloy 12345:12345
 ```
 
-1. The API's downstream call becomes slow. The SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
-2. After a few minutes the `OrdersApiErrorBudgetFastBurn` alert fires in Grafana alerting and Grafana calls the agent webhook.
-3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (`kubectl --context kind-observability -n sre-agent get wf`, or the Argo Workflows UI).
-4. The agent runs a query playbook, classifies the cause, stores the report and logs it:
-   the reports are files on a volume (`<id>/rca.md` and `report.json`): browse them at https://reports.localhost:9443 (gateway login), or `kubectl --context kind-observability -n sre-agent exec deploy/rca-viewer -- ls /reports`.
-5. Grafana `Platform / SRE agent: investigations` lists the reports. Sample reports for each drill are in [docs/rca-samples](docs/rca-samples).
+`*.localhost` resolves to 127.0.0.1 in browsers — no hosts file changes needed.
+
+---
 
 ## Architecture
 
-Each concern has its own cluster, so an outage, upgrade or rebuild of one cannot take down the tools used to deal with it:
-`platform` runs the workloads, `observability` runs Grafana, Loki, Mimir, Tempo, the SRE agent, Argo Workflows and the RCA viewer, and `gitops` runs Argo CD alone.
-Argo CD (hub and spoke) deploys the other two: they are registered in it, and their apps are Applications there with `destination: platform` or `destination: observability`. The clusters talk over the shared Docker network (collectors push to `observability-worker:<port>`, Argo CD reaches `platform-control-plane:6443` and `observability-control-plane:6443`).
+Three clusters, each responsible for one concern, so an outage, upgrade or rebuild of one cannot take down the tools used to debug it:
+
+```
+gitops cluster          Argo CD (hub) — deploys both other clusters from this repo
+platform cluster        workloads (orders-api, frontend, dummy-shop), gateway, kyverno, sealed-secrets
+observability cluster   LGTM stack, Argo Workflows, SRE agent, RCA viewer
+```
 
 ```mermaid
 flowchart LR
   Git[(this repo)] --> Argo
   subgraph gitops cluster
-    Argo[Argo CD, the hub]
+    Argo[Argo CD hub]
   end
   subgraph platform cluster
-    Platform[sealed-secrets, kyverno, traefik + cert-manager, namespaces + netpols]
-    Collect[observability: Alloy, kube-state-metrics]
-    Demo[demo: orders-api, frontend]
+    Platform[traefik · cert-manager · kyverno · sealed-secrets]
+    Demo[demo: orders-api · frontend]
+    Sandbox[sandbox: dummy-shop]
+    Collect[Alloy · kube-state-metrics]
     Demo -->|metrics, logs, OTLP traces| Collect
+    Sandbox -->|logs| Collect
   end
   subgraph observability cluster
-    Stack[observability: Mimir, Loki, Tempo, Grafana, alerting, Alloy]
-    AW[argo-workflows]
-    Agent[sre-agent: alert-webhook, workflow template, RCA viewer]
+    Stack[Mimir · Loki · Tempo · Grafana · alerting]
+    AW[Argo Workflows]
+    Agent[sre-agent: webhook · RCA viewer]
     Stack -->|alert webhook| Agent
     Agent -->|create Workflow| AW
-    AW -->|steps run the agent image| Agent
-    Agent -->|read only queries| Stack
+    AW -->|run agent image| Agent
+    Agent -->|read-only queries| Stack
   end
-  Argo -->|registered cluster| Platform
-  Argo -->|registered cluster| Stack
-  Collect -->|push NodePorts :30900 :30310 :30417| Stack
-  Agent -->|read only tokens: pods, events, Argo CD applications| Platform
+  Argo -->|registered| Platform
+  Argo -->|registered| Stack
+  Collect -->|push NodePorts| Stack
+  Agent -->|read-only: pods, events, Argo CD apps| Platform
   Agent -.->|deploy history| Argo
 ```
 
+Clusters communicate over the shared Docker network. Collectors push to `observability-worker:<NodePort>`; the agent reads `platform-control-plane:6443` and `gitops-control-plane:6443` with read-only tokens created at bootstrap.
+
+### Namespace map
+
 | Namespace | Cluster | Contents |
 |---|---|---|
-| `argocd` | gitops | the one Argo CD, manages itself and the other two clusters |
-| `observability` | platform | Alloy (collector, ships to the observability cluster), kube-state-metrics |
-| `observability` | observability | Mimir (metrics, recording rules), Loki, Tempo, Grafana (dashboards and alerting), Alloy and kube-state-metrics watching the stack itself |
-| `argo-workflows` | observability | Argo Workflows controller and UI (runs the workflows in `sre-agent`) |
-| `sre-agent` | observability | alert webhook, workflow template and its step pods, the reports volume (PVC) with a read-only viewer |
-| `demo` | platform | `orders-api` and the frontend |
-| `kyverno`, `kube-system` | platform | policy engine, sealed-secrets controller |
-| `traefik`, `cert-manager` | platform, observability, gitops | the gateway of each cluster (Traefik, Gateway API) and the issuer of its TLS certificate |
+| `argocd` | gitops | Argo CD hub — manages itself and both other clusters |
+| `demo` | platform | `orders-api`, `frontend` |
+| `sandbox` | platform | `dummy-shop` (nginx + trace logging, no OTel SDK) |
+| `observability` | platform | Alloy collector, kube-state-metrics |
+| `observability` | observability | Mimir, Loki, Tempo, Grafana, Alloy, kube-state-metrics |
+| `argo-workflows` | observability | Argo Workflows controller and UI |
+| `sre-agent` | observability | alert webhook, WorkflowTemplates, CronWorkflows, RCA viewer, PVC |
+| `kyverno` | platform | policy engine and admission controller |
+| `traefik` / `cert-manager` | all three | gateway (Traefik, Gateway API) and TLS issuer |
+
+---
 
 ## Repo layout
 
 ```
-bootstrap/          kind configs (platform, observability, gitops) + the one imperative script
-gitops/root/        the root Applications (app of apps), one per cluster
-gitops/hub/         gitops cluster: Argo CD values and its Applications
-gitops/apps/        platform cluster apps (Applications live in the hub, named `platform-*`): one per component, AppProjects, sync waves
-gitops/observability-cluster/  observability cluster: its Applications (including argo-workflows and sre-agent), Alloy values, network policies, NodePorts
-gitops/platform/    namespaces, network policies, RBAC, Kyverno policies, operator values
-gitops/observability/  Mimir, Loki, Tempo, Grafana, Alloy configs, rules, dashboards (deployed by the cluster that owns each Application)
-gitops/workloads/   orders-api, frontend, sre-agent manifests (including the workflow template)
-apps/orders-api/    sample service (FastAPI): code, tests, Dockerfile
-apps/sre-agent/     the agent: tools, RCA, workflow steps, webhook
-scripts/drill.sh    failure drills
-docs/               secrets, runbooks, RCA samples
+bootstrap/              kind configs (platform, observability, gitops) + bootstrap.py
+gitops/apps/            platform cluster Argo CD Applications (one per component, AppProjects, sync waves)
+gitops/observability-cluster/  observability cluster Applications, Alloy values, NodePorts
+gitops/hub/             gitops cluster: Argo CD values, root Applications
+gitops/observability/   Mimir, Loki, Tempo, Grafana configs, alert rules, dashboards
+gitops/workloads/       manifests for orders-api, frontend, sre-agent (WorkflowTemplates, CronWorkflows, UI)
+gitops/fault-drills/    fault injection manifests (active, degraded scenarios)
+backstage-portal/       Backstage app + self-service templates
+apps/orders-api/        FastAPI sample service: code, tests, Dockerfile
+apps/sre-agent/         agent code: webhook, RCA, steps, learning, tools
+docs/                   RCA samples, runbooks, observability architecture, secrets guide
+scripts/                drill.sh, faults.py, coverage_audit.py
 ```
 
-## Fault injection: does the agent get it right?
-
-`scripts/faults.py` injects 36 kinds of fault and then checks the RCA report the agent wrote against what each fault should conclude (alert, root-cause category, application vs infrastructure level):
-
-```bash
-scripts/faults.py list                 # every fault, its alert and the expected conclusion
-scripts/faults.py run-each all disruptive   # one fault at a time: inject, wait for its report, judge it, clean up (about 6 hours for all)
-scripts/faults.py run-each crash oom        # just these
-scripts/faults.py start all            # or inject the 31 non-disruptive faults together, in the sandbox namespace
-scripts/faults.py check                # PASS / WRONG / NO ALERT per fault (wait ~15 minutes after start)
-scripts/faults.py start disruptive     # gateway (Traefik) down, collector down, log store down, a partition, a node down (Argo CD sync of them is paused)
-scripts/faults.py clear
-```
-
-`run-each` also prints which alerts Grafana raised for the fault and how it grouped them (every alert instance is its own notification), and how many investigations started.
-
-`scripts/coverage_audit.py` asks the live Mimir and Loki, for every Deployment, StatefulSet and DaemonSet of the three clusters, whether metrics and logs arrive, and lists what an owner would have to fix (missing labels, memory limits, probes, PodDisruptionBudgets).
-
-Covered: crash loops by cause (missing setting, read-only filesystem, dependency refused, blocked by a network policy, unresolvable name, command that exits 0), image pull errors (missing tag, unreachable registry), missing secret or config map, unschedulable pods (capacity, node selector, unbound volume), memory kill, CPU throttling, failing liveness and readiness probes, failed job, stuck rollout, namespace quota, eviction for ephemeral storage, ingress errors, slow backend and missing backend, Argo CD applications (unrenderable manifests, unhealthy resources, policy rejection), a platform add-on scaled to zero, a collector gone, a node down. The orders-api service has its own SLO drills in `scripts/drill.sh`. Volume-full cannot be tested on kind (host-path volumes report no usage).
-
-**Results, one fault at a time:** 35 of the 36 faults produce a report with the expected alert, cause and layer; 0 are wrong. The first full run found 10 failures (5 wrong reports, 5 without a report); the fixes were in the agent (pending pods under a rollout alert, sibling workloads sharing a name prefix, a scale-to-zero that self-heal already reverted, an ingress controller with no pod rated P4) and in the test harness (root apps undoing the disruptive faults, a drill that took 15 minutes to turn unhealthy). The one fault with no report is `partition`: it cuts off the only node that runs Grafana, the alert path and the agent, so nothing is left to alert or investigate. That is the case for an independent dead man's switch (roadmap). Sample reports: [docs/rca-samples](docs/rca-samples).
-
-## Observability
-
-**If the clusters look gone after a restart.** The kind nodes are Docker containers. `bootstrap.py` gives them a restart policy, so they come back with Docker. On WSL2 also set `vmIdleTimeout=-1` in `%UserProfile%\.wslconfig` (and give the VM enough memory, see Sizing); otherwise WSL stops the VM when no terminal is open. Clusters created before this was added: run `python3 bootstrap/bootstrap.py` once, it only adds the policy to clusters that exist.
-
-### Sizing
-
-Requests and limits are set for a 32 GB workstation (the three clusters use about 9 GB when idle, so 16 GB is the practical minimum: at 12 GB the WSL service stopped answering twice under 30 broken workloads) with WSL2 given 16 GB (`%UserProfile%\.wslconfig`: `memory=16GB`, `swap=8GB`). Requests are about half of the limit, limits leave room for the peak:
-Mimir 2 Gi / 6 Gi (600k active series), Loki 1 Gi / 3 Gi, Tempo 1 Gi / 3 Gi, Grafana 512 Mi / 1.5 Gi, collectors 512 Mi to 768 Mi / 1.5 Gi to 2 Gi, Argo CD controller 2 Gi / 4 Gi, Kyverno admission 512 Mi / 1.5 Gi, Traefik 128 Mi / 256 Mi (not measured yet).
-The limits add up to more than the machine has on purpose (they are caps, not reservations); real use with the three clusters idle is about 8 GB. The per-tenant limits of Mimir and Loki are 4x their defaults.
-
-- **Metrics** Alloy scrapes annotated pods, kube-state-metrics and cAdvisor (read from the kubelet) and remote-writes to Mimir. Tempo's metrics generator adds span metrics and a service graph.
-- **Logs** Alloy tails pod logs through the Kubernetes API (no hostPath, so Pod Security `baseline` holds) into Loki. Apps log JSON with `trace_id`, so Grafana jumps from a log line to its trace.
-- **Traces** apps send OTLP to Alloy, which forwards to Tempo. Grafana links traces to logs and metrics.
-- **Dashboards and datasources** are provisioned from Git (ConfigMaps picked up by the Grafana sidecar).
-
-### SLO
-
-`orders-api`: 99.5% of requests succeed (not 5xx) **and** finish within 300 ms, over 28 days (error budget about 3h 22m).
-The SLI is computed from one histogram with a `status` label, so a slow 500 is counted once.
-Alerts are Grafana alert rules using multiwindow, multi-burn-rate ([rules file](gitops/observability/alerting/rules-orders-api.yaml)):
-14.4x over 1h and 5m pages, 6x over 6h and 30m opens a ticket. Runbook: [docs/runbooks/orders-api.md](docs/runbooks/orders-api.md).
-
-## Argo Workflows and the operational workflow
-
-The `incident-investigation` WorkflowTemplate ([workflow-template.yaml](gitops/workloads/sre-agent/workflow-template.yaml)): wait for data to settle, collect evidence, analyze,
-store the report, notify. Each step is a pod running the agent image (`python -m agent.steps <step>`) with retries, backoff and a timeout, so a flaky query does not lose the investigation, and a restart of the webhook does not affect a run in flight.
-The webhook creates one Workflow per firing alert, named from the alert fingerprint and start time, so a repeated notification gets a 409 and does not start a second run.
+---
 
 ## The AI SRE agent
 
-- **Read only by construction.** Tools are bounded (time range, row count, output size) and the agent can only read pods and events of the platform and gitops clusters and the Argo CD applications (read-only tokens created by `bootstrap.py`; its own cluster through its service account). It can write one thing: report files on its own volume.
-- **Playbook first.** A fixed set of queries (error ratio, p99, replicas, restarts, top error logs, slow and failing traces, pod state, events, recent Argo CD syncs) produces evidence and a rule based classification of about 30 causes (dependency latency, crash by reason, image pull, scheduling, quota, OOM versus leak, probes, ingress backend, Argo CD sync, node, DNS, control plane, telemetry gap and more). Every report names the layer (application or infrastructure) with its reasoning, the priority with its rationale, the fix as commands, and the observability gaps. See [docs/observability-architecture.md](docs/observability-architecture.md).
-- **LLM on top.** With `ANTHROPIC_API_KEY`, Claude gets the evidence plus the same read only tools and must verify it, then submit a report that validates against a schema (`submit_rca`). If the key is missing or the call fails the rule based report is kept and says `mode: rule_based`.
-- **Honest output.** Reports carry the evidence with the exact query, a confidence level, contributing factors, and say when a fault injection flag is active (a drill).
-- Tool output is treated as data, never as instructions, secrets are redacted from log lines, and the loop has a step limit.
+### Incident investigation
+
+Alert fires in Grafana → Grafana calls `POST /webhook` → agent creates one Argo Workflow (`incident-investigation` WorkflowTemplate), named from the alert fingerprint so a repeated notification gets a 409 and does not start a second run.
+
+**Steps:**
+1. **Settle** — 20-second suspend for data to arrive in the stores
+2. **Collect** — queries Mimir (error ratio, p99, CPU, memory), Loki (top error logs), Tempo (slow/failing traces), Kubernetes (pod state, events, restarts), Argo CD (recent syncs); output is a compact evidence JSON
+3. **Analyze** — rule-based classifier maps evidence to ~30 root-cause categories; with `ANTHROPIC_API_KEY`, Claude gets the same evidence + read-only tools and must call `submit_rca` with a schema-validated report
+4. **Store** — writes `<id>/rca.md` and `report.json` to the reports PVC
+5. **Notify** — sends a summary to a chat webhook
+
+**Classification families covered:** container (waiting, crash loop), scheduling (pending, unschedulable), rollout (stuck deployment, StatefulSet, DaemonSet), job (failed), memory (near limit, OOM kill), cpu (throttled), volume (filling, almost full, failed PVC), target (service down), node (not ready, pressure, CPU/memory saturated), controlplane (API server errors, slow), dns, ingress, gateway, certificate, argocd (degraded, missing), telemetry (gap, collector down), datasource (unavailable), hpa (saturated).
+
+**Agent properties:**
+- Read-only by construction — write access is limited to the reports PVC
+- Playbook-first — structured queries run before any LLM call; the report is complete without one
+- Honest — reports carry the exact queries, evidence, confidence level, contributing factors, and a flag when a fault injection drill is active
+- Tool output is treated as data, never as instructions; secrets are redacted from log lines; the LLM loop has a step limit
+
+### Scheduled proactive reviews
+
+Four CronWorkflows run on a fixed schedule (all times IST):
+
+| CronWorkflow | Schedule | What it does |
+|---|---|---|
+| `sre-capacity-review` | Daily 06:30 IST | Checks CPU P95 and Mem P99 against per-service thresholds; opens a PR to reduce replicas or resource limits when consistently under-utilised; scale-down is guarded by a 24h cooldown and a 15-minute post-merge hold |
+| `sre-weekly-capacity-floor-review` | Mondays 07:00 IST | Derives the minimum safe replica floor from 7-day peak traffic; writes a recommendation report (read-only, no PR) |
+| `sre-weekly-health-review` | Mondays 08:00 IST | Scans all workloads for restart storms (≥5 restarts/7d), HPA saturation (≥10% of time at max), and risky recent deploys (error rate doubled within 168h of a deploy); writes a cluster health report |
+| `sre-self-learning` | Sundays 09:00 IST | Re-diagnoses unknown-cause incidents; opens GitHub issues for repeated observability gaps; recalibrates per-family confidence weights; tunes per-service thresholds from 30-day Mimir telemetry |
+
+All four can be triggered manually from the RCA viewer UI. In-flight workflows show a live 0–100% progress bar driven by Argo's `status.progress` step counter.
+
+### Self-learning (four passes)
+
+The self-learning workflow runs every Sunday. It improves report quality and threshold accuracy over time without manual tuning:
+
+**Pass 1 — Unknown rediagnosis.** Re-runs the classifier against every past report with `root_cause: unknown`, using 30 days of Mimir and Loki data that may not have been available at incident time. Reports whose cause is now determinable are updated and noted in the weekly report with a link to the original.
+
+**Pass 2 — Gap tracker.** Groups past reports by the observability gaps they flagged. When a gap is seen ≥3 times it opens (or updates) a GitHub issue in the repo labelled `observability-gap`, tagged by service and gap type. The self-learning report lists all open gap issues with links, counts, and new-this-week highlights.
+
+**Pass 3 — Confidence calibration.** For each alert family, compares the confidence score the agent assigned against the actual outcome (incident confirmed vs. noise). Adjusts per-family weights stored in `.calibration.json`. The report shows the before/after weight table and which families improved.
+
+**Pass 4 — Threshold tuning.** For each workloads service, fetches 30 days of daily CPU P95 and Memory P99 from Mimir, alongside the incident dates and capacity-review dates from that period. Updates per-service thresholds in `.thresholds.json`. The report includes a sparkline chart (CPU + memory time series with incident markers and threshold lines) for every service that was adjusted, rendered as inline SVG in the RCA viewer — no Grafana dependency at view time.
+
+### RCA viewer UI
+
+Browse reports at https://reports.localhost:9443 (gateway basic auth).
+
+**Features:**
+- **Report list** — all RCAs with alert type, service, priority, root cause, confidence and timestamp; click to expand the full Markdown RCA
+- **Progress strip** — active Argo Workflows (incident or scheduled) show a live 0–100% fill bar; label shows "Self-learning 50%…"; re-discovered after page reload from Argo's k8s API
+- **Self-learning report** — five sections: rediagnosed reports with before/after cause; gap issues table with GitHub links and new/total counts; calibration weight table; threshold cards with 30-day sparklines (blue CPU P95, amber Mem P99, dashed red threshold, red tick per incident date)
+- **Trigger buttons** — manually start any of the four CronWorkflows from the UI
+- **Facts panel** — platform-wide counts: open gap issues (N new / M total tracked), incident count, confidence distribution
+
+---
+
+## Try a failure drill
+
+```bash
+scripts/drill.sh latency     # also: errors, oom, kill, reset
+```
+
+1. The API's downstream call becomes slow; the SLO dashboard (`Services / orders-api: RED and SLO`) shows the error budget burning.
+2. `OrdersApiErrorBudgetFastBurn` fires in Grafana and calls the agent webhook.
+3. An Argo Workflow `incident-ordersapierrorbudgetfastburn-...` starts (Argo Workflows UI or `kubectl --context kind-observability -n sre-agent get wf`).
+4. The agent stores `<id>/rca.md` and `report.json` on the reports volume; browse them at https://reports.localhost:9443.
+
+Sample reports for each drill scenario: [docs/rca-samples](docs/rca-samples).
+
+---
+
+## Fault injection: does the agent get it right?
+
+`scripts/faults.py` injects 36 kinds of fault and checks each RCA report against the expected conclusion (alert, root-cause category, application vs infrastructure layer):
+
+```bash
+scripts/faults.py list                       # every fault, its expected alert and conclusion
+scripts/faults.py run-each all disruptive    # one at a time: inject → wait → judge → clean up (~6 h for all)
+scripts/faults.py run-each crash oom         # just these two
+scripts/faults.py start all                  # inject all 31 non-disruptive faults together (sandbox namespace)
+scripts/faults.py check                      # PASS / WRONG / NO ALERT per fault (wait ~15 min after start)
+scripts/faults.py clear
+```
+
+**Results (one fault at a time):** 35 of 36 faults produce a report with the expected alert, cause and layer; 0 are wrong. The one fault with no report is `partition` — it cuts off the only node running Grafana, the alert path and the agent, so nothing is left to alert or investigate. That is the design case for a dead man's switch (roadmap).
+
+Faults covered: crash loops by cause (missing setting, read-only filesystem, dependency refused, network policy block, unresolvable name, clean exit), image pull errors (missing tag, unreachable registry), missing Secret or ConfigMap, unschedulable pods (capacity, node selector, unbound volume), OOM kill, CPU throttling, failing liveness/readiness probes, failed Job, stuck rollout, namespace quota, ephemeral-storage eviction, ingress errors (5xx, slow backend, missing backend), Argo CD issues (unrenderable manifests, unhealthy resources, policy rejection), platform add-on scaled to zero, collector gone, node down.
+
+`scripts/coverage_audit.py` checks every Deployment, StatefulSet and DaemonSet in all three clusters for missing metrics, missing logs, missing labels, missing memory limits, missing probes, and missing PodDisruptionBudgets.
+
+---
+
+## Backstage developer portal
+
+https://backstage-portal.localhost:7443 — a service catalog with live pod status, Argo CD health, and open alerts per component, plus self-service Scaffolder templates:
+
+| Template | What it does |
+|---|---|
+| New service | Scaffolds a FastAPI service, Dockerfile, CI workflow, and ArgoCD Application |
+| Deploy image tag | Opens a PR to bump the image tag in the service's deployment |
+| Roll back service | Opens a PR to revert to the previous image tag |
+| Scale service | Opens a PR to adjust replica count |
+| Change resources | Opens a PR to adjust CPU/memory requests and limits |
+| Add hostname | Opens a PR to add an HTTPRoute hostname |
+| Set environment variable | Opens a PR to add/update an env var in the deployment |
+| Promote to demo | Copies a sandbox workload to the demo namespace |
+| Request sandbox | Creates a sandbox namespace with network policies |
+| Request access | Opens a GitHub issue for RBAC access |
+| Request alert | Opens a PR to add a Grafana alert rule |
+| Request dashboard | Opens a PR to add a Grafana dashboard |
+| Run failure drill | Triggers a fault injection scenario |
+
+---
+
+## Observability
+
+**Metrics** — Alloy scrapes annotated pods, kube-state-metrics and cAdvisor (kubelet) and remote-writes to Mimir. Tempo's metrics generator adds span metrics and a service graph.
+
+**Logs** — Alloy tails pod logs through the Kubernetes API (no hostPath, so Pod Security `baseline` holds) into Loki. Apps log JSON with `trace_id`, so Grafana jumps from a log line to its trace.
+
+**Traces** — apps send OTLP to Alloy, which forwards to Tempo. Grafana links traces to logs and metrics.
+
+**Dashboards and datasources** are provisioned from Git (ConfigMaps picked up by the Grafana sidecar).
+
+### SLO
+
+`orders-api`: 99.5% of requests succeed (non-5xx) **and** finish within 300 ms, over 28 days (~3h 22m error budget). The SLI comes from one histogram with a `status` label (a slow 500 is counted once). Alerts use multiwindow, multi-burn-rate: 14.4× over 1h + 5m pages; 6× over 6h + 30m opens a ticket. See [docs/runbooks/orders-api.md](docs/runbooks/orders-api.md).
+
+### Alert rules
+
+| File | Covers |
+|---|---|
+| `rules-generic.yaml` | 30+ platform-wide alerts across all families listed above |
+| `rules-orders-api.yaml` | SLO burn rate, error ratio, latency, saturation for `orders-api` |
+| `rules-platform.yaml` | Infrastructure: nodes, control plane, cert-manager, Argo CD |
+
+Notable alerts: `ArgoCDAppDegraded` fires when any Argo CD Application reports `health_status=Degraded` with a summary naming the specific app and its likely causes; `ArgoCDAppMissing` fires when resources are `Missing` from the cluster.
+
+---
 
 ## Production posture
 
 | Area | What is in place |
 |---|---|
-| GitOps | Argo CD app of apps, AppProjects restrict repos, namespaces and cluster resources, automated sync with prune and self-heal, sync waves for ordering. After bootstrap nothing is applied by hand. |
-| Isolation | One namespace per concern, default-deny ingress and egress with explicit allows, Pod Security labels (restricted enforced for our workloads). |
-| Workloads | Requests and limits sized from measured usage ([docs/RESOURCES.md](docs/RESOURCES.md)), startup/readiness/liveness probes, non-root, read-only root fs, drop ALL capabilities, seccomp, PDBs, topology spread, pinned image tags (CI writes the commit sha into Git). |
+| GitOps | Argo CD app-of-apps; AppProjects restrict repos, namespaces and cluster resources; automated sync with prune and self-heal; sync waves for ordering. After bootstrap nothing is applied by hand. |
+| Isolation | One namespace per concern; default-deny ingress and egress NetworkPolicies with explicit allows; Pod Security labels (`restricted` enforced for `demo` and `sre-agent`). |
+| Workloads | Requests and limits sized from measured usage ([docs/RESOURCES.md](docs/RESOURCES.md)); startup/readiness/liveness probes; non-root; read-only root filesystem; drop ALL capabilities; seccomp `RuntimeDefault`; PodDisruptionBudgets; topology spread constraints; pinned image tags (CI writes the commit SHA to Git). |
 | Guardrails | Kyverno requires resource settings, pinned tags and non-root pods (enforced in `demo` and `sre-agent`, audit elsewhere). |
-| RBAC | Dedicated ServiceAccounts, no token mounted unless needed, Argo CD default role is read-only. |
-| Secrets | Not in Git. Created at bootstrap with random values; the Sealed Secrets controller is installed for encrypted secrets in Git ([docs/secrets.md](docs/secrets.md)). |
-| Supply chain | CI: tests, image build, dependency scan, push to GHCR, tag bump commit. yamllint and kubeconform on every PR. |
+| RBAC | Dedicated ServiceAccounts; no token auto-mounted unless needed; Argo CD default role is read-only. |
+| Secrets | Not in Git. Created at bootstrap with random values; Sealed Secrets controller installed for encrypted-in-Git secrets ([docs/secrets.md](docs/secrets.md)). |
+| Supply chain | CI: tests → image build → dependency scan → push to GHCR → tag bump commit. `yamllint` and `kubeconform` on every PR. |
 | Logging | Structured JSON everywhere with trace correlation. |
-| Config changes | Config and rule ConfigMaps are generated with a content hash, so a change rolls the pod. |
+| Config changes | ConfigMaps carry a content hash annotation so a rule or config change rolls the pod. |
+
+---
+
+## If clusters disappear after a machine restart
+
+Kind nodes are Docker containers. `bootstrap.py` gives them a restart policy, so they come back with Docker. On WSL2 also set `vmIdleTimeout=-1` in `%UserProfile%\.wslconfig`; without it WSL stops the VM when no terminal is open. If that setting was missing at bootstrap time, run `python3 bootstrap/bootstrap.py` once — it only adds the policy to clusters that already exist.
+
+---
 
 ## Design decisions and trade-offs
 
-- **kind with Calico.** Upstream Kubernetes in containers: reproducible, one command up and down, works on Linux. kind has no Gateway API controller and its default CNI does not enforce NetworkPolicy reliably, so Calico is installed at bootstrap and Traefik (as a Gateway API controller) is deployed by Argo CD in every cluster (the host ports 8080/8443, 9080/9443 and 7080/7443 map to its NodePorts 30080 and 30443).
-- **Gateway API, not Ingress.** Routes are `HTTPRoute` objects on one `Gateway` per cluster, so another controller can replace Traefik without touching them. ingress-nginx was dropped: its Helm admission-webhook hook jobs collided with Argo CD syncs. The Traefik and cert-manager charts have no Helm hooks (cert-manager's startup check Job is turned off), which was verified by rendering them.
-- **Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Production only runs collectors and ships out; the stores, Grafana and alerting live in the `observability` cluster, so observability survives a production rebuild. A third cluster, `gitops`, runs the one Argo CD that deploys both, so the deployer depends on neither (and holds the only credentials for them). Cost: a second cluster to run, and the link between them. Locally that link is NodePorts on the kind Docker network with no authentication; in the cloud it would be internal load balancers or private endpoints with TLS and per-tenant credentials. If the production cluster is down, Grafana still shows history, but alerts that need the SRE agent have nowhere to go.
-- **Local disk (PVCs) instead of S3.** Mimir, Loki and Tempo run single binary with their data on PVCs. That is the production plan for this stage, and the cost is no scale-out. Moving to object storage later is a config change in each tool's storage block. I tried MinIO first and dropped it: its images are no longer pullable.
-- **Mimir monolithic, Loki and Tempo single binary.** Fits a laptop. Production would run them in distributed mode with replication.
-- **Alerting lives in Grafana.** Alert rules, the contact point and the notification policy are ConfigMaps in Git that the Grafana sidecar loads. Mimir only runs the SLO recording rules. One UI for dashboards, alert state and silences, and no separate Alertmanager to operate or keep alive.
-- **Reports on a PVC, not ConfigMaps.** ConfigMaps live in etcd, are capped at 1 MiB and never expire. Reports are plain files on a 2Gi volume with a nightly cleanup job (14 days) and a read-only viewer. With kind that volume is a folder on one node and is lost with the cluster; on EKS or AKS it is a managed disk, or the store step uploads to S3 or Blob. The JSON line in Loki stays the searchable copy.
-- **Argo Workflows instead of a durable-execution engine.** An investigation is a short linear pipeline, so retries, timeouts and a visible history are enough, and Argo Workflows is Kubernetes-native, managed by GitOps and needs no database. Trade-offs: no durable timers or signals in code (the 20 s settle is a suspend step), and data moves between steps as workflow parameters, capped at about 150 KB (the agent trims evidence to fit). A long-lived or branching process would justify Temporal or Restate.
-- **Secrets seeded at bootstrap.** Sealed Secrets are bound to a cluster key, so secrets committed for my cluster could not be decrypted on yours. Seeding at bootstrap keeps the repo runnable from scratch without putting a private key in Git.
-- **No HPA locally.** metrics-server is disabled to save resources. With it enabled the API gets an HPA on CPU.
-- **Rule based analysis plus an LLM.** The agent is useful without an API key and testable without a model; the model adds verification and better prose.
-- **TLS is not enabled** on the local ingress. Ingress objects are ready for cert-manager.
+**kind with Calico.** Reproducible, one command up and down. kind has no Gateway API controller and its default CNI does not enforce NetworkPolicy, so Calico is installed at bootstrap and Traefik (as a Gateway API controller) is deployed by Argo CD in every cluster.
+
+**Gateway API, not Ingress.** Routes are `HTTPRoute` objects on one `Gateway` per cluster, so a controller swap doesn't touch routes. ingress-nginx was dropped: its Helm admission-webhook hook Jobs collided with Argo CD syncs. Traefik and cert-manager have no Helm hooks (cert-manager startup check is off), verified by rendering them.
+
+**Observability in a separate cluster.** The tools you debug with must not fail with what they watch. Collectors run in the platform cluster and ship out; stores, Grafana and alerting live in `observability`, so observability survives a production rebuild. A third cluster (`gitops`) runs the one Argo CD that deploys both, so the deployer depends on neither. Cost: a second cluster to run, and a link between them (NodePorts on the Docker network locally; internal load balancers with TLS in the cloud). If the platform cluster is unreachable, Grafana still shows history but the agent has nowhere to reach for pod/event data.
+
+**Local disk (PVCs) instead of object storage.** Mimir, Loki and Tempo run single-binary with data on PVCs. Moving to object storage is a config change in each tool's storage block. (MinIO was tried and dropped: images are no longer pullable from its registry.)
+
+**Alerting lives in Grafana.** Alert rules, contact point and notification policy are ConfigMaps in Git loaded by the Grafana sidecar. Mimir runs only the SLO recording rules. One UI for dashboards, alert state and silences; no Alertmanager to operate.
+
+**Reports on a PVC, not ConfigMaps.** ConfigMaps are capped at 1 MiB and live in etcd forever. Reports are plain files on a 2 Gi volume with a 14-day nightly cleanup job. On kind the volume is a folder on one node; on EKS/AKS it is a managed disk or the store step uploads to S3/Blob. The JSON line in Loki stays the durable searchable copy.
+
+**Argo Workflows instead of a durable-execution engine.** An investigation is a short linear pipeline; retries, timeouts and a visible history are enough, and Argo Workflows is Kubernetes-native and managed by GitOps with no database. Trade-offs: no durable timers or signals in code (the settle step is a 20 s suspend), and data moves as workflow parameters capped at ~150 KB (the agent trims evidence to fit). A long-lived or branching process would justify Temporal or Restate.
+
+**Rule-based analysis plus an LLM.** The agent is useful without an API key and testable without a model. The model adds verification and better prose. With no key (or on API failure) the rule-based report is kept and labelled `mode: rule_based`.
+
+**Secrets seeded at bootstrap.** Sealed Secrets are bound to a cluster key; secrets committed for one cluster cannot be decrypted on another. Seeding at bootstrap keeps the repo runnable from scratch without a private key in Git.
+
+---
 
 ## Moving to EKS or AKS
 
-Only environment specifics change: storage classes (`gp3` / `managed-csi`), the gateway controller and TLS (ALB or App Gateway plus cert-manager), Sealed Secrets or bootstrap seeding replaced by External Secrets, replicas and PVC sizes, and optionally object storage for the LGTM backends.
-The Argo CD apps, projects, policies, dashboards, rules and the agent are unchanged.
+Only environment specifics change: storage classes (`gp3` / `managed-csi`), gateway controller and TLS (ALB or App Gateway + cert-manager), External Secrets in place of bootstrap seeding, replica counts, PVC sizes, and optionally object storage for the LGTM backends. The Argo CD apps, AppProjects, policies, dashboards, alert rules, and the agent are unchanged.
+
+---
 
 ## Roadmap
 
-1. External Secrets Operator with a real backend, cert-manager and TLS.
-2. Object storage and distributed modes for Mimir, Loki, Tempo.
-3. Progressive delivery (Argo Rollouts) with SLO-based analysis, so a bad deploy is rolled back automatically.
-4. Agent: human approval step (a suspend) in the workflow before any remediation, remediation playbooks (restart, rollback PR), evaluation suite of recorded incidents, cost and token budgets.
-5. A dead man's switch: a second, independent watcher that pages when the alert path or the agent itself stops (the faults that cut the telemetry or the alert path cannot produce a report, see Fault injection). Per-environment overlays with ApplicationSets.
-6. Alert-driven SLO reporting workflow (weekly) and a status page.
+1. External Secrets Operator with a real backend; cert-manager and production TLS.
+2. Object storage and distributed modes for Mimir, Loki and Tempo.
+3. Progressive delivery (Argo Rollouts) with SLO-based analysis so a bad deploy rolls back automatically.
+4. Agent: human-approval suspend step in the workflow before any remediation; remediation playbooks (restart, rollback PR); evaluation suite from recorded incidents; cost and token budgets.
+5. Dead man's switch: an independent watcher that pages when the alert path or the agent itself stops (the partition fault demonstrates this gap).
+6. Per-environment overlays with ApplicationSets; alert-driven weekly SLO status page.
 7. Kyverno image signature verification (cosign) and SBOMs.
+
+---
 
 ## AI usage
 
-This repo was built with Claude Code as a pair engineer: architecture options, manifests, the agent, tests, and debugging. The full session log is in [docs/ai-log](docs/ai-log).
+Built with Claude Code as a pair engineer: architecture, manifests, the agent, tests, and debugging. Full session log: [docs/ai-log](docs/ai-log).
