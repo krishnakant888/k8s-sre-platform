@@ -1180,7 +1180,7 @@
     // Automated capacity actions section — shown when agent opened a remediation PR
     const staleRemSection = $("report")?.querySelector(".auto-capacity-section");
     if (staleRemSection) staleRemSection.remove();
-    if (!isCapacity && !isHealthReport && !isWeeklyFloor && !isSelfLearning && r.remediation) {
+    if (!isCapacity && !isHealthReport && !isWeeklyFloor && !isSelfLearning && r.remediation && r.remediation.type) {
       const rem = r.remediation;
       const remSection = el("div", "auto-capacity-section");
       const remLabel = el("span", "rc-label", "Automated capacity action");
