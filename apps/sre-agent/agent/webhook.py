@@ -131,6 +131,7 @@ async def list_active_workflows():
             "workflow_type": w["metadata"].get("labels", {}).get("sre-agent/review-type", ""),
             "phase": w.get("status", {}).get("phase", "Unknown"),
             "startedAt": w.get("status", {}).get("startedAt"),
+            "progress": w.get("status", {}).get("progress", ""),
         }
         for w in items
         if w.get("status", {}).get("phase") in ("Running", "Pending")
@@ -163,4 +164,5 @@ async def get_workflow_status(name: str):
         "startedAt": status.get("startedAt"),
         "finishedAt": status.get("finishedAt"),
         "message": status.get("message", ""),
+        "progress": status.get("progress", ""),  # "X/Y" e.g. "2/4"
     }
