@@ -892,14 +892,23 @@
       for (const [svc, v] of thrEntries) {
         const ooms = v.oom_incidents || 0;
         const cleans = v.clean_capacity_reviews || 0;
-        const direction = ooms >= 2 ? "🔽 tightened" : ooms === 1 ? "↘ slightly tightened" : cleans >= 3 ? "↗ relaxed" : "→ default";
+        const directionLabel = ooms >= 2 ? "🔽 Tightened — OOMs detected" : ooms === 1 ? "↘ Slightly tightened — 1 OOM" : cleans >= 3 ? "↗ Relaxed — consistent headroom" : "→ Default thresholds";
+        const directionTip = ooms >= 2
+          ? `${ooms} OOM kills in the last 30 days. CPU and memory scale-down thresholds have been lowered (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max} of limit). The agent will not propose scale-down unless usage stays well below these tighter limits, reducing the risk of another OOM after a resource cut.`
+          : ooms === 1
+          ? `1 OOM kill in the last 30 days. Thresholds are slightly tighter than default (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent applies a small safety margin before recommending any resource reduction.`
+          : cleans >= 3
+          ? `${cleans} consecutive clean capacity reviews with no incidents. Thresholds are relaxed (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}), so the agent can recommend scale-down at a higher usage level than it would for a service with OOM history.`
+          : `No OOM history and fewer than 3 consecutive clean reviews. Using default thresholds (CPU ≤${v.cpu_p95_max}, Mem ≤${v.memory_p99_max}). The agent recommends scale-down only when usage is below these limits with no active alerts or restarts.`;
         const cls = ooms >= 1 ? "sl-thr-card ooms" : cleans >= 3 ? "sl-thr-card clean" : "sl-thr-card";
         const card = el("div", cls);
         const header = el("div", "sl-thr-header");
         header.append(el("strong", "sl-thr-svc", svc));
         const meta = el("span", "sl-thr-meta");
+        const dirPill = el("span", "run-phase-pill " + (ooms >= 1 ? "failed" : "running"), directionLabel);
+        dirPill.title = directionTip;
         meta.append(
-          el("span", "run-phase-pill " + (ooms >= 1 ? "failed" : "running"), direction),
+          dirPill,
           el("span", "sl-thr-detail", "CPU ≤" + v.cpu_p95_max + "  Mem ≤" + v.memory_p99_max),
           el("span", "sl-thr-detail", ooms + " OOM · " + cleans + " clean")
         );
@@ -920,6 +929,9 @@
         leg.append(el("span", "sl-spark-leg-thr", "- - threshold fraction"));
         if ((tele.incident_dates || []).length) leg.append(el("span", "sl-spark-leg-inc", "│ OOM incident"));
         card.append(leg);
+        // impact explanation
+        const impact = el("p", "sl-thr-impact", directionTip);
+        card.append(impact);
 
         thrSec.append(card);
       }
