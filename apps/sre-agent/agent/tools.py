@@ -356,6 +356,11 @@ def get_argocd_app(name: str) -> dict:
         if (r.get("health") or {}).get("status") not in (None, "Healthy") or r.get("status") == "OutOfSync"
     ]
     op = status.get("operationState") or {}
+    # last deployed revision and time from sync history (newest entry)
+    history = status.get("history") or []
+    last_entry = history[-1] if history else {}
+    last_revision = _deployed_revision(last_entry) if last_entry else ""
+    last_deployed_at = last_entry.get("deployedAt", "")
     return _trim(
         {
             "name": app["metadata"]["name"],
@@ -364,6 +369,8 @@ def get_argocd_app(name: str) -> dict:
             "destination": dest.get("name") or dest.get("server"),
             "destination_namespace": dest.get("namespace"),
             "paths": [s.get("path") for s in (spec.get("sources") or [spec.get("source", {})]) if s.get("path")],
+            "last_revision": last_revision,
+            "last_deployed_at": last_deployed_at,
             "conditions": [f"{c.get('type')}: {c.get('message', '')[:200]}" for c in status.get("conditions", [])],
             "operation": {"phase": op.get("phase"), "message": (op.get("message") or "")[:300]} if op else None,
             "unhealthy": unhealthy[:8],
