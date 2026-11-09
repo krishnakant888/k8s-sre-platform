@@ -25,7 +25,7 @@ metadata:
 rules:
   - apiGroups: [argoproj.io]
     resources: [workflows]
-    verbs: [create, list]
+    verbs: [create, get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -72,7 +72,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: alert-webhook}
       containers:
         - name: webhook
-          image: ghcr.io/krishnakant888/sre-agent:sha-4a8ca4f9994569211f2950a561b3d7aed7d93645
+          image: ghcr.io/krishnakant888/sre-agent:sha-aad57cac3166beaa04c7197806b8d44c140e680e
           command: [uvicorn, "agent.webhook:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
           ports:
             - {name: http, containerPort: 8080}
@@ -94,9 +94,12 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: reports, mountPath: /reports, readOnly: true}
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: reports
+          persistentVolumeClaim: {claimName: rca-reports, readOnly: true}
 ---
 apiVersion: v1
 kind: Service
@@ -107,13 +110,3 @@ spec:
   selector: {app.kubernetes.io/name: alert-webhook}
   ports:
     - {name: http, port: 8080, targetPort: http}
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: alert-webhook
-  namespace: sre-agent
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels: {app.kubernetes.io/name: alert-webhook}
