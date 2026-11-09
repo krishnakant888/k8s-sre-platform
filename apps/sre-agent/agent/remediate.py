@@ -280,7 +280,7 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
     if not new_limit:
         return None
 
-    # patch content
+    # patch limits.memory
     patched, count = re.subn(
         r"(limits\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*memory:\s*)" + re.escape(old_limit),
         lambda mo: mo.group(1) + new_limit, content, count=1, flags=re.MULTILINE,
@@ -294,22 +294,39 @@ def _remediate_oom(ctx: dict, report, repo: str, default_branch: str, head_sha: 
         log.warning("remediate: OOM patch produced no change for %s", file_path)
         return None
 
+    # also patch requests.memory to match (keeps requests == limits for Guaranteed QoS)
+    req_m = re.search(
+        r"requests\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*memory:\s*(\d+(?:Mi|Gi))"
+        r"|requests:\s*\{[^}]*memory:\s*(\d+(?:Mi|Gi))",
+        patched,
+    )
+    old_req = (req_m.group(1) or req_m.group(2)) if req_m else None
+    if old_req:
+        patched, _ = re.subn(
+            r"(requests\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*memory:\s*)" + re.escape(old_req),
+            lambda mo: mo.group(1) + new_limit, patched, count=1, flags=re.MULTILINE,
+        ) or re.subn(
+            r"(requests:\s*\{[^}]*memory:\s*)" + re.escape(old_req),
+            lambda mo: mo.group(1) + new_limit, patched, count=1,
+        )
+    req_change = f", `requests.memory` `{old_req}` → `{new_limit}`" if old_req else ""
+
     branch = f"remediate/oom-{wl}-{ns}-{int(time.time())}"
     commit_msg = (
-        f"fix(ops): raise memory limit of {wl} in {ns} from {old_limit} to {new_limit}\n\n"
+        f"fix(ops): raise memory request+limit of {wl} in {ns} to {new_limit}\n\n"
         f"Automated remediation triggered by RCA {report.id}.\n"
         f"Sizing: {sizing_note}\n"
-        f"Memory pressure was diagnosed; raising the limit to give the workload measured headroom.\n"
+        f"Memory pressure was diagnosed; raising request and limit to give the workload measured headroom.\n"
     )
-    pr_title = f"fix(ops): raise {wl} memory limit {old_limit} → {new_limit} ({ns})"
+    pr_title = f"fix(ops): raise {wl} memory {old_limit} → {new_limit} ({ns})"
     cap_note = f" Capped at MAX_MEMORY_LIMIT_MIB={MAX_MEMORY_LIMIT_MIB}Mi." if _memory_limit_mib(new_limit) == MAX_MEMORY_LIMIT_MIB else ""
     pr_body = (
         f"## Automated remediation — memory pressure\n\n"
         f"**RCA:** `{report.id}`  \n"
         f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
-        f"**Change:** `{file_path}` — `limits.memory` `{old_limit}` → `{new_limit}`\n\n"
+        f"**Change:** `{file_path}` — `limits.memory` `{old_limit}` → `{new_limit}`{req_change}\n\n"
         f"**Sizing:** {sizing_note}{cap_note}\n\n"
-        f"Merge to let Argo CD apply the measured memory limit.\n\n"
+        f"Merge to let Argo CD apply the measured memory request and limit.\n\n"
         f"**Verify:** `container_memory_working_set_bytes` for `{wl}` stays below 80% of `{new_limit}`."
     )
 
@@ -384,6 +401,7 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         new_cpu = f"{MAX_CPU_LIMIT_M}m"
         sizing_note += f" Capped at MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m — human review recommended."
 
+    # patch limits.cpu
     patched, count = re.subn(
         r"(limits\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*)" + re.escape(old_cpu),
         lambda mo: mo.group(1) + new_cpu, content, count=1, flags=re.MULTILINE,
@@ -397,13 +415,35 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         log.warning("remediate: cpu scale-up patch produced no change for %s", file_path)
         return None
 
+    # also patch requests.cpu — set to 50% of new limit so HPA has accurate utilization baseline
+    req_m = re.search(
+        r"requests\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*(\d+m?)"
+        r"|requests:\s*\{[^}]*cpu:\s*(\d+m?)",
+        patched,
+    )
+    old_req_cpu = (req_m.group(1) or req_m.group(2)) if req_m else None
+    if old_req_cpu:
+        _rm = re.fullmatch(r"(\d+)(m?)", new_cpu)
+        new_cpu_m = int(_rm.group(1)) if _rm and _rm.group(2) == "m" else int(_rm.group(1)) * 1000 if _rm else 0
+        new_req_cpu = f"{max(new_cpu_m // 2, 10)}m"
+        patched, _ = re.subn(
+            r"(requests\b[^\n]*\n(?:[^\n]*\n){0,2}[^\n]*cpu:\s*)" + re.escape(old_req_cpu),
+            lambda mo: mo.group(1) + new_req_cpu, patched, count=1, flags=re.MULTILINE,
+        ) or re.subn(
+            r"(requests:\s*\{[^}]*cpu:\s*)" + re.escape(old_req_cpu),
+            lambda mo: mo.group(1) + new_req_cpu, patched, count=1,
+        )
+    else:
+        new_req_cpu = None
+    req_change = f", `requests.cpu` `{old_req_cpu}` → `{new_req_cpu}`" if old_req_cpu else ""
+
     branch = f"remediate/cpu-scaleup-{wl}-{ns}-{int(time.time())}"
     commit_msg = (
-        f"fix(ops): raise CPU limit of {wl} in {ns} from {old_cpu} to {new_cpu}\n\n"
+        f"fix(ops): raise CPU request+limit of {wl} in {ns} to {new_cpu}\n\n"
         f"Automated remediation triggered by RCA {report.id}.\n"
         f"Sizing: {sizing_note}\n"
     )
-    pr_title = f"fix(ops): raise {wl} CPU limit {old_cpu} → {new_cpu} ({ns})"
+    pr_title = f"fix(ops): raise {wl} CPU {old_cpu} → {new_cpu} ({ns})"
     cap_warning = (
         f"\n\n> **Warning:** CPU ceiling `MAX_CPU_LIMIT_M={MAX_CPU_LIMIT_M}m` reached. "
         f"Human review required."
@@ -412,7 +452,7 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         f"## Automated remediation — CPU vertical scale-up\n\n"
         f"**RCA:** `{report.id}`  \n"
         f"**Alert:** `{report.alert}` on `{wl}` in `{ns}`  \n"
-        f"**Change:** `{file_path}` — `limits.cpu` `{old_cpu}` → `{new_cpu}`\n\n"
+        f"**Change:** `{file_path}` — `limits.cpu` `{old_cpu}` → `{new_cpu}`{req_change}\n\n"
         f"**Sizing:** {sizing_note}\n\n"
         f"**Verify:** CPU throttle ratio drops after the rollout.{cap_warning}"
     )
@@ -432,6 +472,8 @@ def _remediate_cpu_scaleup(ctx: dict, report, repo: str, default_branch: str, he
         "pr_number": pr["number"],
         "old_cpu_limit": old_cpu,
         "new_cpu_limit": new_cpu,
+        "old_cpu_request": old_req_cpu,
+        "new_cpu_request": new_req_cpu,
         "sizing_method": sizing_method,
         "file": file_path,
         "branch": branch,
