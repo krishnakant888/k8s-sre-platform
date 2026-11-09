@@ -11,7 +11,7 @@ spec:
   activeDeadlineSeconds: 1800
   arguments:
     parameters:
-      - {name: workloads, value: "orders-api:demo,frontend:demo,dummy-shop:sandbox"}
+      - {name: workloads, value: "orders-api:demo,dummy-shop:sandbox"}
   podGC:
     strategy: OnWorkflowCompletion
   ttlStrategy:
@@ -78,7 +78,7 @@ spec:
   activeDeadlineSeconds: 1800
   arguments:
     parameters:
-      - {name: workloads, value: "orders-api:demo,frontend:demo,dummy-shop:sandbox"}
+      - {name: workloads, value: "orders-api:demo,dummy-shop:sandbox"}
   podGC:
     strategy: OnWorkflowCompletion
   ttlStrategy:
@@ -141,7 +141,7 @@ spec:
   activeDeadlineSeconds: 1800
   arguments:
     parameters:
-      - {name: workloads, value: "orders-api:demo,frontend:demo,dummy-shop:sandbox"}
+      - {name: workloads, value: "orders-api:demo,dummy-shop:sandbox"}
   podGC:
     strategy: OnWorkflowCompletion
   ttlStrategy:

@@ -26,7 +26,7 @@ def test_alternatives_mark_what_the_events_support(monkeypatch, tmp_path):
 
 def test_blast_radius_names_what_depends_on_the_service(monkeypatch, tmp_path):
     _, _, i = badimage(monkeypatch, tmp_path)
-    assert any("frontend" in x for x in i["blast_radius"]) and any("users of orders-api" in x for x in i["blast_radius"])
+    assert any("orders URL through the gateway" in x for x in i["blast_radius"]) and any("users of orders-api" in x for x in i["blast_radius"])
 
 
 def test_confidence_lists_missing_sources(monkeypatch, tmp_path):

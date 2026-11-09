@@ -16,7 +16,7 @@ import httpx
 
 from agent import config
 from agent.models import Evidence, FaultDomain, HowToFix, Impact, Priority, RcaReport, RootCause, TimelineEntry
-from agent.remediate import _headers
+from agent.config import github_headers as _headers
 
 log = logging.getLogger("sre-agent")
 
@@ -24,7 +24,7 @@ WINDOW = os.getenv("HEALTH_WINDOW", "7d")
 CLUSTER = os.getenv("HEALTH_CLUSTER", "platform")
 WORKLOADS_ENV = os.getenv(
     "HEALTH_WORKLOADS",
-    "orders-api:demo,frontend:demo,dummy-shop:sandbox",
+    "orders-api:demo,dummy-shop:sandbox",
 )
 
 # Restart storm: flag a workload when weekly restarts exceed this per container

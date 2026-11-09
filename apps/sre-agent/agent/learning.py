@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 
 from agent import config
-from agent.remediate import _headers
+from agent.config import github_headers as _headers
 
 log = logging.getLogger("sre-agent")
 
