@@ -270,9 +270,11 @@
       if (r.insights?.change?.likely) {
         const ch = r.insights.change;
         const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert}m before alert` : (ch.revision || "").slice(0, 8);
-        const dp = pill("Deploy · " + minBefore, "deploy");
+        const autoResolved = done && !r.ongoing;
+        const dpLabel = autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore;
+        const dp = pill(dpLabel, autoResolved ? "ok" : "deploy");
         const files = (ch.files || []).join(", ");
-        dp.title = (ch.note || "") + (files ? "\n\nChanged: " + files : "");
+        dp.title = (ch.note || "") + (autoResolved ? "\n\nThe alert has since resolved — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
         top.append(dp);
       }
       if (isCapacity) {
@@ -1004,8 +1006,10 @@
       const ch = r.insights.change;
       const minBefore = ch.minutes_before_alert != null ? `${ch.minutes_before_alert} min before alert` : (ch.revision || "").slice(0, 8);
       const files = (ch.files || []).join(", ");
-      const dp = pill("Deploy · " + minBefore, "deploy");
-      dp.title = (ch.note || "") + (files ? "\n\nChanged: " + files : "");
+      const liveResolved = state.live[id] === "resolved";
+      const autoResolved = liveResolved && !r.ongoing;
+      const dp = pill(autoResolved ? "Deploy · auto-resolved" : "Deploy · " + minBefore, autoResolved ? "ok" : "deploy");
+      dp.title = (ch.note || "") + (autoResolved ? "\n\nAlert cleared — the deploy caused a temporary blip." : "") + (files ? "\n\nChanged: " + files : "");
       pills.append(dp);
     }
     const healthTitles = { restart_storm: "Restart storm review", hpa_saturation: "HPA saturation review", change_risk: "Change risk report" };
@@ -1064,6 +1068,38 @@
         if (r.root_cause.description) content.append(el("p", "rc-desc", r.root_cause.description));
         callout.append(icon, content);
         facts.after(callout);
+      }
+      // Deploy correlation callout — shown for every incident report
+      if (!isCapacity && !isHealthReport && !isWeeklyFloor && !isSelfLearning) {
+        const ch = r.insights?.change || {};
+        const liveResolved = state.live[id] === "resolved";
+        const autoResolved = liveResolved && !r.ongoing;
+        const likely = ch.likely;
+        const deployCallout = el("div", "deploy-callout");
+        const dcls = likely ? (autoResolved ? "deploy-callout-auto" : "deploy-callout-likely") : "deploy-callout-none";
+        deployCallout.classList.add(dcls);
+        const dIcon = el("span", "deploy-callout-icon", likely ? "🔀" : "—");
+        const dContent = el("div", "deploy-callout-body");
+        const dLabel = el("span", "rc-label", "Deploy correlation");
+        const confidenceText = likely
+          ? (autoResolved
+            ? `Deploy ${(ch.revision || "").slice(0, 8)} caused a temporary blip that auto-resolved · ${ch.minutes_before_alert}m before alert`
+            : `Deploy ${(ch.revision || "").slice(0, 8)} · ${ch.minutes_before_alert}m before alert · likely cause`)
+          : "No deploy in the 2 h before this alert";
+        const dText = el("p", "rc-text", confidenceText);
+        dContent.append(dLabel, dText);
+        if (likely && ch.files && ch.files.length) {
+          dContent.append(el("p", "rc-desc muted", "Changed: " + ch.files.slice(0, 3).join(", ")));
+        }
+        if (likely && autoResolved) {
+          dContent.append(el("p", "rc-desc deploy-auto-hint", "Alert cleared — the deploy caused a transient spike. No rollback needed unless it recurs."));
+        } else if (likely) {
+          dContent.append(el("p", "rc-desc deploy-revert-hint", `Suggested fix: git revert ${ch.revision || "HEAD"} && git push`));
+        }
+        deployCallout.append(dIcon, dContent);
+        // insert after root-cause callout if present, else after facts
+        const rcCallout = $("report")?.querySelector(".root-cause-callout");
+        if (rcCallout) rcCallout.after(deployCallout); else facts.after(deployCallout);
       }
     }
 
