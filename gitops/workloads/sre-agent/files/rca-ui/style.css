@@ -630,4 +630,28 @@ button, input, select { font: inherit; color: inherit; }
 .run-modal-select { display: block; width: 100%; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--r-xs); color: var(--text); font-size: .85rem; margin-top: 2px; }
 .run-modal-select[hidden] { display: none; }
 .run-modal-run { align-self: flex-end; margin-top: 4px; }
+/* ---- run-in-progress strip ------------------------------------------------ */
+.run-strip { position: fixed; top: var(--topnav-h, 48px); left: 0; right: 0; height: 3px; z-index: 300; overflow: hidden; background: transparent; }
+.run-strip-bar { height: 100%; width: 40%; background: var(--accent, #c2410c); border-radius: 2px; animation: run-scan 1.4s cubic-bezier(.4,0,.6,1) infinite; }
+@keyframes run-scan { 0% { transform: translateX(-150%); } 100% { transform: translateX(350%); } }
+
+/* ---- notif runs section --------------------------------------------------- */
+.notif-runs { border-bottom: 1px solid var(--line-2); }
+.notif-runs-head { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 8px 12px 4px; }
+.notif-run-list { list-style: none; margin: 0; padding: 0 0 6px; }
+.notif-run-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+.run-icon { font-size: .85rem; width: 18px; text-align: center; flex-shrink: 0; }
+.run-icon.spin { display: inline-block; animation: spin .9s linear infinite; color: var(--accent); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.run-icon.ok { color: #16a34a; }
+.run-icon.err { color: #dc2626; }
+.notif-run-body { display: flex; flex-direction: column; min-width: 0; }
+.notif-run-name { font-size: .82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.notif-run-meta { display: flex; align-items: center; gap: 6px; font-size: .72rem; color: var(--muted); margin-top: 1px; }
+.run-phase-pill { padding: 1px 5px; border-radius: 3px; font-size: .68rem; background: var(--surface-alt, rgba(0,0,0,.05)); }
+.run-phase-pill.running { background: rgba(59,130,246,.12); color: #2563eb; }
+.run-phase-pill.pending { background: rgba(107,114,128,.1); }
+.run-phase-pill.succeeded { background: rgba(22,163,74,.12); color: #16a34a; }
+.run-phase-pill.failed, .run-phase-pill.error { background: rgba(220,38,38,.1); color: #dc2626; }
+
 .alert-ann b { color: var(--text-2); }

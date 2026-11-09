@@ -65,6 +65,23 @@ data:
           proxy_read_timeout 15s;
           add_header Cache-Control no-store;
         }
+        location = /_workloads {
+          limit_except GET { deny all; }
+          set $webhook http://alert-webhook.sre-agent.svc.cluster.local:8080;
+          proxy_pass $webhook/workloads;
+          proxy_set_header Host $host;
+          proxy_read_timeout 10s;
+          add_header Cache-Control no-store;
+        }
+        location /_workflow-status/ {
+          limit_except GET { deny all; }
+          set $webhook http://alert-webhook.sre-agent.svc.cluster.local:8080;
+          rewrite ^/_workflow-status/(.+)$ /workflow-status/$1 break;
+          proxy_pass $webhook;
+          proxy_set_header Host $host;
+          proxy_read_timeout 15s;
+          add_header Cache-Control no-store;
+        }
         location /_list/ {
           alias /reports/;
           autoindex on;

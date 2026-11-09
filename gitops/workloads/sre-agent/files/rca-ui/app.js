@@ -10,6 +10,7 @@
     current: null, loaded: false, liveTimer: null, live: {},
     dismissed: new Set(), showDismissed: false,
     read: new Set(), notifOpen: false,
+    runs: [], workloads: [],
   };
   const meta = new Map(); // id -> report.json
 
@@ -54,8 +55,10 @@
   }
   function updateNotifBadge() {
     const unread = state.reports.filter((r) => !state.read.has(r.id) && !state.dismissed.has(r.id) && !["capacity","restart_storm","hpa_saturation","change_risk","self_learning"].includes(r.report_type)).length;
+    const active = state.runs.filter((r) => !r.done).length;
+    const total = unread + active;
     const badge = $("notif-badge");
-    if (badge) { badge.hidden = unread === 0; badge.textContent = unread > 9 ? "9+" : unread; }
+    if (badge) { badge.hidden = total === 0; badge.textContent = total > 9 ? "9+" : total; }
   }
 
   // ---- theme -------------------------------------------------------------------------------------------------
@@ -977,6 +980,72 @@
     }));
   }
 
+  // ---- run progress tracking ---------------------------------------------------------------------------------
+  function renderRunStrip() {
+    let strip = $("run-strip");
+    const active = state.runs.filter((r) => !r.done);
+    if (!active.length) { if (strip) strip.hidden = true; return; }
+    if (!strip) {
+      strip = el("div", "run-strip"); strip.id = "run-strip";
+      strip.append(el("div", "run-strip-bar"));
+      document.body.append(strip);
+    }
+    strip.hidden = false;
+  }
+
+  function renderNotifRuns() {
+    const section = $("notif-runs");
+    if (!section) return;
+    if (!state.runs.length) { section.hidden = true; return; }
+    section.hidden = false;
+    const list = section.querySelector(".notif-run-list");
+    list.replaceChildren(...state.runs.map((run) => {
+      const li = el("li", "notif-run-item" + (run.done ? " done" : ""));
+      const icon = el("span", run.done ? (run.phase === "Succeeded" ? "run-icon ok" : "run-icon err") : "run-icon spin", run.done ? (run.phase === "Succeeded" ? "✓" : "✗") : "⟳");
+      const body = el("div", "notif-run-body");
+      body.append(el("span", "notif-run-name", run.workflow_type));
+      const metaRow = el("div", "notif-run-meta");
+      metaRow.append(el("span", "", ago(run.startedAt)));
+      const pp = el("span", "run-phase-pill " + run.phase.toLowerCase(), run.phase);
+      metaRow.append(pp);
+      body.append(metaRow);
+      li.append(icon, body);
+      return li;
+    }));
+  }
+
+  async function pollRun(run) {
+    try {
+      const resp = await fetch("/_workflow-status/" + run.name);
+      if (resp.ok) {
+        const data = await resp.json();
+        run.phase = data.phase || "Running";
+        if (["Succeeded", "Failed", "Error"].includes(run.phase)) {
+          run.done = true;
+          const ok = run.phase === "Succeeded";
+          toast((ok ? "✓ " : "✗ ") + run.workflow_type + " " + run.phase.toLowerCase());
+          if (ok) loadList().catch(() => {});
+          setTimeout(() => {
+            state.runs = state.runs.filter((r) => r !== run);
+            updateNotifBadge(); renderRunStrip(); renderNotifRuns();
+          }, 5000);
+        } else {
+          setTimeout(() => pollRun(run), 5000);
+        }
+      } else {
+        setTimeout(() => pollRun(run), 5000);
+      }
+    } catch (_) { setTimeout(() => pollRun(run), 5000); }
+    updateNotifBadge(); renderRunStrip(); renderNotifRuns();
+  }
+
+  function startRunTracking(name, workflowType) {
+    const run = { name, workflow_type: workflowType, startedAt: new Date(), phase: "Pending", done: false };
+    state.runs.push(run);
+    updateNotifBadge(); renderRunStrip(); renderNotifRuns();
+    setTimeout(() => pollRun(run), 5000);
+  }
+
   function openNotif() {
     let panel = $("notif-panel");
     if (!panel) {
@@ -987,10 +1056,14 @@
       const markAll = el("button", "notif-mark-all", "Mark all read");
       markAll.addEventListener("click", markAllRead);
       head.append(title, markAll);
+      const runsSection = el("div", "notif-runs"); runsSection.id = "notif-runs"; runsSection.hidden = true;
+      runsSection.append(el("div", "notif-runs-head", "In progress"));
+      runsSection.append(el("ul", "notif-run-list"));
       const list = el("ul", "notif-list"); list.id = "notif-list";
-      panel.append(head, list);
+      panel.append(head, runsSection, list);
       document.body.append(panel);
       renderNotifList();
+      renderNotifRuns();
     }
     panel.hidden = false;
     state.notifOpen = true;
@@ -1019,12 +1092,20 @@
     { value: "health-review", label: "Health review" },
     { value: "self-learning", label: "Self-learning" },
   ];
-  const _SERVICES = [
-    { value: "all", label: "All services" },
-    { value: "orders-api:demo", label: "orders-api (demo)" },
-    { value: "frontend:demo", label: "frontend (demo)" },
-    { value: "dummy-shop:sandbox", label: "dummy-shop (sandbox)" },
-  ];
+
+  function buildServiceOptions() {
+    // Collect from backend-reported list + any service:namespace seen in reports
+    const seen = new Map(); // key -> label
+    state.workloads.forEach((w) => { if (!seen.has(w)) seen.set(w, w); });
+    state.reports.forEach((r) => {
+      if (!r.service) return;
+      const ns = (r.capacity && r.capacity.namespace) || r.cluster || "";
+      const key = ns ? `${r.service}:${ns}` : r.service;
+      if (!seen.has(key)) seen.set(key, key);
+    });
+    return [{ value: "all", label: "All services" }, ...[...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([v]) => ({ value: v, label: v }))];
+  }
+
   function openRunModal() {
     let modal = $("run-modal");
     if (!modal) {
@@ -1041,7 +1122,6 @@
       _REVIEW_TYPES.forEach((t) => { const o = document.createElement("option"); o.value = t.value; o.textContent = t.label; typeSelect.append(o); });
       const svcLabel = el("label", "run-modal-label", "Service"); svcLabel.htmlFor = "run-svc";
       const svcSelect = el("select", "run-modal-select"); svcSelect.id = "run-svc";
-      _SERVICES.forEach((s) => { const o = document.createElement("option"); o.value = s.value; o.textContent = s.label; svcSelect.append(o); });
       typeSelect.addEventListener("change", () => { svcLabel.hidden = svcSelect.hidden = typeSelect.value === "self-learning"; });
       const runBtn = el("button", "btn btn-primary run-modal-run", "Run"); runBtn.type = "button";
       runBtn.addEventListener("click", async () => {
@@ -1054,6 +1134,7 @@
           const data = await resp.json();
           closeRunModal();
           toast("Review started · " + (data.workflow || wfType));
+          if (data.workflow) startRunTracking(data.workflow, wfType);
         } catch (e) {
           runBtn.textContent = "Run"; runBtn.disabled = false;
           toast("Failed: " + e.message);
@@ -1063,6 +1144,16 @@
       inner.append(head, form);
       modal.append(inner);
       document.body.append(modal);
+    }
+    // Repopulate service options each open (reports may have loaded since last open)
+    const svcSelect = $("run-svc");
+    const svcLabel = svcSelect && svcSelect.previousElementSibling;
+    if (svcSelect) {
+      const opts = buildServiceOptions();
+      svcSelect.replaceChildren(...opts.map(({ value, label }) => { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; }));
+      const isSL = $("run-type") && $("run-type").value === "self-learning";
+      if (svcLabel) svcLabel.hidden = isSL;
+      svcSelect.hidden = isSL;
     }
     modal.hidden = false;
   }
@@ -1094,6 +1185,7 @@
   });
 
   loadPrefs();
+  fetch("/_workloads").then((r) => r.ok ? r.json() : null).then((d) => { if (d && Array.isArray(d.workloads)) state.workloads = d.workloads; }).catch(() => {});
   loadList().then(route).catch((e) => { $("count").textContent = "Could not load the reports"; $("list").replaceChildren(el("li", "none", String(e.message))); });
   setInterval(() => loadList().catch(() => {}), 30000);
 })();
