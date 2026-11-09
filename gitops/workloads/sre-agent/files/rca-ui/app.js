@@ -1259,6 +1259,11 @@
         const resp = await fetch(`/_re-analyze/${id}`, { method: "POST" });
         if (resp.ok) {
           const data = await resp.json();
+          if (data.newly_created === false) {
+            toast("A recent investigation already ran for this alert (within the last 30 min). The existing report is shown. Try Re-analyze again shortly.");
+            reanalyze.disabled = false; reanalyze.textContent = "Re-analyze";
+            return;
+          }
           const iv = setInterval(async () => {
             try {
               const sr = await fetch(`/_workflow-status/${data.workflow}`);

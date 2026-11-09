@@ -163,10 +163,10 @@ async def re_analyze(report_id: str):
         "startsAt": ad.get("starts_at", ""),
         "status": "firing",
     }
-    workflow_name, _ = await create_workflow(alert)
+    workflow_name, newly_created = await create_workflow(alert)
     STARTED.labels(ad["alertname"]).inc()
-    log.info("re-analysis triggered", extra={"report_id": report_id, "alertname": ad["alertname"], "workflow": workflow_name})
-    return {"workflow": workflow_name, "report_id": report_id}
+    log.info("re-analysis triggered", extra={"report_id": report_id, "alertname": ad["alertname"], "workflow": workflow_name, "newly_created": newly_created})
+    return {"workflow": workflow_name, "report_id": report_id, "newly_created": newly_created}
 
 
 @app.get("/workflow-status/{name}")
