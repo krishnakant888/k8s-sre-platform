@@ -75,7 +75,7 @@ spec:
             path: /tmp/in/alert.json
             raw: {data: "{{inputs.parameters.alert}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-1c7ff639a8346d362a602df5cf735066b3ef78a5
+        image: ghcr.io/krishnakant888/sre-agent:sha-744f104c7a5f237848bba25f4b785fbf9edc84d0
         command: [python, -m, agent.steps, collect]
         env:   # Mimir, Loki and Tempo are in this cluster (agent/config.py has their addresses); pods and events come from the platform cluster
           - {name: PLATFORM_K8S_URL, value: "https://platform-control-plane:6443"}
@@ -113,7 +113,7 @@ spec:
             path: /tmp/in/ctx.json
             raw: {data: "{{inputs.parameters.ctx}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-1c7ff639a8346d362a602df5cf735066b3ef78a5
+        image: ghcr.io/krishnakant888/sre-agent:sha-744f104c7a5f237848bba25f4b785fbf9edc84d0
         command: [python, -m, agent.steps, analyze]
         env:
           - {name: WORKFLOW_NAME, value: "{{workflow.name}}"}   # recorded in the report: Argo Workflows keeps no history here
@@ -157,7 +157,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-1c7ff639a8346d362a602df5cf735066b3ef78a5
+        image: ghcr.io/krishnakant888/sre-agent:sha-744f104c7a5f237848bba25f4b785fbf9edc84d0
         command: [python, -m, agent.steps, store]
         resources:
           requests: {cpu: 50m, memory: 128Mi}
@@ -190,7 +190,7 @@ spec:
             path: /tmp/in/report.json
             raw: {data: "{{inputs.parameters.report}}"}
       container:
-        image: ghcr.io/krishnakant888/sre-agent:sha-1c7ff639a8346d362a602df5cf735066b3ef78a5
+        image: ghcr.io/krishnakant888/sre-agent:sha-744f104c7a5f237848bba25f4b785fbf9edc84d0
         command: [python, -m, agent.steps, notify]
         env:
           - name: NOTIFY_WEBHOOK_URL
