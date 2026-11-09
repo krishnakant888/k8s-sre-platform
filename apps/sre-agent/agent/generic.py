@@ -209,16 +209,21 @@ def gather(alert: dict, now: float | None = None, lookback_minutes: int = 45) ->
                         f"source: {paths}")
                     return
                 # no recent deploy for this app — keep trying others
-        # fallback: scan all apps targeting the namespace for any recent deploy
+        # fallback: scan all apps targeting the namespace — use 2× the named-app window
         if fallback_ns:
-            ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_ns, "minutes": int(lookback_seconds / 60)})
+            ns_minutes = max(int(lookback_seconds / 60) * 2, 240)  # at least 4 h
+            ns_res = tools.call_tool("list_namespace_deploys", {"namespace": fallback_ns, "minutes": ns_minutes})
             if "error" not in ns_res:
                 raw["deploys"] = ns_res
-                recent_any = [a for a in ns_res.get("applications", []) if a.get("recent_syncs")]
+                recent_any = [a for a in ns_res.get("apps", []) if a.get("history")]
                 if recent_any:
-                    summary = "; ".join(f"{a['name']} at {a['recent_syncs'][0]['synced_at']}" for a in recent_any[:3])
-                    sig["recent_deploy"] = recent_any[0]["recent_syncs"][0]
-                    add("argocd", f"namespace deploys {fallback_ns}", f"{len(recent_any)} app(s) deployed in the 2h window: {summary}")
+                    summary = "; ".join(f"{a['application']} at {a['history'][0]['deployed_at']}" for a in recent_any[:3])
+                    sig["recent_deploy"] = recent_any[0]["history"][0]
+                    mins_before = int((started - rca.parse_ts(recent_any[0]["history"][0]["deployed_at"])) / 60) if rca.parse_ts(recent_any[0]["history"][0].get("deployed_at", "")) else None
+                    window_label = f"{ns_minutes // 60}h" if ns_minutes >= 60 else f"{ns_minutes}m"
+                    add("argocd", f"namespace deploys {fallback_ns}",
+                        f"{len(recent_any)} app(s) deployed in the {window_label} window: {summary}"
+                        + (f" ({mins_before}m before alert)" if mins_before is not None else ""))
                     return
         add("argocd", f"history {app_names[0] if app_names else '?'}", "no deploy in the 2 hours before the alert")
 
