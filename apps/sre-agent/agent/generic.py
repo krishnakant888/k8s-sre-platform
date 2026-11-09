@@ -7,14 +7,32 @@ application name) say where to look, the same read-only tools collect the facts,
 The SLO path in rca.py keeps handling the orders-api burn alerts; rca.gather / rca.analyze_rules hand everything listed in
 FAMILIES to this module.
 """
+import json
 import os
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from agent import config, tools
 from agent.models import Evidence, FaultDomain, HowToFix, Impact, Priority, RcaReport, RootCause, TimelineEntry
+
+
+def _calibrated_confidence(category: str, raw: str) -> str:
+    """Downgrade confidence for families with a poor historical accuracy track record."""
+    try:
+        cal_path = Path(config.REPORTS_DIR) / ".calibration.json"
+        if cal_path.exists():
+            cal = json.loads(cal_path.read_text(encoding="utf-8"))
+            weight = (cal.get(category) or {}).get("confidence_weight", 1.0)
+            if weight < 0.4 and raw in ("high", "medium"):
+                return "low"
+            if weight < 0.5 and raw == "high":
+                return "medium"
+    except Exception:
+        pass
+    return raw
 
 # alert name -> what kind of problem it is
 FAMILIES = {
@@ -1082,6 +1100,7 @@ def analyze(alert: dict, ctx: dict, now: float | None = None) -> RcaReport:
         timeline.append(TimelineEntry(time=e["ts"], event=f"{e['reason']}: {e['object']} {e['message'][:80]}"))
     timeline.append(TimelineEntry(time=_iso(now), event="investigation completed"))
     timeline.sort(key=lambda t: t.time)
+    d.confidence = _calibrated_confidence(d.category, d.confidence)
     priority = _priority(alert, ctx, d)
     contrib = list(d.contributing)
     if sig.get("recent_deploy"):

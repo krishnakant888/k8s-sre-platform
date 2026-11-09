@@ -38,6 +38,20 @@ GRAFANA_URL = getattr(config, "GRAFANA_URL", "http://grafana.observability.svc.c
 GRAFANA_API_TOKEN = getattr(config, "GRAFANA_API_TOKEN", "")
 
 
+def _service_thresholds(workload: str) -> tuple[float, float]:
+    """Return (cpu_p95_max, memory_p99_max) from learning thresholds file, or module defaults."""
+    try:
+        path = Path(config.REPORTS_DIR) / ".thresholds.json"
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if workload in data:
+                t = data[workload]
+                return float(t.get("cpu_p95_max", CPU_P95_MAX)), float(t.get("memory_p99_max", MEMORY_P99_MAX))
+    except Exception as exc:
+        log.debug("scale-down: could not load thresholds for %s: %s", workload, exc)
+    return CPU_P95_MAX, MEMORY_P99_MAX
+
+
 def _duration_seconds(value: str) -> float | None:
     if not re.fullmatch(r"(?:\d+(?:ms|s|m|h|d|w|y))+", value):
         return None
@@ -543,8 +557,9 @@ def _propose_for_workload(repo: str, branch: str, head_sha: str, workload: str,
     cpu_pct = 100 * metrics["cpu_p95_cores"] * 1000 / cpu_capacity
     memory_pct = 100 * metrics["memory_p99_bytes"] / (memory_limit * 1024 * 1024)
     throttle_pct = 100 * metrics["cpu_throttle"]
-    low_cpu = cpu_pct < CPU_P95_MAX * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
-    low_memory = memory_pct < MEMORY_P99_MAX * 100
+    _cpu_max, _mem_max = _service_thresholds(workload)
+    low_cpu = cpu_pct < _cpu_max * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
+    low_memory = memory_pct < _mem_max * 100
     review.update(cpu_pct=cpu_pct, memory_pct=memory_pct, throttle_pct=throttle_pct,
                   low_cpu=low_cpu, low_memory=low_memory)
 
@@ -710,8 +725,9 @@ def _review_replica_floor(workload: str, namespace: str, cluster: str) -> dict:
         cpu_pct = 100 * metrics["cpu_p95_cores"] * 1000 / cpu_capacity
         throttle_pct = 100 * metrics["cpu_throttle"]
         memory_pct = 100 * metrics["memory_p99_bytes"] / (memory_limit * 1024 * 1024)
-        low_cpu = cpu_pct < CPU_P95_MAX * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
-        low_memory = memory_pct < MEMORY_P99_MAX * 100
+        _cpu_max, _mem_max = _service_thresholds(workload)
+        low_cpu = cpu_pct < _cpu_max * 100 and throttle_pct < CPU_THROTTLE_MAX * 100
+        low_memory = memory_pct < _mem_max * 100
         review.update(cpu_pct=cpu_pct, throttle_pct=throttle_pct, memory_pct=memory_pct)
         if replicas <= floor:
             review["decision"] = "recommendation"
