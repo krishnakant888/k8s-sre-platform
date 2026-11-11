@@ -33,7 +33,7 @@ k8s-sre-platform repo        how it runs here (gitops/backstage: portal + Postgr
 python3 bootstrap/bootstrap.py --portal-access
 ```
 
-**The image.** The image is built from the `backstage-portal/` folder of this repo (the `backstage-portal-image` workflow builds it to ghcr for amd64 and arm64). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
+**The image.** The image is built from the `backstage-portal/` folder of this repo (the `backstage-portal-image` workflow publishes both the deployed `0.1.0` tag and a commit-specific tag to ghcr for amd64 and arm64). Downloads from ghcr.io can be very slow from some networks, so on this machine build it with Docker and load it into the gitops cluster instead:
 
 ```bash
 docker build -t ghcr.io/krishnakant888/backstage-portal:0.1.0 -f packages/backend/Dockerfile .   # in portal/al repo, after yarn install, tsc and build:backend

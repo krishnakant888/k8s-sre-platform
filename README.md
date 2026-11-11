@@ -386,6 +386,52 @@ Notable alerts: `ArgoCDAppDegraded` fires when any Argo CD Application reports `
 
 ---
 
+## Production-readiness gaps
+
+What is in the platform today is listed in [Production posture](#production-posture) above. The table below is what still needs to be addressed before this platform could carry real production traffic. Items are ordered by severity: a cluster failure caused by a gap at the top of the list is harder to recover from than one at the bottom.
+
+### Critical — single points of failure
+
+| Gap | Current state | What production needs |
+|---|---|---|
+| **Observability HA** | Mimir, Loki, Tempo all run at `replicas: 1` | Each component needs ≥2 replicas with separate PVCs; Loki and Tempo support `SimpleScalable` mode; Mimir ships a microservices mode. Without HA, a single pod restart drops all metrics ingestion and log tailing — the agent goes blind. |
+| **Durable persistent storage** | kind `hostPath` volumes tied to a single Docker container | On-prem: Rook-Ceph or Longhorn to replicate data across nodes. Cloud: `gp3` (EKS) / `managed-csi` (AKS) StorageClasses. `emptyDir` or single-node `hostPath` lose all data when the kind node container restarts. |
+| **Backup and disaster recovery** | None — no cluster-state backup, no store snapshots | [Velero](https://velero.io) for Kubernetes resource + PVC snapshots; scheduled daily + before every Argo CD `SyncOperation`; test restore to a parallel cluster at least quarterly. Without this, losing the kind host means recreating the full platform from scratch (bootstrap recovers the config but not 30 days of incidents and tuned thresholds). |
+| **Dead man's switch** | No independent watcher; the `partition` fault drill demonstrates this gap | A secondary out-of-band alerting path (Healthchecks.io, Pingdom or a CloudWatch/Azure Monitor heartbeat) that pages when the agent stops sending its own synthetic heartbeat. If the platform cluster is partitioned, Grafana cannot alert and the agent cannot investigate. |
+
+### Important — gaps that cause pain in production
+
+| Gap | Current state | What production needs |
+|---|---|---|
+| **On-call routing** | Grafana contact points fire to a single webhook URL | Integrate [PagerDuty](https://grafana.com/docs/grafana/latest/alerting/configure-notifications/manage-contact-points/integrations/pagerduty/) or [OpsGenie](https://grafana.com/docs/grafana/latest/alerting/configure-notifications/manage-contact-points/integrations/opsgenie/) as the notification channel. Set severity-based routing: `critical` pages on-call immediately; `warning` creates a low-priority ticket; `info` goes to a Slack channel only. Without this, all alerts go to one place with no escalation. |
+| **Runbook population** | Alert annotations reference `docs/runbooks/*.md` paths; some may not exist | Each alert in `rules-*.yaml` should have a `runbook_url` pointing to a filled-out runbook with: what the alert means, how to verify, the top 3 remediation steps, and when to escalate. The agent embeds runbook links in RCA reports; a 404 is confusing in the middle of an incident. |
+| **Default-deny NetworkPolicy in every namespace** | Only `demo`, `sre-agent`, and `sandbox` have NetworkPolicies; other namespaces (e.g. `argo-workflows`, `kyverno`, `traefik`) have no policies | Add a `default-deny-all` ingress+egress NetworkPolicy to every namespace, then whitelist only the required ports. The current state means a compromised pod in `argo-workflows` can reach any service in any namespace. |
+| **ResourceQuotas per namespace** | Kyverno audits `requests`/`limits` on pods but no namespace-level quota cap | Add `ResourceQuota` and `LimitRange` objects to each namespace. Without a quota, a misconfigured deployment can exhaust node resources and evict other workloads before any alert fires. |
+| **Image signing verification** | CI tags images with the commit SHA (pinned tags); no admission verification | Add [Cosign](https://docs.sigstore.dev/cosign/overview/) signing in CI and a Kyverno `verifyImages` policy to reject unsigned images at admission. This prevents an attacker who compromises a registry from deploying a tampered image. Item 7 in the existing roadmap. |
+| **mTLS between services** | No service mesh; pod-to-pod traffic is plaintext inside the cluster | Add [Linkerd](https://linkerd.io) (lightweight, no sidecar injection proxy on the data path for newer versions) or [Cilium mTLS](https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/). Without mTLS, any pod that can reach another service's port can read its traffic and impersonate it. |
+
+### Moderate — operational blind spots
+
+| Gap | Current state | What production needs |
+|---|---|---|
+| **Kubernetes API audit log shipping** | Audit logs are written to the kind node's filesystem only | Ship audit logs to Loki via Alloy's `local.file` component. Audit logs are the only source of truth for "who deleted that Secret at 03:00" — without them the agent cannot answer supply-chain or privilege-escalation questions. |
+| **Resource right-sizing (VPA / Goldilocks)** | Requests and limits set manually from initial measurements | Deploy [Goldilocks](https://goldilocks.docs.fairwinds.com/) (VPA in recommendation mode) to surface per-container right-sizing suggestions in a dashboard. The agent's self-learning already tunes thresholds but does not update `requests`/`limits` itself; Goldilocks closes that loop. |
+| **Rate limiting at the gateway** | HTTPRoutes have no rate-limit middleware | Add Traefik `RateLimit` middleware (or a Gateway API `RateLimitPolicy`) to all external-facing routes. Without it a misconfigured load test or a crawler can saturate the API and trigger SLO burn-rate alerts indistinguishable from real incidents. |
+| **SBOM generation and dependency scan** | CI runs a dependency scan; no SBOM is published | Add `syft` or `trivy sbom` as a CI step and attach the SBOM as a build artifact. Required by most enterprise and regulated environments; also feeds the agent's supply-chain root-cause family. |
+| **Chaos engineering** | Manual fault drills via `scripts/faults.py` only | Integrate [Chaos Mesh](https://chaos-mesh.org) or [LitmusChaos](https://litmuschaos.io) as an Argo CD Application and schedule monthly automated chaos experiments aligned to the fault-drill scenarios. Manual drills are skipped under pressure; automated chaos is not. |
+
+### Nice to have — multi-cluster HA and advanced operations
+
+| Gap | What production needs |
+|---|---|
+| **Multi-cluster HA** | A second observability cluster (active-passive or active-active Thanos/Cortex) so a cluster failure does not black out the monitoring plane. |
+| **Progressive delivery** | Argo Rollouts with SLO-based analysis so a bad deploy auto-rolls-back before it pages on-call. Item 3 in the existing roadmap. |
+| **External Secrets Operator** | Replace bootstrap-seeded secrets with ESO backed by HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault. Item 1 in the existing roadmap. |
+| **Object storage for LGTM backends** | Migrate Mimir, Loki, Tempo `storage` blocks to S3 / GCS / Azure Blob for unlimited retention and no PVC sizing. Item 2 in the existing roadmap. |
+| **Per-environment ApplicationSets** | Replace per-environment Argo CD Applications with `ApplicationSet` generators so adding a new environment is one line in a matrix. Item 6 in the existing roadmap. |
+
+---
+
 ## If clusters disappear after a machine restart
 
 Kind nodes are Docker containers. `bootstrap.py` gives them a restart policy, so they come back with Docker. On WSL2 also set `vmIdleTimeout=-1` in `%UserProfile%\.wslconfig`; without it WSL stops the VM when no terminal is open. If that setting was missing at bootstrap time, run `python3 bootstrap/bootstrap.py` once — it only adds the policy to clusters that already exist.
